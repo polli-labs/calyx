@@ -53,3 +53,55 @@ node packages/cli/dist/bin.js instructions verify \
   --all \
   --expected-dir fixtures/instructions/expected
 ```
+
+## Skills domain examples
+
+```bash
+node packages/cli/dist/bin.js skills index \
+  --registry fixtures/domains/skills/registry.valid.json
+
+node packages/cli/dist/bin.js skills sync \
+  --registry fixtures/domains/skills/registry.valid.json \
+  --backend codex
+
+node packages/cli/dist/bin.js skills validate \
+  --registry fixtures/domains/skills/registry.valid.json \
+  --strict
+```
+
+## Tools domain examples
+
+```bash
+node packages/cli/dist/bin.js tools index \
+  --registry fixtures/domains/tools/registry.valid.json
+
+node packages/cli/dist/bin.js tools sync \
+  --registry fixtures/domains/tools/registry.valid.json \
+  --all
+
+node packages/cli/dist/bin.js tools validate \
+  --registry fixtures/domains/tools/registry.valid.json \
+  --strict
+```
+
+## Prompts domain examples
+
+```bash
+node packages/cli/dist/bin.js prompts index \
+  --registry fixtures/domains/prompts/registry.valid.json
+
+node packages/cli/dist/bin.js prompts sync \
+  --registry fixtures/domains/prompts/registry.valid.json \
+  --backend claude
+
+node packages/cli/dist/bin.js prompts validate \
+  --registry fixtures/domains/prompts/registry.valid.json \
+  --strict
+```
+
+## Migration wrapper seed
+
+`calyx skills-sync` is a seeded compatibility wrapper for the high-usage legacy
+`dev/run/skills-sync` path. The wrapper forwards to `calyx skills sync`, emits a
+deprecation warning, and prints a `calyx.wrapper.invoked` telemetry marker to
+make migration usage measurable.

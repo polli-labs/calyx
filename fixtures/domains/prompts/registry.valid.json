@@ -1,0 +1,28 @@
+{
+  "version": "2026-02-27",
+  "schema_version": "1.0.0",
+  "prompts": [
+    {
+      "id": "execute-execplan",
+      "name": "Execute ExecPlan",
+      "description": "Execute a structured ExecPlan",
+      "category": "execution",
+      "template_path": "docs/org-kb/agents/prompts/execute-execplan.md",
+      "variables": ["execplan_path"],
+      "optional_variables": ["additional_context"],
+      "targets": ["async-runner"],
+      "exported_as_slash_command": false
+    },
+    {
+      "id": "review-pr",
+      "name": "Review Pull Request",
+      "description": "Review a pull request",
+      "category": "review",
+      "template_path": "docs/org-kb/agents/prompts/review-pr.md",
+      "variables": ["pr_number"],
+      "optional_variables": ["focus_areas"],
+      "targets": ["async-runner"],
+      "exported_as_slash_command": false
+    }
+  ]
+}

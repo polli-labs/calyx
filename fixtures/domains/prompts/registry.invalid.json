@@ -1,0 +1,27 @@
+{
+  "version": "2026-02-27",
+  "schema_version": "1.0.0",
+  "prompts": [
+    {
+      "id": "execute-execplan",
+      "name": "Execute ExecPlan",
+      "description": "Execute a structured ExecPlan",
+      "category": "execution",
+      "template_path": "docs/org-kb/agents/prompts/execute-execplan.md",
+      "variables": ["execplan_path", "execplan_path"],
+      "optional_variables": ["execplan_path", "additional_context"],
+      "targets": ["async-runner"],
+      "exported_as_slash_command": false
+    },
+    {
+      "id": "execute-execplan",
+      "name": "Duplicate ID",
+      "description": "Duplicate prompt id for validation failure",
+      "category": "review",
+      "template_path": "docs/org-kb/agents/prompts/review-pr.md",
+      "variables": ["pr_number"],
+      "targets": ["async-runner"],
+      "exported_as_slash_command": false
+    }
+  ]
+}

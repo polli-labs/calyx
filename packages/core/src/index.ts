@@ -1,6 +1,9 @@
 export { compileFromFiles, checkSemanticParity, parseTomlToObject } from "./compile";
 export { renderInstructionsFromFiles, verifyInstructionsFromFiles } from "./instructions";
 export { compareTomlSemantics } from "./parity";
+export { indexSkillsRegistry, syncSkillsRegistry, validateSkillsRegistry } from "./skills";
+export { indexToolsRegistry, syncToolsRegistry, validateToolsRegistry } from "./tools";
+export { indexPromptsRegistry, syncPromptsRegistry, validatePromptsRegistry } from "./prompts";
 export type {
   ArrayMergePolicy,
   ArrayPolicyConfig,
@@ -21,5 +24,35 @@ export type {
   InstructionsRenderResult,
   InstructionsVerifyOptions,
   InstructionsVerifyResult,
+  DomainSyncAction,
+  DomainValidationIssue,
+  DomainValidationResult,
+  PromptBackend,
+  PromptRegistryEntry,
+  PromptsIndexResult,
+  PromptsRegistry,
+  PromptsSyncOptions,
+  PromptsSyncResult,
+  PromptsValidateOptions,
+  PromptsValidateResult,
+  SkillLifecycleStatus,
+  SkillRegistryEntry,
+  SkillSource,
+  SkillsIndexOptions,
+  SkillsIndexResult,
+  SkillsRegistry,
+  SkillsSyncOptions,
+  SkillsSyncResult,
+  SkillsValidateOptions,
+  SkillsValidateResult,
+  SyncBackend,
+  ToolInstallSpec,
+  ToolRegistryEntry,
+  ToolsIndexResult,
+  ToolsRegistry,
+  ToolsSyncOptions,
+  ToolsSyncResult,
+  ToolsValidateOptions,
+  ToolsValidateResult,
   ValidationMode
 } from "./types";

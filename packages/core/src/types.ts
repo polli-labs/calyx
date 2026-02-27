@@ -150,3 +150,184 @@ export interface InstructionsVerifyResult extends InstructionsRenderResult {
   ok: boolean;
   drifts: InstructionDrift[];
 }
+
+export type SyncBackend = "claude" | "codex" | "agents" | "all";
+
+export interface DomainValidationIssue {
+  code: string;
+  message: string;
+  path?: string;
+}
+
+export interface DomainValidationResult {
+  ok: boolean;
+  errors: DomainValidationIssue[];
+  warnings: DomainValidationIssue[];
+}
+
+export interface DomainSyncAction {
+  action: string;
+  id: string;
+  details: string;
+}
+
+export type SkillLifecycleStatus = "active" | "deprecated" | "archived";
+
+export interface SkillSource {
+  type: string;
+  repo?: string;
+  path: string;
+  ref?: string;
+  license?: string;
+  [key: string]: unknown;
+}
+
+export interface SkillRegistryEntry {
+  id: string;
+  status?: SkillLifecycleStatus;
+  deprecated_by?: string;
+  archived_at?: string;
+  local_archive_path?: string;
+  source: SkillSource;
+  [key: string]: unknown;
+}
+
+export interface SkillsRegistry {
+  version: string;
+  generated_at?: string;
+  skills: SkillRegistryEntry[];
+  [key: string]: unknown;
+}
+
+export interface SkillsIndexOptions {
+  includeActive?: boolean;
+  includeDeprecated?: boolean;
+  includeArchived?: boolean;
+}
+
+export interface SkillsIndexResult {
+  version: string;
+  total: number;
+  items: SkillRegistryEntry[];
+}
+
+export interface SkillsSyncOptions extends SkillsIndexOptions {
+  backend?: SyncBackend;
+  apply?: boolean;
+  pruneDeprecated?: boolean;
+}
+
+export interface SkillsSyncResult {
+  backend: SyncBackend;
+  apply: boolean;
+  version: string;
+  actions: DomainSyncAction[];
+}
+
+export interface SkillsValidateOptions {
+  strict?: boolean;
+}
+
+export interface SkillsValidateResult extends DomainValidationResult {
+  version: string;
+  total: number;
+  active: number;
+  deprecated: number;
+  archived: number;
+}
+
+export interface ToolInstallSpec {
+  method: string;
+  [key: string]: unknown;
+}
+
+export interface ToolRegistryEntry {
+  name: string;
+  version: string;
+  status?: string;
+  install?: ToolInstallSpec;
+  [key: string]: unknown;
+}
+
+export interface ToolsRegistry {
+  version: string;
+  tools: ToolRegistryEntry[];
+  [key: string]: unknown;
+}
+
+export interface ToolsIndexResult {
+  version: string;
+  total: number;
+  items: ToolRegistryEntry[];
+}
+
+export interface ToolsSyncOptions {
+  host?: string;
+  all?: boolean;
+  apply?: boolean;
+}
+
+export interface ToolsSyncResult {
+  target: string;
+  apply: boolean;
+  version: string;
+  actions: DomainSyncAction[];
+}
+
+export interface ToolsValidateOptions {
+  strict?: boolean;
+}
+
+export interface ToolsValidateResult extends DomainValidationResult {
+  version: string;
+  total: number;
+}
+
+export type PromptBackend = "claude" | "codex" | "all";
+
+export interface PromptRegistryEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  template_path: string;
+  variables: string[];
+  optional_variables?: string[];
+  targets: string[];
+  exported_as_slash_command?: boolean;
+  [key: string]: unknown;
+}
+
+export interface PromptsRegistry {
+  version: string;
+  schema_version?: string;
+  prompts: PromptRegistryEntry[];
+  [key: string]: unknown;
+}
+
+export interface PromptsIndexResult {
+  version: string;
+  total: number;
+  items: PromptRegistryEntry[];
+}
+
+export interface PromptsSyncOptions {
+  backend?: PromptBackend;
+  apply?: boolean;
+}
+
+export interface PromptsSyncResult {
+  backend: PromptBackend;
+  apply: boolean;
+  version: string;
+  actions: DomainSyncAction[];
+}
+
+export interface PromptsValidateOptions {
+  strict?: boolean;
+}
+
+export interface PromptsValidateResult extends DomainValidationResult {
+  version: string;
+  total: number;
+}

@@ -1,0 +1,36 @@
+{
+  "version": "2026-02-27",
+  "generated_at": "2026-02-27T00:00:00Z",
+  "skills": [
+    {
+      "id": "agents-fleet",
+      "source": {
+        "type": "internal",
+        "repo": "polli",
+        "path": "docs/org-kb/agents/skills/agents-fleet/SKILL.md"
+      }
+    },
+    {
+      "id": "agents-fleet-bootstrap",
+      "status": "deprecated",
+      "deprecated_by": "agents-fleet",
+      "archived_at": "2026-02-18",
+      "local_archive_path": "docs/org-kb/agents/skills/_deprecated/agents-fleet-bootstrap/SKILL.md",
+      "source": {
+        "type": "internal",
+        "repo": "polli",
+        "path": "docs/org-kb/agents/skills/_deprecated/agents-fleet-bootstrap/SKILL.md"
+      }
+    },
+    {
+      "id": "legacy-browser-tools",
+      "status": "archived",
+      "archived_at": "2026-02-24",
+      "source": {
+        "type": "external",
+        "repo": "https://github.com/badlogic/pi-skills",
+        "path": "browser-tools/SKILL.md"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": "2026-02-27",
+  "tools": [
+    {
+      "name": "cass",
+      "version": "v0.1.55",
+      "status": "adopted"
+    },
+    {
+      "name": "oracle",
+      "version": "0.8.4",
+      "status": "adopted"
+    }
+  ]
+}
