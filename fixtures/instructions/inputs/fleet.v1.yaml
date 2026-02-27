@@ -1,0 +1,9 @@
+version: "1"
+instructions:
+  context:
+    ORG: polli-labs
+    SPRINT_WEEK: 2026-W09
+    SPRINT_THEME: Detection + eval hardening
+    ROUTING_HINTS: |
+      - Use docstore before re-deriving.
+      - Keep receipts in Linear.

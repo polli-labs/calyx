@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
-import { compileFromFiles, compareTomlSemantics } from "@polli-labs/calyx-core";
+import {
+  compileFromFiles,
+  compareTomlSemantics,
+  renderInstructionsFromFiles,
+  verifyInstructionsFromFiles
+} from "@polli-labs/calyx-core";
 
 interface CompileCommandOptions {
   fleet: string;
@@ -11,6 +16,31 @@ interface CompileCommandOptions {
   write?: boolean;
   parity?: string;
   json?: boolean;
+}
+
+interface InstructionsBaseCommandOptions {
+  fleet: string;
+  hostsDir: string;
+  host?: string;
+  all?: boolean;
+  template: string;
+  partialsDir: string;
+  outDir?: string;
+  json?: boolean;
+}
+
+interface InstructionsVerifyCommandOptions extends InstructionsBaseCommandOptions {
+  expectedDir: string;
+}
+
+interface CliError extends Error {
+  exitCode?: number;
+}
+
+function createCliError(message: string, exitCode: number): CliError {
+  const error = new Error(message) as CliError;
+  error.exitCode = exitCode;
+  return error;
 }
 
 export async function runCli(argv = process.argv): Promise<void> {
@@ -79,6 +109,108 @@ export async function runCli(argv = process.argv): Promise<void> {
       }
     });
 
+  const instructions = new Command("instructions").description("Instructions rendering and parity commands");
+
+  instructions
+    .command("render")
+    .description("Render instruction templates with deterministic token + partial semantics")
+    .requiredOption("--fleet <path>", "Path to fleet instructions YAML")
+    .requiredOption("--hosts-dir <path>", "Path to host instructions directory")
+    .requiredOption("--template <path>", "Path to instruction template (*.md.mustache)")
+    .requiredOption("--partials-dir <path>", "Path to partial templates directory")
+    .option("--host <host>", "Host alias to render")
+    .option("--all", "Render all hosts under --hosts-dir")
+    .option("--out-dir <path>", "Write rendered output files to this directory")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: InstructionsBaseCommandOptions) => {
+      const renderOptions = {
+        all: Boolean(options.all),
+        ...(options.host ? { host: options.host } : {}),
+        ...(options.outDir ? { outputDir: options.outDir } : {})
+      };
+      const renderResult = await renderInstructionsFromFiles(
+        {
+          fleetPath: options.fleet,
+          hostsDir: options.hostsDir,
+          templatePath: options.template,
+          partialsDir: options.partialsDir
+        },
+        renderOptions
+      );
+
+      if (options.json) {
+        console.log(JSON.stringify(renderResult, null, 2));
+        return;
+      }
+
+      const firstResult = renderResult.results[0];
+      if (!options.outDir && renderResult.results.length === 1 && firstResult) {
+        process.stdout.write(firstResult.output);
+      }
+
+      if (options.outDir) {
+        for (const hostResult of renderResult.results) {
+          if (hostResult.outputPath) {
+            console.error(`Rendered ${hostResult.host} -> ${hostResult.outputPath}`);
+          }
+        }
+      }
+
+      for (const hostResult of renderResult.results) {
+        if (hostResult.missingPartials.length > 0) {
+          console.error(`[${hostResult.host}] Missing partials: ${hostResult.missingPartials.join(", ")}`);
+        }
+        if (hostResult.unresolvedTokens.length > 0) {
+          console.error(`[${hostResult.host}] Unresolved tokens: ${hostResult.unresolvedTokens.join(", ")}`);
+        }
+      }
+    });
+
+  instructions
+    .command("verify")
+    .description("Verify rendered instruction outputs against expected fixtures")
+    .requiredOption("--fleet <path>", "Path to fleet instructions YAML")
+    .requiredOption("--hosts-dir <path>", "Path to host instructions directory")
+    .requiredOption("--template <path>", "Path to instruction template (*.md.mustache)")
+    .requiredOption("--partials-dir <path>", "Path to partial templates directory")
+    .requiredOption("--expected-dir <path>", "Path to expected rendered outputs")
+    .option("--host <host>", "Host alias to verify")
+    .option("--all", "Verify all hosts under --hosts-dir")
+    .option("--out-dir <path>", "Write rendered output files to this directory")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: InstructionsVerifyCommandOptions) => {
+      const verifyOptions = {
+        expectedDir: options.expectedDir,
+        all: Boolean(options.all),
+        ...(options.host ? { host: options.host } : {}),
+        ...(options.outDir ? { outputDir: options.outDir } : {})
+      };
+      const verifyResult = await verifyInstructionsFromFiles(
+        {
+          fleetPath: options.fleet,
+          hostsDir: options.hostsDir,
+          templatePath: options.template,
+          partialsDir: options.partialsDir
+        },
+        verifyOptions
+      );
+
+      if (options.json) {
+        console.log(JSON.stringify(verifyResult, null, 2));
+      } else if (verifyResult.ok) {
+        console.error(`Instruction verify OK (${verifyResult.results.length} host(s)).`);
+      } else {
+        for (const drift of verifyResult.drifts) {
+          console.error(`[${drift.host}] drift: ${drift.reason} (${drift.expectedPath})`);
+        }
+      }
+
+      if (!verifyResult.ok) {
+        throw createCliError(`Instruction verify failed for ${verifyResult.drifts.length} drift(s).`, 3);
+      }
+    });
+
   program.addCommand(config);
+  program.addCommand(instructions);
   await program.parseAsync(argv);
 }

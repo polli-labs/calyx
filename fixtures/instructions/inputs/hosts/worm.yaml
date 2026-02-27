@@ -1,0 +1,6 @@
+host: worm
+user: caleb
+home: /home/caleb
+instructions:
+  context:
+    HOST_CONTEXT: Storage and ingest worker with large local datasets.

@@ -22,3 +22,4 @@ jobs:
       - run: pnpm build
       - run: node packages/cli/dist/bin.js --help
       - run: node packages/cli/dist/bin.js config --help
+      - run: node packages/cli/dist/bin.js instructions --help

@@ -1,0 +1,6 @@
+host: blade
+user: caleb
+home: /home/caleb
+instructions:
+  context:
+    HOST_CONTEXT: GPU host with dual RTX 3090 cards.

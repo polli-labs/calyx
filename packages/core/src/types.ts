@@ -89,3 +89,64 @@ export interface SemanticParityResult {
   equal: boolean;
   reason?: string;
 }
+
+export type InstructionContextValue = string | number | boolean;
+
+export type InstructionContext = Record<string, InstructionContextValue>;
+
+export interface InstructionsFleetInput {
+  version?: string;
+  instructions?: {
+    context?: InstructionContext;
+  };
+}
+
+export interface InstructionsHostInput {
+  host?: string;
+  user?: string;
+  home?: string;
+  instructions?: {
+    context?: InstructionContext;
+  };
+}
+
+export interface InstructionsRenderInputFiles {
+  fleetPath: string;
+  hostsDir: string;
+  templatePath: string;
+  partialsDir: string;
+}
+
+export interface InstructionsRenderOptions {
+  host?: string;
+  all?: boolean;
+  outputDir?: string;
+  maxPartialDepth?: number;
+}
+
+export interface HostInstructionRenderResult {
+  host: string;
+  output: string;
+  outputPath?: string;
+  missingPartials: string[];
+  unresolvedTokens: string[];
+}
+
+export interface InstructionsRenderResult {
+  results: HostInstructionRenderResult[];
+}
+
+export interface InstructionDrift {
+  host: string;
+  expectedPath: string;
+  reason: string;
+}
+
+export interface InstructionsVerifyOptions extends InstructionsRenderOptions {
+  expectedDir: string;
+}
+
+export interface InstructionsVerifyResult extends InstructionsRenderResult {
+  ok: boolean;
+  drifts: InstructionDrift[];
+}
