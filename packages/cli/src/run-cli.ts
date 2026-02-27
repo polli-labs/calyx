@@ -3,21 +3,32 @@ import { Command } from "commander";
 import {
   compileFromFiles,
   compareTomlSemantics,
+  deployAgentsRegistry,
+  indexAgentsRegistry,
+  indexKnowledgeRegistry,
   indexPromptsRegistry,
   indexSkillsRegistry,
   indexToolsRegistry,
+  linkKnowledgeArtifact,
+  renderAgentProfiles,
   renderInstructionsFromFiles,
+  searchKnowledgeRegistry,
+  syncAgentsRegistry,
   syncPromptsRegistry,
   syncSkillsRegistry,
   syncToolsRegistry,
+  validateAgentsRegistry,
+  validateKnowledgeRegistry,
   validatePromptsRegistry,
   validateSkillsRegistry,
   validateToolsRegistry,
   verifyInstructionsFromFiles
 } from "@polli-labs/calyx-core";
 import type {
+  AgentDeployBackend,
   DomainSyncAction,
   DomainValidationIssue,
+  KnowledgeArtifactKind,
   PromptBackend,
   SyncBackend,
   ToolsSyncOptions
@@ -97,6 +108,61 @@ interface PromptsValidateCommandOptions extends PromptsIndexCommandOptions {
   strict?: boolean;
 }
 
+interface AgentsIndexCommandOptions {
+  registry: string;
+  includeArchived?: boolean;
+  excludeDeprecated?: boolean;
+  json?: boolean;
+}
+
+interface AgentsRenderProfilesCommandOptions extends AgentsIndexCommandOptions {
+  format?: string;
+}
+
+interface AgentsDeployCommandOptions extends AgentsIndexCommandOptions {
+  backend: string;
+  apply?: boolean;
+}
+
+interface AgentsSyncCommandOptions extends AgentsIndexCommandOptions {
+  backend: string;
+  apply?: boolean;
+}
+
+interface AgentsValidateCommandOptions {
+  registry: string;
+  strict?: boolean;
+  json?: boolean;
+}
+
+interface KnowledgeIndexCommandOptions {
+  registry: string;
+  kind?: string;
+  json?: boolean;
+}
+
+interface KnowledgeSearchCommandOptions {
+  registry: string;
+  query: string;
+  kind?: string;
+  tags?: string;
+  json?: boolean;
+}
+
+interface KnowledgeLinkCommandOptions {
+  registry: string;
+  artifact: string;
+  issue: string;
+  apply?: boolean;
+  json?: boolean;
+}
+
+interface KnowledgeValidateCommandOptions {
+  registry: string;
+  strict?: boolean;
+  json?: boolean;
+}
+
 interface CliError extends Error {
   exitCode?: number;
 }
@@ -130,6 +196,24 @@ function parsePromptsBackend(rawValue: string): PromptBackend {
   }
 
   throw createCliError(`Invalid --backend value for prompts sync: ${rawValue}`, 2);
+}
+
+function parseAgentsBackend(rawValue: string): AgentDeployBackend {
+  const value = rawValue.trim().toLowerCase();
+  if (value === "claude" || value === "codex" || value === "all") {
+    return value;
+  }
+
+  throw createCliError(`Invalid --backend value for agents sync: ${rawValue}`, 2);
+}
+
+function parseKnowledgeKind(rawValue: string): KnowledgeArtifactKind {
+  const value = rawValue.trim().toLowerCase();
+  if (value === "execplan" || value === "transcript" || value === "report" || value === "runbook" || value === "reference") {
+    return value;
+  }
+
+  throw createCliError(`Invalid --kind value: ${rawValue}. Must be one of: execplan, transcript, report, runbook, reference.`, 2);
 }
 
 function issueText(issue: DomainValidationIssue): string {
@@ -599,10 +683,246 @@ export async function runCli(argv = process.argv): Promise<void> {
       console.error(`Wrapper ${telemetry.wrapper} generated ${result.actions.length} action(s).`);
     });
 
+  const agents = new Command("agents").description("Agents registry index/sync/validate commands");
+
+  agents
+    .command("index")
+    .description("Index agents from a registry")
+    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--include-archived", "Include archived agents in index output")
+    .option("--exclude-deprecated", "Exclude deprecated agents from index output")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: AgentsIndexCommandOptions) => {
+      const result = await indexAgentsRegistry(options.registry, {
+        includeArchived: Boolean(options.includeArchived),
+        includeDeprecated: !options.excludeDeprecated
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const agent of result.items) {
+        const status = agent.status ?? "active";
+        console.log(`${agent.id}\t${agent.name}\t${status}`);
+      }
+      console.error(`Indexed ${result.items.length}/${result.total} agents from ${options.registry}.`);
+    });
+
+  agents
+    .command("render-profiles")
+    .description("Render agent profiles from a registry (id, name, status, hosts, capabilities)")
+    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--include-archived", "Include archived agents in profile output")
+    .option("--exclude-deprecated", "Exclude deprecated agents from profile output")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: AgentsRenderProfilesCommandOptions) => {
+      const result = await renderAgentProfiles(options.registry, {
+        includeArchived: Boolean(options.includeArchived),
+        includeDeprecated: !options.excludeDeprecated
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const profile of result.profiles) {
+        const hosts = profile.hosts.map((h) => `${h.host}${h.role ? `(${h.role})` : ""}`).join(", ") || "none";
+        const caps = profile.capabilities.join(", ") || "none";
+        console.log(`${profile.id}\t${profile.name}\t${profile.status}\thosts=${hosts}\tcapabilities=${caps}`);
+      }
+      console.error(`Rendered ${result.profiles.length}/${result.total} agent profiles from ${options.registry}.`);
+    });
+
+  agents
+    .command("deploy")
+    .description("Deploy agents from a registry into target backend(s) (plan/apply)")
+    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--backend <backend>", "Deploy backend (claude|codex|all)", "all")
+    .option("--include-archived", "Include archived agents")
+    .option("--exclude-deprecated", "Exclude deprecated agents")
+    .option("--apply", "Apply deploy actions")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: AgentsDeployCommandOptions) => {
+      const backend = parseAgentsBackend(options.backend);
+      const result = await deployAgentsRegistry(options.registry, {
+        backend,
+        apply: Boolean(options.apply),
+        includeArchived: Boolean(options.includeArchived),
+        includeDeprecated: !options.excludeDeprecated
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      printSyncActions("agents", result.actions);
+      console.error(
+        `Agents deploy ${result.apply ? "apply" : "plan"} generated ${result.actions.length} action(s) for backend=${result.backend}.`
+      );
+    });
+
+  agents
+    .command("sync")
+    .description("Sync agents from a registry into target backend(s)")
+    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--backend <backend>", "Deploy backend (claude|codex|all)", "all")
+    .option("--include-archived", "Include archived agents")
+    .option("--exclude-deprecated", "Exclude deprecated agents")
+    .option("--apply", "Apply sync actions")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: AgentsSyncCommandOptions) => {
+      const backend = parseAgentsBackend(options.backend);
+      const result = await syncAgentsRegistry(options.registry, {
+        backend,
+        apply: Boolean(options.apply),
+        includeArchived: Boolean(options.includeArchived),
+        includeDeprecated: !options.excludeDeprecated
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      printSyncActions("agents", result.actions);
+      console.error(
+        `Agents sync ${result.apply ? "apply" : "plan"} generated ${result.actions.length} action(s) for backend=${result.backend}.`
+      );
+    });
+
+  agents
+    .command("validate")
+    .description("Validate agents registry structure and lifecycle constraints")
+    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--strict", "Escalate warnings to strict checks")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: AgentsValidateCommandOptions) => {
+      const result = await validateAgentsRegistry(options.registry, {
+        strict: Boolean(options.strict)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.error(
+          `Agents validate ${result.ok ? "OK" : "FAILED"}: total=${result.total}, active=${result.active}, deprecated=${result.deprecated}, archived=${result.archived}.`
+        );
+        printValidationIssues("agents", result.warnings, "warning");
+        printValidationIssues("agents", result.errors, "error");
+      }
+
+      if (!result.ok) {
+        throw createCliError(`agents validate failed with ${result.errors.length} error(s).`, 3);
+      }
+    });
+
+  const knowledge = new Command("knowledge").description("Knowledge artifact index/search/link/validate commands");
+
+  knowledge
+    .command("index")
+    .description("Index knowledge artifacts from a registry")
+    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .option("--kind <kind>", "Filter by artifact kind")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: KnowledgeIndexCommandOptions) => {
+      const result = await indexKnowledgeRegistry(options.registry, {
+        ...(options.kind ? { kind: parseKnowledgeKind(options.kind) } : {})
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const artifact of result.items) {
+        console.log(`${artifact.id}\t${artifact.kind}\t${artifact.title}`);
+      }
+      console.error(`Indexed ${result.items.length}/${result.total} artifacts from ${options.registry}.`);
+    });
+
+  knowledge
+    .command("search")
+    .description("Search knowledge artifacts by query")
+    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .requiredOption("--query <query>", "Search query string")
+    .option("--kind <kind>", "Filter by artifact kind")
+    .option("--tags <tags>", "Comma-separated tag filter")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: KnowledgeSearchCommandOptions) => {
+      const result = await searchKnowledgeRegistry(options.registry, {
+        query: options.query,
+        ...(options.kind ? { kind: parseKnowledgeKind(options.kind) } : {}),
+        ...(options.tags ? { tags: options.tags.split(",").map((t) => t.trim()) } : {})
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const artifact of result.items) {
+        console.log(`${artifact.id}\t${artifact.kind}\t${artifact.title}`);
+      }
+      console.error(`Found ${result.total} artifact(s) matching "${result.query}".`);
+    });
+
+  knowledge
+    .command("link")
+    .description("Link a knowledge artifact to a Linear issue")
+    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .requiredOption("--artifact <id>", "Artifact ID to link")
+    .requiredOption("--issue <id>", "Linear issue ID to link to")
+    .option("--apply", "Apply the link action")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: KnowledgeLinkCommandOptions) => {
+      const result = await linkKnowledgeArtifact(options.registry, {
+        artifactId: options.artifact,
+        issueId: options.issue,
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.error(`[knowledge] ${result.action} ${result.artifactId} -> ${result.issueId}`);
+    });
+
+  knowledge
+    .command("validate")
+    .description("Validate knowledge registry structure and artifact contracts")
+    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .option("--strict", "Escalate warnings to strict checks")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: KnowledgeValidateCommandOptions) => {
+      const result = await validateKnowledgeRegistry(options.registry, {
+        strict: Boolean(options.strict)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.error(`Knowledge validate ${result.ok ? "OK" : "FAILED"}: total=${result.total}.`);
+        printValidationIssues("knowledge", result.warnings, "warning");
+        printValidationIssues("knowledge", result.errors, "error");
+      }
+
+      if (!result.ok) {
+        throw createCliError(`knowledge validate failed with ${result.errors.length} error(s).`, 3);
+      }
+    });
+
   program.addCommand(config);
   program.addCommand(instructions);
   program.addCommand(skills);
   program.addCommand(tools);
   program.addCommand(prompts);
+  program.addCommand(agents);
+  program.addCommand(knowledge);
   await program.parseAsync(argv);
 }

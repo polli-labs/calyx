@@ -1,0 +1,29 @@
+{
+  "version": "2026-02-27",
+  "artifacts": [
+    {
+      "id": "execplan-unified-agents",
+      "title": "Unified Agents Package Implementation Mega ExecPlan",
+      "kind": "execplan",
+      "source_path": "planning/execplan-unified-agents-package-implementation-mega.md",
+      "tags": ["calyx", "agents", "implementation"],
+      "linked_issues": ["POL-605", "POL-627"],
+      "created_at": "2026-02-25"
+    },
+    {
+      "id": "runbook-async-runner",
+      "title": "Async Runner Operations Runbook",
+      "kind": "runbook",
+      "source_path": "docs/org-kb/runbooks/async-runner.md",
+      "tags": ["operations", "async"],
+      "linked_issues": ["POL-501"]
+    },
+    {
+      "id": "transcript-sprint-planning",
+      "title": "Sprint Planning W09 Transcript",
+      "kind": "transcript",
+      "tags": ["sprint", "planning"],
+      "created_at": "2026-02-24"
+    }
+  ]
+}

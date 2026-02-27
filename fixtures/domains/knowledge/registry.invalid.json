@@ -1,0 +1,18 @@
+{
+  "version": "2026-02-27",
+  "artifacts": [
+    {
+      "id": "execplan-unified-agents",
+      "title": "Unified Agents Package ExecPlan",
+      "kind": "execplan",
+      "tags": ["calyx", "agents"],
+      "linked_issues": ["POL-605", "POL-605"]
+    },
+    {
+      "id": "execplan-unified-agents",
+      "title": "Duplicate ID Artifact",
+      "kind": "report",
+      "tags": ["calyx"]
+    }
+  ]
+}

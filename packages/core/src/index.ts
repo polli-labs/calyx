@@ -4,7 +4,30 @@ export { compareTomlSemantics } from "./parity";
 export { indexSkillsRegistry, syncSkillsRegistry, validateSkillsRegistry } from "./skills";
 export { indexToolsRegistry, syncToolsRegistry, validateToolsRegistry } from "./tools";
 export { indexPromptsRegistry, syncPromptsRegistry, validatePromptsRegistry } from "./prompts";
+export { deployAgentsRegistry, indexAgentsRegistry, renderAgentProfiles, syncAgentsRegistry, validateAgentsRegistry } from "./agents";
+export {
+  indexKnowledgeRegistry,
+  searchKnowledgeRegistry,
+  linkKnowledgeArtifact,
+  validateKnowledgeRegistry
+} from "./knowledge";
 export type {
+  AgentDeployBackend,
+  AgentHostBinding,
+  AgentLifecycleStatus,
+  AgentProfile,
+  AgentRegistryEntry,
+  AgentsDeployOptions,
+  AgentsDeployResult,
+  AgentsIndexOptions,
+  AgentsIndexResult,
+  AgentsRegistry,
+  AgentsRenderProfilesOptions,
+  AgentsRenderProfilesResult,
+  AgentsSyncOptions,
+  AgentsSyncResult,
+  AgentsValidateOptions,
+  AgentsValidateResult,
   ArrayMergePolicy,
   ArrayPolicyConfig,
   CodexInput,
@@ -27,6 +50,17 @@ export type {
   DomainSyncAction,
   DomainValidationIssue,
   DomainValidationResult,
+  KnowledgeArtifactEntry,
+  KnowledgeArtifactKind,
+  KnowledgeIndexOptions,
+  KnowledgeIndexResult,
+  KnowledgeLinkOptions,
+  KnowledgeLinkResult,
+  KnowledgeRegistry,
+  KnowledgeSearchOptions,
+  KnowledgeSearchResult,
+  KnowledgeValidateOptions,
+  KnowledgeValidateResult,
   PromptBackend,
   PromptRegistryEntry,
   PromptsIndexResult,

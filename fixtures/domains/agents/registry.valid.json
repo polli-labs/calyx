@@ -1,0 +1,39 @@
+{
+  "version": "2026-02-27",
+  "generated_at": "2026-02-27T00:00:00Z",
+  "agents": [
+    {
+      "id": "blade-runner",
+      "name": "Blade Runner",
+      "description": "Primary async execution agent on blade",
+      "hosts": [
+        { "host": "blade", "role": "primary" }
+      ],
+      "capabilities": ["async-runner", "compute"]
+    },
+    {
+      "id": "carbon-runner",
+      "name": "Carbon Runner",
+      "description": "Interactive agent on carbon",
+      "hosts": [
+        { "host": "carbon", "role": "primary" }
+      ],
+      "capabilities": ["interactive"]
+    },
+    {
+      "id": "legacy-agent",
+      "name": "Legacy Agent",
+      "status": "deprecated",
+      "deprecated_by": "blade-runner",
+      "hosts": [
+        { "host": "blade", "role": "secondary" }
+      ]
+    },
+    {
+      "id": "retired-agent",
+      "name": "Retired Agent",
+      "status": "archived",
+      "archived_at": "2026-02-20"
+    }
+  ]
+}

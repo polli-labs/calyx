@@ -1,0 +1,22 @@
+{
+  "version": "2026-02-27",
+  "agents": [
+    {
+      "id": "blade-runner",
+      "name": "Blade Runner",
+      "hosts": [
+        { "host": "blade", "role": "primary" }
+      ]
+    },
+    {
+      "id": "blade-runner",
+      "name": "Duplicate Agent",
+      "status": "deprecated"
+    },
+    {
+      "id": "retired-agent",
+      "name": "Retired Agent",
+      "status": "archived"
+    }
+  ]
+}
