@@ -1,0 +1,18 @@
+version: "2"
+compiler:
+  schema_version: "v0"
+  output:
+    format: toml
+    path_template: "docs/org-kb/agents/staged/{host}/config.toml"
+array_policies:
+  default: replace
+  by_path:
+    codex.profiles.*.trusted_paths: append_unique
+    codex.history.notify: replace
+    codex.mcp_servers.*.args: replace
+secrets:
+  mode: pass_through
+  forbidden_literal_patterns:
+    - "(?i)api[_-]?key\\s*=\\s*\"[A-Za-z0-9]"
+    - "(?i)bearer\\s+[A-Za-z0-9._-]{20,}"
+codex: {}

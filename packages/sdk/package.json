@@ -1,0 +1,19 @@
+{
+  "name": "@polli-labs/calyx-sdk",
+  "version": "0.1.0",
+  "description": "Extension SDK contracts for Calyx.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

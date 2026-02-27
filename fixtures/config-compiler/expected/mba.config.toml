@@ -1,0 +1,202 @@
+# ===============================
+# Codex CLI — Global configuration (mba / macOS)
+# ===============================
+
+# Default profile & model
+profile = "full-auto"
+model = "gpt-5.3-codex"
+model_reasoning_effort = "xhigh"
+model_reasoning_summary = "detailed"
+model_verbosity = "high"
+model_supports_reasoning_summaries = true
+show_raw_agent_reasoning = true
+tool_output_token_limit = 15_000
+web_search = "live"
+project_doc_fallback_filenames = [ "CLAUDE.md" ]
+file_opener = "cursor"
+personality = "none"
+
+[profiles.full-auto]
+model = "gpt-5.3-codex"
+model_reasoning_effort = "xhigh"
+personality = "none"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+trusted_paths = [
+  "/Users/caleb/.agents",
+  "/Users/caleb/.oracle",
+  "/Users/caleb/.claude",
+  "/Users/caleb/.codex",
+  "/Users/caleb/.config/polli/bin",
+  "/Users/caleb/projects",
+  "/Users/caleb/obsmd",
+  "/Users/caleb/repo"
+]
+
+[profiles.runner]
+model = "gpt-5.3-codex"
+model_reasoning_effort = "high"
+personality = "none"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+trusted_paths = [
+  "/Users/caleb/.agents",
+  "/Users/caleb/.oracle",
+  "/Users/caleb/.claude",
+  "/Users/caleb/.codex",
+  "/Users/caleb/.config/polli/bin",
+  "/Users/caleb/projects",
+  "/Users/caleb/obsmd",
+  "/Users/caleb/repo"
+]
+
+# Lightweight runner: gpt-5.3-codex-spark (1000+ tps, 128k ctx).
+# Best for: short-horizon tasks, explore sweeps, doc generation, fast iterations.
+# Avoid for: multi-step reasoning, large-context analysis, long rollouts.
+[profiles.runner-light]
+model = "gpt-5.3-codex-spark"
+model_reasoning_effort = "high"
+personality = "none"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+trusted_paths = [
+  "/Users/caleb/.agents",
+  "/Users/caleb/.oracle",
+  "/Users/caleb/.claude",
+  "/Users/caleb/.codex",
+  "/Users/caleb/.config/polli/bin",
+  "/Users/caleb/projects",
+  "/Users/caleb/obsmd",
+  "/Users/caleb/repo"
+]
+
+[profiles.auto]
+sandbox_mode = "workspace-write"
+approval_policy = "on-failure"
+
+[profiles.safe]
+sandbox_mode = "read-only"
+approval_policy = "on-request"
+
+[mcp_servers.playwright]
+command = "npx"
+args = [
+  "@playwright/mcp@latest",
+  "--browser",
+  "chrome",
+  "--executable-path=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+]
+enabled = false
+user_agent = "Codex CLI (macOS)"
+
+  [mcp_servers.playwright.env]
+  PLAYWRIGHT_BROWSERS_PATH = "$HOME/Library/Caches/ms-playwright"
+
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+startup_timeout_sec = 30
+tool_timeout_sec = 60
+bearer_token_env_var = "LINEAR_API_KEY"
+
+[mcp_servers.agent-mail]
+url = "http://blade:8765/mcp/"
+bearer_token_env_var = "AGENT_MAIL_BEARER"
+startup_timeout_sec = 30
+tool_timeout_sec = 60
+
+[features]
+skills = true
+view_image_tool = true
+rmcp_client = true
+shell_tool = true
+exec_policy = true
+remote_compaction = true
+remote_models = true
+multi_agent = true
+steer = true
+shell_snapshot = true
+apps = true
+apps_mcp_gateway = true
+sqlite = true
+memories = true
+personality = true
+
+[history]
+persistence = "save-all"
+notify = [
+  "bash",
+  "-lc",
+  "$HOME/.agents/run/codex-notify-agent-mail \"$0\""
+]
+
+[projects."/Users/caleb/projects"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/.config/polli/bin"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/.agents"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/obsmd"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/typus"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/polli"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/cosm-c360-tools"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/pollinalysis-tools"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/linnaeus"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/linnaeus-deployment"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/cntxt"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/ibrida"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/ibridDB"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/cosmos"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/build"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/utils"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/configs"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/repo/work"]
+trust_level = "trusted"
+
+[projects."/Users/caleb/Library/Application Support/minecraft"]
+trust_level = "trusted"
+
+# -------------------------------
+# OTel telemetry (POL-432)
+# -------------------------------
+[otel]
+environment = "polli-dev"
+log_user_prompt = true
+
+[otel.exporter.otlp-http]
+endpoint = "http://blade:4318/v1/logs"
+protocol = "binary"
+headers = { "x-polli-host" = "mba" }
+
+[notice]
+hide_full_access_warning = true

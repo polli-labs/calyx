@@ -1,0 +1,26 @@
+{
+  "name": "@polli-labs/calyx",
+  "version": "0.1.0",
+  "description": "Calyx CLI.",
+  "type": "module",
+  "bin": {
+    "calyx": "dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json --clean && tsup src/bin.ts --format esm --out-dir dist --target node22 --tsconfig tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@polli-labs/calyx-core": "workspace:*",
+    "commander": "^13.1.0"
+  }
+}

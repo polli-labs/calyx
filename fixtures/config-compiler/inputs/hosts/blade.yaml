@@ -1,0 +1,208 @@
+{
+  "codex": {
+    "features": {
+      "exec_policy": true,
+      "memories": true,
+      "multi_agent": true,
+      "personality": true,
+      "remote_compaction": true,
+      "remote_models": true,
+      "rmcp_client": true,
+      "shell_snapshot": true,
+      "shell_tool": true,
+      "skills": true,
+      "sqlite": true,
+      "steer": true,
+      "view_image_tool": true
+    },
+    "history": {
+      "notify": [
+        "bash",
+        "-lc",
+        "$HOME/.agents/run/codex-notify-agent-mail \"$0\""
+      ],
+      "persistence": "save-all"
+    },
+    "mcp_servers": {
+      "agent-mail": {
+        "bearer_token_env_var": "AGENT_MAIL_BEARER",
+        "startup_timeout_sec": 30,
+        "tool_timeout_sec": 60,
+        "url": "http://blade:8765/mcp/"
+      },
+      "linear": {
+        "bearer_token_env_var": "LINEAR_API_KEY",
+        "startup_timeout_sec": 30,
+        "tool_timeout_sec": 60,
+        "url": "https://mcp.linear.app/mcp"
+      },
+      "playwright": {
+        "args": [
+          "@playwright/mcp@0.0.52",
+          "--headless"
+        ],
+        "command": "npx",
+        "enabled": false,
+        "env": {
+          "PLAYWRIGHT_BROWSERS_PATH": "/home/caleb/.cache/ms-playwright"
+        }
+      }
+    },
+    "notice": {
+      "hide_full_access_warning": true
+    },
+    "otel": {
+      "environment": "polli-dev",
+      "exporter": {
+        "otlp-http": {
+          "endpoint": "http://blade:4318/v1/logs",
+          "headers": {
+            "x-polli-host": "blade"
+          },
+          "protocol": "binary"
+        }
+      },
+      "log_user_prompt": true
+    },
+    "profiles": {
+      "auto": {
+        "approval_policy": "on-failure",
+        "sandbox_mode": "workspace-write"
+      },
+      "full-auto": {
+        "approval_policy": "never",
+        "model": "gpt-5.3-codex",
+        "model_reasoning_effort": "xhigh",
+        "personality": "none",
+        "sandbox_mode": "danger-full-access",
+        "trusted_paths": [
+          "/home/caleb/.agents",
+          "/home/caleb/.oracle",
+          "/home/caleb/.claude",
+          "/home/caleb/.codex",
+          "/home/caleb/.config/polli/bin",
+          "/home/caleb/projects",
+          "/home/caleb/obsmd",
+          "/home/caleb/repo",
+          "/home/caleb/data",
+          "/home/caleb/venvs",
+          "/peach",
+          "/banana",
+          "/datasets",
+          "/general",
+          "/training"
+        ]
+      },
+      "runner": {
+        "approval_policy": "never",
+        "model": "gpt-5.3-codex",
+        "model_reasoning_effort": "high",
+        "personality": "none",
+        "sandbox_mode": "danger-full-access",
+        "trusted_paths": [
+          "/home/caleb/.agents",
+          "/home/caleb/.oracle",
+          "/home/caleb/.claude",
+          "/home/caleb/.codex",
+          "/home/caleb/.config/polli/bin",
+          "/home/caleb/projects",
+          "/home/caleb/obsmd",
+          "/home/caleb/repo",
+          "/home/caleb/data",
+          "/home/caleb/venvs",
+          "/peach",
+          "/banana",
+          "/datasets",
+          "/general",
+          "/training"
+        ]
+      },
+      "runner-light": {
+        "approval_policy": "never",
+        "model": "gpt-5.3-codex-spark",
+        "model_reasoning_effort": "high",
+        "personality": "none",
+        "sandbox_mode": "danger-full-access",
+        "trusted_paths": [
+          "/home/caleb/.agents",
+          "/home/caleb/.oracle",
+          "/home/caleb/.claude",
+          "/home/caleb/.codex",
+          "/home/caleb/.config/polli/bin",
+          "/home/caleb/projects",
+          "/home/caleb/obsmd",
+          "/home/caleb/repo",
+          "/home/caleb/data",
+          "/home/caleb/venvs",
+          "/peach",
+          "/banana",
+          "/datasets",
+          "/general",
+          "/training"
+        ]
+      },
+      "safe": {
+        "approval_policy": "on-request",
+        "sandbox_mode": "read-only"
+      }
+    },
+    "projects": {
+      "/home/caleb/.agents": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/.config/polli/bin": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/obsmd": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/projects": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/configs": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/cosmos": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/ibrida": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/polli": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/polli-assets": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/typus": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/utils": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/repo/work": {
+        "trust_level": "trusted"
+      }
+    },
+    "top_level": {
+      "file_opener": "cursor",
+      "model": "gpt-5.3-codex",
+      "model_reasoning_effort": "xhigh",
+      "model_reasoning_summary": "detailed",
+      "model_supports_reasoning_summaries": true,
+      "model_verbosity": "high",
+      "personality": "none",
+      "profile": "full-auto",
+      "project_doc_fallback_filenames": [
+        "CLAUDE.md"
+      ],
+      "show_raw_agent_reasoning": true,
+      "tool_output_token_limit": 15000,
+      "web_search": "live"
+    }
+  },
+  "home": "/home/caleb",
+  "host": "blade",
+  "os": "linux",
+  "user": "caleb"
+}

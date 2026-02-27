@@ -1,0 +1,234 @@
+# ===============================
+# Codex CLI — Global configuration
+# ===============================
+
+# Default profile & model
+profile = "full-auto"
+model = "gpt-5.3-codex"
+model_reasoning_effort = "xhigh"
+model_reasoning_summary="detailed"
+model_verbosity="high"
+model_supports_reasoning_summaries = true
+show_raw_agent_reasoning = true
+tool_output_token_limit = 15000
+web_search = "live"
+personality = "none"
+project_doc_fallback_filenames = ["CLAUDE.md"]
+file_opener = "cursor"
+
+# -------------------------------
+# Profiles
+# -------------------------------
+[profiles.full-auto]
+model = "gpt-5.3-codex"
+model_reasoning_effort = "xhigh"
+personality = "none"
+sandbox_mode    = "danger-full-access"
+approval_policy = "never"
+trusted_paths = [
+  "/home/caleb/.agents",
+  "/home/caleb/.oracle",
+  "/home/caleb/.claude",
+  "/home/caleb/.codex",
+  "/home/caleb/.config/polli/bin",
+  "/home/caleb/projects",
+  "/home/caleb/obsmd",
+  "/home/caleb/repo",
+  "/home/caleb/data",
+  "/home/caleb/venvs",
+  "/peach",
+  "/banana",
+  "/datasets",
+  "/general",
+  "/training",
+]
+
+[profiles.runner]
+model = "gpt-5.3-codex"
+model_reasoning_effort = "high"
+personality = "none"
+sandbox_mode    = "danger-full-access"
+approval_policy = "never"
+trusted_paths = [
+  "/home/caleb/.agents",
+  "/home/caleb/.oracle",
+  "/home/caleb/.claude",
+  "/home/caleb/.codex",
+  "/home/caleb/.config/polli/bin",
+  "/home/caleb/projects",
+  "/home/caleb/obsmd",
+  "/home/caleb/repo",
+  "/home/caleb/data",
+  "/home/caleb/venvs",
+  "/peach",
+  "/banana",
+  "/datasets",
+  "/general",
+  "/training",
+]
+
+# Lightweight runner: gpt-5.3-codex-spark (1000+ tps, 128k ctx).
+# Best for: short-horizon tasks, explore sweeps, doc generation, fast iterations.
+# Avoid for: multi-step reasoning, large-context analysis, long rollouts.
+[profiles.runner-light]
+model = "gpt-5.3-codex-spark"
+model_reasoning_effort = "high"
+personality = "none"
+sandbox_mode    = "danger-full-access"
+approval_policy = "never"
+trusted_paths = [
+  "/home/caleb/.agents",
+  "/home/caleb/.oracle",
+  "/home/caleb/.claude",
+  "/home/caleb/.codex",
+  "/home/caleb/.config/polli/bin",
+  "/home/caleb/projects",
+  "/home/caleb/obsmd",
+  "/home/caleb/repo",
+  "/home/caleb/data",
+  "/home/caleb/venvs",
+  "/peach",
+  "/banana",
+  "/datasets",
+  "/general",
+  "/training",
+]
+
+[profiles.auto]
+# Similar to Codex "Auto"
+sandbox_mode    = "workspace-write"
+approval_policy = "on-failure"
+
+[profiles.safe]
+# Conservative, read-mostly profile
+sandbox_mode    = "read-only"
+approval_policy = "on-request"
+
+# -------------------------------
+# MCP servers
+# -------------------------------
+# Playwright MCP for headless browser automation / E2E flows.
+# Uses npx to fetch @playwright/mcp and launches headless.
+[mcp_servers.playwright]
+enabled = false
+command = "npx"
+args    = ["@playwright/mcp@0.0.52", "--headless"]
+# If you already maintain a shared cache of browsers on this box,
+# point the server at it to avoid redundant downloads:
+env     = { PLAYWRIGHT_BROWSERS_PATH = "/home/caleb/.cache/ms-playwright" }
+
+# Alternative examples you can switch to later:
+# args = ["@playwright/mcp@0.0.52", "--isolated", "--headless"]
+# args = ["@playwright/mcp@0.0.52", "--browser", "chrome", "--headless"]
+# args = ["@playwright/mcp@0.0.52", "--executable-path=/usr/bin/google-chrome", "--headless"]
+
+
+# Added by repo-ops v0.3.3 finalize
+# [mcp_servers.polli_repo_ops]
+# command = "/usr/bin/node"
+# args    = ["packages/repo-ops-mcp/bin/polli-repo-ops-mcp.mjs"]
+# working_directory = "/home/caleb/repo/polli"
+# env = { REPO_OPS_MCP_IDLE_EXIT_MS = "600000", NODE_NO_WARNINGS = "1" }
+
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+startup_timeout_sec = 30
+tool_timeout_sec    = 60
+# Use workspace-wide LINEAR_API_KEY secret instead of OAuth
+bearer_token_env_var = "LINEAR_API_KEY"
+
+[mcp_servers.agent-mail]
+url = "http://blade:8765/mcp/"
+startup_timeout_sec = 30
+tool_timeout_sec    = 60
+bearer_token_env_var = "AGENT_MAIL_BEARER"
+
+
+# -------------------------
+# Shell Environment Policy
+# -------------------------
+
+[features]
+skills = true
+view_image_tool = true
+rmcp_client = true
+shell_tool = true
+exec_policy = true
+remote_compaction = true
+remote_models = true
+multi_agent = true
+steer = true
+shell_snapshot = true
+sqlite = true
+memories = true
+personality = true
+# -------------------------
+# History persistence
+# -------------------------
+
+[history]
+persistence = "save-all"          # Keeps conversation history across sessions
+
+# -------------------------------
+# Notification hooks
+# -------------------------------
+# Runs on agent-turn-complete. Refreshes cass index and posts a lightweight
+# completion ping to agent-mail (best-effort; no secrets printed).
+#
+# Note: Codex passes the JSON payload as an extra arg. With `bash -lc`, the JSON
+# arrives as `$0` (bash's arg0), so we forward it explicitly.
+notify = ["bash", "-lc", "$HOME/.agents/run/codex-notify-agent-mail \"$0\""]
+
+# -------------------------------
+# Trusted projects (Codex-managed)
+# -------------------------------
+[projects."/home/caleb/projects"]
+trust_level = "trusted"
+
+[projects."/home/caleb/.config/polli/bin"]
+trust_level = "trusted"
+
+[projects."/home/caleb/.agents"]
+trust_level = "trusted"
+
+[projects."/home/caleb/obsmd"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/typus"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/polli"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/ibrida"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/cosmos"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/utils"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/configs"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/work"]
+trust_level = "trusted"
+
+[projects."/home/caleb/repo/polli-assets"]
+trust_level = "trusted"
+
+# -------------------------------
+# OTel telemetry (POL-432)
+# -------------------------------
+[otel]
+environment = "polli-dev"
+log_user_prompt = true
+
+[otel.exporter.otlp-http]
+endpoint = "http://blade:4318/v1/logs"
+protocol = "binary"
+headers = { "x-polli-host" = "blade" }
+
+[notice]
+hide_full_access_warning = true

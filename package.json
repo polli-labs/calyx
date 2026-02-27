@@ -1,0 +1,28 @@
+{
+  "name": "calyx-dev",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Private development monorepo for the Calyx agent control plane.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@10.6.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/*' build",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r --filter './packages/*' typecheck",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "@eslint/js": "^9.21.0",
+    "eslint": "^9.21.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.25.0",
+    "vitest": "^2.1.9"
+  }
+}

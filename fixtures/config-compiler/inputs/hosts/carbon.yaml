@@ -1,0 +1,306 @@
+{
+  "codex": {
+    "features": {
+      "apps": true,
+      "apps_mcp_gateway": true,
+      "exec_policy": true,
+      "memories": true,
+      "multi_agent": true,
+      "personality": true,
+      "remote_compaction": true,
+      "remote_models": true,
+      "rmcp_client": true,
+      "shell_snapshot": true,
+      "shell_tool": true,
+      "skills": true,
+      "sqlite": true,
+      "steer": true,
+      "view_image_tool": true
+    },
+    "history": {
+      "notify": [
+        "bash",
+        "-lc",
+        "$HOME/.agents/run/codex-notify-agent-mail \"$0\""
+      ],
+      "persistence": "save-all"
+    },
+    "mcp_servers": {
+      "agent-mail": {
+        "bearer_token_env_var": "AGENT_MAIL_BEARER",
+        "startup_timeout_sec": 30,
+        "tool_timeout_sec": 60,
+        "url": "http://blade:8765/mcp/"
+      },
+      "linear": {
+        "bearer_token_env_var": "LINEAR_API_KEY",
+        "startup_timeout_sec": 30,
+        "tool_timeout_sec": 60,
+        "url": "https://mcp.linear.app/mcp"
+      },
+      "playwright": {
+        "args": [
+          "@playwright/mcp@latest",
+          "--browser",
+          "chrome",
+          "--executable-path=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        ],
+        "command": "npx",
+        "enabled": false,
+        "env": {
+          "PLAYWRIGHT_BROWSERS_PATH": "$HOME/Library/Caches/ms-playwright"
+        },
+        "user_agent": "Codex CLI (macOS)"
+      }
+    },
+    "notice": {
+      "hide_full_access_warning": true
+    },
+    "otel": {
+      "environment": "polli-dev",
+      "exporter": {
+        "otlp-http": {
+          "endpoint": "http://blade:4318/v1/logs",
+          "headers": {
+            "x-polli-host": "carbon"
+          },
+          "protocol": "binary"
+        }
+      },
+      "log_user_prompt": true
+    },
+    "profiles": {
+      "auto": {
+        "approval_policy": "on-failure",
+        "sandbox_mode": "workspace-write"
+      },
+      "full-auto": {
+        "approval_policy": "never",
+        "model": "gpt-5.3-codex",
+        "model_reasoning_effort": "xhigh",
+        "personality": "none",
+        "sandbox_mode": "danger-full-access",
+        "trusted_paths": [
+          "/Users/carbon/.agents",
+          "/Users/carbon/.oracle",
+          "/Users/carbon/.claude",
+          "/Users/carbon/.codex",
+          "/Users/carbon/.config/polli/bin",
+          "/Users/carbon/projects",
+          "/Users/carbon/obsmd",
+          "/Users/carbon/repo",
+          "/home/caleb/.agents",
+          "/home/caleb/.oracle",
+          "/home/caleb/.claude",
+          "/home/caleb/.codex",
+          "/home/caleb/.config/polli/bin",
+          "/home/caleb/projects",
+          "/home/caleb/obsmd",
+          "/home/caleb/repo",
+          "/home/caleb/data",
+          "/home/caleb/venvs",
+          "/peach",
+          "/banana",
+          "/datasets",
+          "/general",
+          "/training",
+          "/Users/caleb/.agents",
+          "/Users/caleb/.oracle",
+          "/Users/caleb/.claude",
+          "/Users/caleb/.codex",
+          "/Users/caleb/.config/polli/bin",
+          "/Users/caleb/projects",
+          "/Users/caleb/obsmd",
+          "/Users/caleb/repo"
+        ]
+      },
+      "runner": {
+        "approval_policy": "never",
+        "model": "gpt-5.3-codex",
+        "model_reasoning_effort": "high",
+        "personality": "none",
+        "sandbox_mode": "danger-full-access",
+        "trusted_paths": [
+          "/Users/carbon/.agents",
+          "/Users/carbon/.oracle",
+          "/Users/carbon/.claude",
+          "/Users/carbon/.codex",
+          "/Users/carbon/.config/polli/bin",
+          "/Users/carbon/projects",
+          "/Users/carbon/obsmd",
+          "/Users/carbon/repo",
+          "/home/caleb/.agents",
+          "/home/caleb/.oracle",
+          "/home/caleb/.claude",
+          "/home/caleb/.codex",
+          "/home/caleb/.config/polli/bin",
+          "/home/caleb/projects",
+          "/home/caleb/obsmd",
+          "/home/caleb/repo",
+          "/home/caleb/data",
+          "/home/caleb/venvs",
+          "/peach",
+          "/banana",
+          "/datasets",
+          "/general",
+          "/training",
+          "/Users/caleb/.agents",
+          "/Users/caleb/.oracle",
+          "/Users/caleb/.claude",
+          "/Users/caleb/.codex",
+          "/Users/caleb/.config/polli/bin",
+          "/Users/caleb/projects",
+          "/Users/caleb/obsmd",
+          "/Users/caleb/repo"
+        ]
+      },
+      "runner-light": {
+        "approval_policy": "never",
+        "model": "gpt-5.3-codex-spark",
+        "model_reasoning_effort": "high",
+        "personality": "none",
+        "sandbox_mode": "danger-full-access",
+        "trusted_paths": [
+          "/Users/carbon/.agents",
+          "/Users/carbon/.oracle",
+          "/Users/carbon/.claude",
+          "/Users/carbon/.codex",
+          "/Users/carbon/.config/polli/bin",
+          "/Users/carbon/projects",
+          "/Users/carbon/obsmd",
+          "/Users/carbon/repo",
+          "/home/caleb/.agents",
+          "/home/caleb/.oracle",
+          "/home/caleb/.claude",
+          "/home/caleb/.codex",
+          "/home/caleb/.config/polli/bin",
+          "/home/caleb/projects",
+          "/home/caleb/obsmd",
+          "/home/caleb/repo",
+          "/home/caleb/data",
+          "/home/caleb/venvs",
+          "/peach",
+          "/banana",
+          "/datasets",
+          "/general",
+          "/training",
+          "/Users/caleb/.agents",
+          "/Users/caleb/.oracle",
+          "/Users/caleb/.claude",
+          "/Users/caleb/.codex",
+          "/Users/caleb/.config/polli/bin",
+          "/Users/caleb/projects",
+          "/Users/caleb/obsmd",
+          "/Users/caleb/repo"
+        ]
+      },
+      "safe": {
+        "approval_policy": "on-request",
+        "sandbox_mode": "read-only"
+      }
+    },
+    "projects": {
+      "/Users/caleb/.agents": {
+        "trust_level": "trusted"
+      },
+      "/Users/caleb/.config/polli/bin": {
+        "trust_level": "trusted"
+      },
+      "/Users/caleb/obsmd": {
+        "trust_level": "trusted"
+      },
+      "/Users/caleb/projects": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/.agents": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/.config/polli/bin": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/Library/Application Support/minecraft": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/obsmd": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/projects": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/build": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/cntxt": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/configs": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/cosm-c360-tools": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/cosmos": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/ibridDB": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/ibrida": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/linnaeus": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/linnaeus-deployment": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/polli": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/pollinalysis-tools": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/typus": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/utils": {
+        "trust_level": "trusted"
+      },
+      "/Users/carbon/repo/work": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/.agents": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/.config/polli/bin": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/obsmd": {
+        "trust_level": "trusted"
+      },
+      "/home/caleb/projects": {
+        "trust_level": "trusted"
+      }
+    },
+    "top_level": {
+      "file_opener": "cursor",
+      "model": "gpt-5.3-codex",
+      "model_reasoning_effort": "high",
+      "model_reasoning_summary": "detailed",
+      "model_supports_reasoning_summaries": true,
+      "model_verbosity": "high",
+      "personality": "none",
+      "profile": "full-auto",
+      "project_doc_fallback_filenames": [
+        "CLAUDE.md"
+      ],
+      "show_raw_agent_reasoning": true,
+      "tool_output_token_limit": 15000,
+      "web_search": "live"
+    }
+  },
+  "home": "/Users/carbon",
+  "host": "carbon",
+  "os": "macos",
+  "user": "carbon"
+}
