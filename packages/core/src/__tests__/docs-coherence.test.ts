@@ -154,4 +154,103 @@ describe("README completeness", () => {
     expect(readme).toContain("Migration wrappers");
     expect(readme).toContain("migration-wrappers.md");
   });
+
+  test("README documents extension model", async () => {
+    const readme = await readFile(path.resolve(process.cwd(), "README.md"), "utf8");
+
+    expect(readme).toContain("extension-sdk.md");
+    expect(readme).toContain("calyx-ext-hello");
+    expect(readme).toContain("@polli-labs/calyx-sdk");
+  });
+
+  test("README documents package boundaries", async () => {
+    const readme = await readFile(path.resolve(process.cwd(), "README.md"), "utf8");
+
+    expect(readme).toContain("@polli-labs/calyx-core");
+    expect(readme).toContain("@polli-labs/calyx");
+    expect(readme).toContain("@polli-labs/calyx-sdk");
+    expect(readme).toContain("@polli-labs/calyx-web");
+  });
+
+  test("README links to all docs", async () => {
+    const readme = await readFile(path.resolve(process.cwd(), "README.md"), "utf8");
+
+    const requiredLinks = [
+      "docs/cli-reference.md",
+      "docs/extension-sdk.md",
+      "docs/migration-guide.md",
+      "docs/migration-wrappers.md",
+      "docs/rc-checklist.md"
+    ];
+
+    for (const link of requiredLinks) {
+      expect(readme, `README missing link: ${link}`).toContain(link);
+    }
+  });
+});
+
+describe("extension SDK doc completeness", () => {
+  test("extension-sdk.md exists and has required sections", async () => {
+    const sdkDoc = await readFile(path.join(docsRoot(), "extension-sdk.md"), "utf8");
+
+    const requiredSections = [
+      "## Concepts",
+      "## Quick start",
+      "## API Reference",
+      "## Lifecycle",
+      "## Compatibility"
+    ];
+
+    for (const section of requiredSections) {
+      expect(sdkDoc, `extension-sdk.md missing section: ${section}`).toContain(section);
+    }
+  });
+
+  test("extension-sdk.md documents all 8 domains", async () => {
+    const sdkDoc = await readFile(path.join(docsRoot(), "extension-sdk.md"), "utf8");
+
+    const domains = [
+      "config", "instructions", "skills", "tools",
+      "prompts", "agents", "knowledge", "exec"
+    ];
+
+    for (const domain of domains) {
+      expect(sdkDoc, `extension-sdk.md missing domain: ${domain}`).toContain(domain);
+    }
+  });
+});
+
+describe("migration guide completeness", () => {
+  test("migration-guide.md exists and covers key topics", async () => {
+    const guide = await readFile(path.join(docsRoot(), "migration-guide.md"), "utf8");
+
+    const requiredTopics = [
+      "Prerequisites",
+      "compatibility wrappers",
+      "canonical commands",
+      "Exit codes",
+      "--json"
+    ];
+
+    for (const topic of requiredTopics) {
+      expect(guide, `migration-guide.md missing topic: ${topic}`).toContain(topic);
+    }
+  });
+});
+
+describe("RC checklist completeness", () => {
+  test("rc-checklist.md exists and has required sections", async () => {
+    const checklist = await readFile(path.join(docsRoot(), "rc-checklist.md"), "utf8");
+
+    const requiredSections = [
+      "## Pre-release checklist",
+      "## Release process",
+      "## Rollback",
+      "## Post-RC"
+    ];
+
+    for (const section of requiredSections) {
+      expect(checklist, `rc-checklist.md missing section: ${section}`).toContain(section);
+    }
+  });
 });

@@ -5,8 +5,12 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
-  release:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,4 +25,33 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - run: echo "Release workflow skeleton ready; publish job will be wired in P2+."
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Publish @polli-labs/calyx-core
+        run: pnpm --filter @polli-labs/calyx-core publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @polli-labs/calyx-sdk
+        run: pnpm --filter @polli-labs/calyx-sdk publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @polli-labs/calyx
+        run: pnpm --filter @polli-labs/calyx publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @polli-labs/calyx-web
+        run: pnpm --filter @polli-labs/calyx-web publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
