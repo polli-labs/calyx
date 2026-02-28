@@ -412,4 +412,107 @@ declare module "@polli-labs/calyx-core" {
     registryPath: string,
     options?: KnowledgeValidateOptions
   ): Promise<KnowledgeValidateResult>;
+
+  // Exec lifecycle domain
+
+  export type ExecRunState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+  export interface ExecLogEntry {
+    timestamp: string;
+    level: "info" | "warn" | "error";
+    message: string;
+  }
+
+  export interface ExecLaunchOptions {
+    command: string;
+    metadata?: Record<string, unknown>;
+    apply?: boolean;
+  }
+
+  export interface ExecLaunchResult {
+    run_id: string;
+    command: string;
+    state: ExecRunState;
+    created_at: string;
+    apply: boolean;
+  }
+
+  export interface ExecStatusOptions {
+    run_id: string;
+  }
+
+  export interface ExecStatusResult {
+    run_id: string;
+    command: string;
+    state: ExecRunState;
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+    exit_code?: number;
+    error?: string;
+    metadata?: Record<string, unknown>;
+  }
+
+  export interface ExecLogsOptions {
+    run_id: string;
+    level?: "info" | "warn" | "error";
+    tail?: number;
+  }
+
+  export interface ExecLogsResult {
+    run_id: string;
+    total: number;
+    entries: ExecLogEntry[];
+  }
+
+  export interface ExecReceiptOptions {
+    run_id: string;
+  }
+
+  export interface ExecReceiptResult {
+    run_id: string;
+    command: string;
+    state: ExecRunState;
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+    exit_code?: number;
+    error?: string;
+    duration_ms?: number;
+    metadata?: Record<string, unknown>;
+    log_summary: {
+      total: number;
+      info: number;
+      warn: number;
+      error: number;
+    };
+    summary: string;
+  }
+
+  export interface ExecValidateOptions {
+    strict?: boolean;
+  }
+
+  export interface ExecValidateResult {
+    ok: boolean;
+    errors: DomainValidationIssue[];
+    warnings: DomainValidationIssue[];
+    version: string;
+    total: number;
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+  }
+
+  export function launchExecRun(storePath: string, options: ExecLaunchOptions): Promise<ExecLaunchResult>;
+
+  export function getExecStatus(storePath: string, options: ExecStatusOptions): Promise<ExecStatusResult>;
+
+  export function getExecLogs(storePath: string, options: ExecLogsOptions): Promise<ExecLogsResult>;
+
+  export function getExecReceipt(storePath: string, options: ExecReceiptOptions): Promise<ExecReceiptResult>;
+
+  export function validateExecStore(storePath: string, options?: ExecValidateOptions): Promise<ExecValidateResult>;
 }

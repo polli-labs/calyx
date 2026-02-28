@@ -4,11 +4,15 @@ import {
   compileFromFiles,
   compareTomlSemantics,
   deployAgentsRegistry,
+  getExecLogs,
+  getExecReceipt,
+  getExecStatus,
   indexAgentsRegistry,
   indexKnowledgeRegistry,
   indexPromptsRegistry,
   indexSkillsRegistry,
   indexToolsRegistry,
+  launchExecRun,
   linkKnowledgeArtifact,
   renderAgentProfiles,
   renderInstructionsFromFiles,
@@ -18,6 +22,7 @@ import {
   syncSkillsRegistry,
   syncToolsRegistry,
   validateAgentsRegistry,
+  validateExecStore,
   validateKnowledgeRegistry,
   validatePromptsRegistry,
   validateSkillsRegistry,
@@ -163,6 +168,39 @@ interface KnowledgeValidateCommandOptions {
   json?: boolean;
 }
 
+interface ExecLaunchCommandOptions {
+  store: string;
+  command: string;
+  apply?: boolean;
+  json?: boolean;
+}
+
+interface ExecStatusCommandOptions {
+  store: string;
+  runId: string;
+  json?: boolean;
+}
+
+interface ExecLogsCommandOptions {
+  store: string;
+  runId: string;
+  level?: string;
+  tail?: string;
+  json?: boolean;
+}
+
+interface ExecReceiptCommandOptions {
+  store: string;
+  runId: string;
+  json?: boolean;
+}
+
+interface ExecValidateCommandOptions {
+  store: string;
+  strict?: boolean;
+  json?: boolean;
+}
+
 interface CliError extends Error {
   exitCode?: number;
 }
@@ -214,6 +252,15 @@ function parseKnowledgeKind(rawValue: string): KnowledgeArtifactKind {
   }
 
   throw createCliError(`Invalid --kind value: ${rawValue}. Must be one of: execplan, transcript, report, runbook, reference.`, 2);
+}
+
+function parseLogLevel(rawValue: string): "info" | "warn" | "error" {
+  const value = rawValue.trim().toLowerCase();
+  if (value === "info" || value === "warn" || value === "error") {
+    return value;
+  }
+
+  throw createCliError(`Invalid --level value: ${rawValue}. Must be one of: info, warn, error.`, 2);
 }
 
 function issueText(issue: DomainValidationIssue): string {
@@ -917,6 +964,140 @@ export async function runCli(argv = process.argv): Promise<void> {
       }
     });
 
+  const exec = new Command("exec").description("Execution lifecycle commands (launch/status/logs/receipt)");
+
+  exec
+    .command("launch")
+    .description("Launch a new execution run (plan/apply)")
+    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .requiredOption("--command <command>", "Command string to launch")
+    .option("--apply", "Apply the launch (create a real run record)")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExecLaunchCommandOptions) => {
+      const result = await launchExecRun(options.store, {
+        command: options.command,
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.error(
+        `[exec] ${result.apply ? "launched" : "plan-launch"} run ${result.run_id}: command="${result.command}", state=${result.state}`
+      );
+    });
+
+  exec
+    .command("status")
+    .description("Get status of an execution run")
+    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .requiredOption("--run-id <id>", "Run ID to query")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExecStatusCommandOptions) => {
+      const result = await getExecStatus(options.store, {
+        run_id: options.runId
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      const parts = [`${result.run_id}: ${result.state}`];
+      if (result.exit_code !== undefined) {
+        parts.push(`exit_code=${result.exit_code}`);
+      }
+      if (result.error) {
+        parts.push(`error: ${result.error}`);
+      }
+      console.log(parts.join(", "));
+    });
+
+  exec
+    .command("logs")
+    .description("View logs of an execution run")
+    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .requiredOption("--run-id <id>", "Run ID to query")
+    .option("--level <level>", "Filter by log level (info|warn|error)")
+    .option("--tail <n>", "Show only the last N log entries")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExecLogsCommandOptions) => {
+      const result = await getExecLogs(options.store, {
+        run_id: options.runId,
+        ...(options.level ? { level: parseLogLevel(options.level) } : {}),
+        ...(options.tail ? { tail: parseInt(options.tail, 10) } : {})
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const entry of result.entries) {
+        console.log(`[${entry.timestamp}] ${entry.level.toUpperCase()}: ${entry.message}`);
+      }
+      console.error(`${result.total} log entries for run ${result.run_id}.`);
+    });
+
+  exec
+    .command("receipt")
+    .description("Generate a receipt for an execution run")
+    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .requiredOption("--run-id <id>", "Run ID to query")
+    .option("--json", "Print machine-readable JSON receipt")
+    .action(async (options: ExecReceiptCommandOptions) => {
+      const result = await getExecReceipt(options.store, {
+        run_id: options.runId
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(result.summary);
+      console.log(`  command: ${result.command}`);
+      console.log(`  created: ${result.created_at}`);
+      if (result.started_at) {
+        console.log(`  started: ${result.started_at}`);
+      }
+      if (result.completed_at) {
+        console.log(`  completed: ${result.completed_at}`);
+      }
+      if (result.duration_ms !== undefined) {
+        console.log(`  duration: ${result.duration_ms}ms`);
+      }
+      console.log(`  logs: ${result.log_summary.total} total (${result.log_summary.info} info, ${result.log_summary.warn} warn, ${result.log_summary.error} error)`);
+    });
+
+  exec
+    .command("validate")
+    .description("Validate exec run store structure and lifecycle constraints")
+    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .option("--strict", "Escalate warnings to strict checks")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExecValidateCommandOptions) => {
+      const result = await validateExecStore(options.store, {
+        strict: Boolean(options.strict)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.error(
+          `Exec validate ${result.ok ? "OK" : "FAILED"}: total=${result.total}, queued=${result.queued}, running=${result.running}, succeeded=${result.succeeded}, failed=${result.failed}, cancelled=${result.cancelled}.`
+        );
+        printValidationIssues("exec", result.warnings, "warning");
+        printValidationIssues("exec", result.errors, "error");
+      }
+
+      if (!result.ok) {
+        throw createCliError(`exec validate failed with ${result.errors.length} error(s).`, 3);
+      }
+    });
+
   program.addCommand(config);
   program.addCommand(instructions);
   program.addCommand(skills);
@@ -924,5 +1105,6 @@ export async function runCli(argv = process.argv): Promise<void> {
   program.addCommand(prompts);
   program.addCommand(agents);
   program.addCommand(knowledge);
+  program.addCommand(exec);
   await program.parseAsync(argv);
 }

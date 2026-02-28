@@ -490,3 +490,111 @@ export interface KnowledgeValidateResult extends DomainValidationResult {
   version: string;
   total: number;
 }
+
+// ── Exec lifecycle domain ───────────────────────────────────────────
+
+export type ExecRunState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface ExecLogEntry {
+  timestamp: string;
+  level: "info" | "warn" | "error";
+  message: string;
+}
+
+export interface ExecRunRecord {
+  run_id: string;
+  command: string;
+  state: ExecRunState;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  exit_code?: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
+  logs?: ExecLogEntry[];
+}
+
+export interface ExecRunStore {
+  version: string;
+  runs: ExecRunRecord[];
+}
+
+export interface ExecLaunchOptions {
+  command: string;
+  metadata?: Record<string, unknown>;
+  apply?: boolean;
+}
+
+export interface ExecLaunchResult {
+  run_id: string;
+  command: string;
+  state: ExecRunState;
+  created_at: string;
+  apply: boolean;
+}
+
+export interface ExecStatusOptions {
+  run_id: string;
+}
+
+export interface ExecStatusResult {
+  run_id: string;
+  command: string;
+  state: ExecRunState;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  exit_code?: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ExecLogsOptions {
+  run_id: string;
+  level?: "info" | "warn" | "error";
+  tail?: number;
+}
+
+export interface ExecLogsResult {
+  run_id: string;
+  total: number;
+  entries: ExecLogEntry[];
+}
+
+export interface ExecReceiptOptions {
+  run_id: string;
+}
+
+export interface ExecReceiptResult {
+  run_id: string;
+  command: string;
+  state: ExecRunState;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  exit_code?: number;
+  error?: string;
+  duration_ms?: number;
+  metadata?: Record<string, unknown>;
+  log_summary: {
+    total: number;
+    info: number;
+    warn: number;
+    error: number;
+  };
+  summary: string;
+}
+
+export interface ExecValidateOptions {
+  strict?: boolean;
+}
+
+export interface ExecValidateResult extends DomainValidationResult {
+  version: string;
+  total: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+}

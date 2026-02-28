@@ -251,6 +251,169 @@ calyx knowledge validate --registry <path> [--strict] [--json]
 
 ---
 
+## Exec Commands
+
+Execution lifecycle management: launch, status, logs, and receipt.
+
+The exec domain provides a durable run-record contract for tracking command execution through lifecycle states (`queued` → `running` → `succeeded`/`failed`/`cancelled`). All commands operate against a JSON run store.
+
+### `calyx exec launch`
+
+Launch a new execution run. Without `--apply`, plans the launch. With `--apply`, creates a run record.
+
+```bash
+calyx exec launch --store <path> --command <command> [--apply] [--json]
+```
+
+**Options:**
+- `--store <path>` (required) — Path to exec run store JSON
+- `--command <command>` (required) — Command string to launch
+- `--apply` — Create a real run record (default: plan-only)
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success (plan or launch applied)
+- `1` — Store read/parse/validation error
+
+**Example:**
+```bash
+# Plan a launch (dry run)
+calyx exec launch --store store.json --command "calyx config compile --host blade"
+
+# Apply the launch
+calyx exec launch --store store.json --command "calyx agents deploy --apply" --apply
+```
+
+### `calyx exec status`
+
+Get the current status of an execution run.
+
+```bash
+calyx exec status --store <path> --run-id <id> [--json]
+```
+
+**Options:**
+- `--store <path>` (required) — Path to exec run store JSON
+- `--run-id <id>` (required) — Run ID to query
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Store error or run not found
+
+**Example:**
+```bash
+# Human-readable status
+calyx exec status --store store.json --run-id run-001
+
+# JSON status for scripting
+calyx exec status --store store.json --run-id run-001 --json
+```
+
+### `calyx exec logs`
+
+View logs for an execution run, with optional filtering.
+
+```bash
+calyx exec logs --store <path> --run-id <id> [--level <level>] [--tail <n>] [--json]
+```
+
+**Options:**
+- `--store <path>` (required) — Path to exec run store JSON
+- `--run-id <id>` (required) — Run ID to query
+- `--level <level>` — Filter by log level: `info`, `warn`, `error`
+- `--tail <n>` — Show only the last N log entries
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success (including zero log entries)
+- `1` — Store error or run not found
+- `2` — Invalid `--level` value
+
+**Example:**
+```bash
+# View all logs
+calyx exec logs --store store.json --run-id run-001
+
+# View only errors
+calyx exec logs --store store.json --run-id run-001 --level error
+
+# Last 5 entries
+calyx exec logs --store store.json --run-id run-001 --tail 5
+```
+
+### `calyx exec receipt`
+
+Generate a receipt for an execution run, including duration, log summary, and human-readable summary.
+
+The receipt includes both machine-readable JSON fields and a `summary` string for human consumption.
+
+```bash
+calyx exec receipt --store <path> --run-id <id> [--json]
+```
+
+**Options:**
+- `--store <path>` (required) — Path to exec run store JSON
+- `--run-id <id>` (required) — Run ID to query
+- `--json` — Print full machine-readable JSON receipt
+
+**Exit codes:**
+- `0` — Success
+- `1` — Store error or run not found
+
+**Example:**
+```bash
+# Human-readable receipt
+calyx exec receipt --store store.json --run-id run-001
+# Output:
+# run run-001: succeeded, exit_code=0, duration=4.0s
+#   command: calyx config compile --host blade
+#   created: 2026-02-28T10:00:00Z
+#   started: 2026-02-28T10:00:01Z
+#   completed: 2026-02-28T10:00:05Z
+#   duration: 4000ms
+#   logs: 4 total (3 info, 1 warn, 0 error)
+
+# JSON receipt for agent consumption
+calyx exec receipt --store store.json --run-id run-001 --json
+```
+
+### `calyx exec validate`
+
+Validate exec run store structure and lifecycle constraints.
+
+```bash
+calyx exec validate --store <path> [--strict] [--json]
+```
+
+**Options:**
+- `--store <path>` (required) — Path to exec run store JSON
+- `--strict` — Escalate warnings (e.g., missing `completed_at` on terminal states) to errors
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Validation passed
+- `1` — Store read/parse error
+- `3` — Validation failed (errors found)
+
+**Validation checks:**
+- Duplicate `run_id` values
+- Succeeded runs with non-zero `exit_code`
+- Timestamp ordering (`created_at` ≤ `started_at` ≤ `completed_at`)
+- Terminal states missing `completed_at` (warning; error in strict mode)
+- Active states missing `started_at` (warning; error in strict mode)
+- Failed runs missing both `exit_code` and `error` (warning; error in strict mode)
+
+**Example:**
+```bash
+calyx exec validate --store store.json --strict
+# Exec validate FAILED: total=4, queued=0, running=0, succeeded=3, failed=1, cancelled=0.
+# [exec] errors:
+# - (exec.duplicate-run-id) runs[1].run_id: Duplicate run_id "run-dup-001".
+```
+
+---
+
 ## Exit Code Convention
 
 All calyx commands follow a consistent exit code convention:

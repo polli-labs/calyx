@@ -11,6 +11,7 @@ export {
   linkKnowledgeArtifact,
   validateKnowledgeRegistry
 } from "./knowledge";
+export { launchExecRun, getExecStatus, getExecLogs, getExecReceipt, validateExecStore } from "./exec";
 export type {
   AgentDeployBackend,
   AgentHostBinding,
@@ -88,5 +89,19 @@ export type {
   ToolsSyncResult,
   ToolsValidateOptions,
   ToolsValidateResult,
-  ValidationMode
+  ValidationMode,
+  ExecLaunchOptions,
+  ExecLaunchResult,
+  ExecLogEntry,
+  ExecLogsOptions,
+  ExecLogsResult,
+  ExecReceiptOptions,
+  ExecReceiptResult,
+  ExecRunRecord,
+  ExecRunState,
+  ExecRunStore,
+  ExecStatusOptions,
+  ExecStatusResult,
+  ExecValidateOptions,
+  ExecValidateResult
 } from "./types";
