@@ -1,5 +1,285 @@
 # Calyx CLI Reference
 
+Complete command reference for the `calyx` CLI. All commands support `--json` for machine-readable output.
+
+## Config Commands
+
+Fleet/host YAML compilation to Codex TOML.
+
+### `calyx config compile`
+
+Compile fleet/host YAML inputs to Codex TOML with semantic parity checking.
+
+```bash
+calyx config compile --fleet <path> --hosts-dir <path> --host <host> [options]
+```
+
+**Options:**
+- `--fleet <path>` (required) — Path to fleet.v2.yaml
+- `--hosts-dir <path>` (required) — Path to hosts directory
+- `--host <host>` (required) — Host key to compile
+- `--out <path>` — Write output TOML path
+- `--mode <mode>` — Validation mode: `strict` or `advisory` (default: `strict`)
+- `--write` — Write TOML to `--out` path
+- `--parity <path>` — Expected TOML fixture path for semantic parity check
+- `--json` — Print machine-readable summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Runtime error (file not found, parse failure, parity mismatch)
+
+**Example:**
+```bash
+calyx config compile \
+  --fleet fixtures/config-compiler/inputs/fleet.v2.yaml \
+  --hosts-dir fixtures/config-compiler/inputs/hosts \
+  --host blade \
+  --parity fixtures/config-compiler/expected/blade.config.toml
+```
+
+---
+
+## Instructions Commands
+
+Instruction template rendering and parity verification.
+
+### `calyx instructions render`
+
+Render instruction templates with deterministic token and partial semantics.
+
+```bash
+calyx instructions render --fleet <path> --hosts-dir <path> --template <path> --partials-dir <path> [options]
+```
+
+**Options:**
+- `--fleet <path>` (required) — Path to fleet instructions YAML
+- `--hosts-dir <path>` (required) — Path to host instructions directory
+- `--template <path>` (required) — Path to instruction template (`*.md.mustache`)
+- `--partials-dir <path>` (required) — Path to partial templates directory
+- `--host <host>` — Host alias to render (single host)
+- `--all` — Render all hosts under `--hosts-dir`
+- `--out-dir <path>` — Write rendered output files to this directory
+- `--json` — Print machine-readable summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Runtime error (missing template, parse failure)
+
+**Example:**
+```bash
+calyx instructions render \
+  --fleet fixtures/instructions/inputs/fleet.v1.yaml \
+  --hosts-dir fixtures/instructions/inputs/hosts \
+  --template fixtures/instructions/templates/AGENTS.sample.md.mustache \
+  --partials-dir fixtures/instructions/templates/partials \
+  --host blade
+```
+
+### `calyx instructions verify`
+
+Verify rendered instruction outputs against expected fixtures, reporting drift.
+
+```bash
+calyx instructions verify --fleet <path> --hosts-dir <path> --template <path> --partials-dir <path> --expected-dir <path> [options]
+```
+
+**Options:**
+- All options from `instructions render`, plus:
+- `--expected-dir <path>` (required) — Path to expected rendered outputs
+
+**Exit codes:**
+- `0` — Verification passed (no drift)
+- `1` — Runtime error
+- `3` — Verification failed (drift detected)
+
+**Example:**
+```bash
+calyx instructions verify \
+  --fleet fixtures/instructions/inputs/fleet.v1.yaml \
+  --hosts-dir fixtures/instructions/inputs/hosts \
+  --template fixtures/instructions/templates/AGENTS.sample.md.mustache \
+  --partials-dir fixtures/instructions/templates/partials \
+  --all \
+  --expected-dir fixtures/instructions/expected
+```
+
+---
+
+## Skills Commands
+
+Skills registry management: index, sync, and validate.
+
+### `calyx skills index`
+
+Index skills from a registry, filtering by lifecycle status.
+
+```bash
+calyx skills index --registry <path> [--include-archived] [--exclude-deprecated] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to skills registry JSON
+- `--include-archived` — Include archived skills in output
+- `--exclude-deprecated` — Exclude deprecated skills from output
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Registry read/parse/validation error
+
+### `calyx skills sync`
+
+Sync skills from a registry into target backend(s) using the plan/apply contract.
+
+```bash
+calyx skills sync --registry <path> [--backend <backend>] [--apply] [--prune-deprecated] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to skills registry JSON
+- `--backend <backend>` — Sync backend: `claude`, `codex`, `agents`, or `all` (default: `all`)
+- `--apply` — Apply sync actions (default: plan-only)
+- `--include-archived` — Include archived skills
+- `--exclude-deprecated` — Exclude deprecated skills
+- `--prune-deprecated` — Plan or apply prune actions for deprecated skills
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Registry read/parse/validation error
+- `2` — Invalid `--backend` value
+
+### `calyx skills validate`
+
+Validate skills registry structure and lifecycle constraints.
+
+```bash
+calyx skills validate --registry <path> [--strict] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to skills registry JSON
+- `--strict` — Escalate warnings to errors
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Validation passed
+- `1` — Registry read/parse error
+- `3` — Validation failed (errors found)
+
+---
+
+## Tools Commands
+
+Tools registry management: index, sync, and validate.
+
+### `calyx tools index`
+
+Index tools from a registry.
+
+```bash
+calyx tools index --registry <path> [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to tools registry JSON
+- `--json` — Print machine-readable JSON summary
+
+### `calyx tools sync`
+
+Sync tools from a registry into host targets.
+
+```bash
+calyx tools sync --registry <path> [--host <alias> | --all] [--apply] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to tools registry JSON
+- `--host <alias>` — Single host alias to target
+- `--all` — Sync all known hosts
+- `--apply` — Apply sync actions
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Registry read/parse/validation error
+- `2` — `--host` and `--all` used together
+
+### `calyx tools validate`
+
+Validate tools registry structure and version metadata.
+
+```bash
+calyx tools validate --registry <path> [--strict] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to tools registry JSON
+- `--strict` — Escalate warnings to errors
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Validation passed
+- `1` — Registry read/parse error
+- `3` — Validation failed
+
+---
+
+## Prompts Commands
+
+Prompts registry management: index, sync, and validate.
+
+### `calyx prompts index`
+
+Index prompts from a registry.
+
+```bash
+calyx prompts index --registry <path> [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to prompts registry JSON
+- `--json` — Print machine-readable JSON summary
+
+### `calyx prompts sync`
+
+Sync prompts from a registry into backend targets.
+
+```bash
+calyx prompts sync --registry <path> [--backend <backend>] [--apply] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to prompts registry JSON
+- `--backend <backend>` — Sync backend: `claude`, `codex`, or `all` (default: `all`)
+- `--apply` — Apply sync actions
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Registry read/parse/validation error
+- `2` — Invalid `--backend` value
+
+### `calyx prompts validate`
+
+Validate prompts registry structure and variable contracts.
+
+```bash
+calyx prompts validate --registry <path> [--strict] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to prompts registry JSON
+- `--strict` — Escalate warnings to errors
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Validation passed
+- `1` — Registry read/parse error
+- `3` — Validation failed
+
+---
+
 ## Agents Commands
 
 Manage the agents registry: index, render profiles, deploy, sync, and validate.
@@ -24,10 +304,7 @@ calyx agents index --registry <path> [--include-archived] [--exclude-deprecated]
 
 **Example:**
 ```bash
-# Index all active + deprecated agents
 calyx agents index --registry fixtures/domains/agents/registry.valid.json
-
-# Machine-readable output
 calyx agents index --registry registry.json --json
 ```
 
@@ -49,24 +326,9 @@ calyx agents render-profiles --registry <path> [--include-archived] [--exclude-d
 - `0` — Success
 - `1` — Registry read/parse/validation error
 
-**Example:**
-```bash
-# Render profiles as tab-separated text
-calyx agents render-profiles --registry registry.json
-
-# Output:
-# blade-runner   Blade Runner   active   hosts=blade(primary)   capabilities=async-runner, compute
-# carbon-runner  Carbon Runner  active   hosts=carbon(primary)  capabilities=interactive
-
-# JSON output for programmatic consumption
-calyx agents render-profiles --registry registry.json --json
-```
-
 ### `calyx agents deploy`
 
 Deploy agents from a registry into target backend(s) using the plan/apply contract.
-
-Without `--apply`, prints a plan of deploy actions. With `--apply`, executes the deploy.
 
 ```bash
 calyx agents deploy --registry <path> [--backend <backend>] [--apply] [--include-archived] [--exclude-deprecated] [--json]
@@ -84,15 +346,6 @@ calyx agents deploy --registry <path> [--backend <backend>] [--apply] [--include
 - `0` — Success (plan generated or deploy applied)
 - `1` — Registry read/parse/validation error
 - `2` — Invalid `--backend` value
-
-**Example:**
-```bash
-# Plan deploy actions (dry run)
-calyx agents deploy --registry registry.json --backend claude
-
-# Apply deploy actions
-calyx agents deploy --registry registry.json --backend claude --apply
-```
 
 ### `calyx agents sync`
 
@@ -133,14 +386,6 @@ calyx agents validate --registry <path> [--strict] [--json]
 - `1` — Registry read/parse error
 - `3` — Validation failed (errors found)
 
-**Example:**
-```bash
-calyx agents validate --registry registry.json --strict
-# Agents validate FAILED: total=3, active=1, deprecated=1, archived=1.
-# [agents] errors:
-# - (agents.duplicate-id) agents[1].id: Duplicate agent id "blade-runner".
-```
-
 ---
 
 ## Knowledge Commands
@@ -165,15 +410,6 @@ calyx knowledge index --registry <path> [--kind <kind>] [--json]
 - `1` — Registry read/parse/validation error
 - `2` — Invalid `--kind` value
 
-**Example:**
-```bash
-# Index all artifacts
-calyx knowledge index --registry registry.json
-
-# Filter by kind
-calyx knowledge index --registry registry.json --kind execplan
-```
-
 ### `calyx knowledge search`
 
 Search knowledge artifacts by query string, matching against title, id, tags, and linked issues.
@@ -194,15 +430,6 @@ calyx knowledge search --registry <path> --query <query> [--kind <kind>] [--tags
 - `1` — Registry read/parse/validation error
 - `2` — Invalid `--kind` value
 
-**Example:**
-```bash
-# Search by text
-calyx knowledge search --registry registry.json --query "async runner"
-
-# Search by linked issue
-calyx knowledge search --registry registry.json --query "POL-605"
-```
-
 ### `calyx knowledge link`
 
 Link a knowledge artifact to a Linear issue using the plan/apply contract.
@@ -221,15 +448,6 @@ calyx knowledge link --registry <path> --artifact <id> --issue <id> [--apply] [-
 **Exit codes:**
 - `0` — Success (plan-link, link, or already-linked)
 - `1` — Artifact not found or registry error
-
-**Example:**
-```bash
-# Plan a link
-calyx knowledge link --registry registry.json --artifact execplan-unified-agents --issue POL-633
-
-# Apply the link
-calyx knowledge link --registry registry.json --artifact execplan-unified-agents --issue POL-633 --apply
-```
 
 ### `calyx knowledge validate`
 
@@ -275,15 +493,6 @@ calyx exec launch --store <path> --command <command> [--apply] [--json]
 - `0` — Success (plan or launch applied)
 - `1` — Store read/parse/validation error
 
-**Example:**
-```bash
-# Plan a launch (dry run)
-calyx exec launch --store store.json --command "calyx config compile --host blade"
-
-# Apply the launch
-calyx exec launch --store store.json --command "calyx agents deploy --apply" --apply
-```
-
 ### `calyx exec status`
 
 Get the current status of an execution run.
@@ -300,15 +509,6 @@ calyx exec status --store <path> --run-id <id> [--json]
 **Exit codes:**
 - `0` — Success
 - `1` — Store error or run not found
-
-**Example:**
-```bash
-# Human-readable status
-calyx exec status --store store.json --run-id run-001
-
-# JSON status for scripting
-calyx exec status --store store.json --run-id run-001 --json
-```
 
 ### `calyx exec logs`
 
@@ -330,23 +530,9 @@ calyx exec logs --store <path> --run-id <id> [--level <level>] [--tail <n>] [--j
 - `1` — Store error or run not found
 - `2` — Invalid `--level` value
 
-**Example:**
-```bash
-# View all logs
-calyx exec logs --store store.json --run-id run-001
-
-# View only errors
-calyx exec logs --store store.json --run-id run-001 --level error
-
-# Last 5 entries
-calyx exec logs --store store.json --run-id run-001 --tail 5
-```
-
 ### `calyx exec receipt`
 
 Generate a receipt for an execution run, including duration, log summary, and human-readable summary.
-
-The receipt includes both machine-readable JSON fields and a `summary` string for human consumption.
 
 ```bash
 calyx exec receipt --store <path> --run-id <id> [--json]
@@ -361,23 +547,6 @@ calyx exec receipt --store <path> --run-id <id> [--json]
 - `0` — Success
 - `1` — Store error or run not found
 
-**Example:**
-```bash
-# Human-readable receipt
-calyx exec receipt --store store.json --run-id run-001
-# Output:
-# run run-001: succeeded, exit_code=0, duration=4.0s
-#   command: calyx config compile --host blade
-#   created: 2026-02-28T10:00:00Z
-#   started: 2026-02-28T10:00:01Z
-#   completed: 2026-02-28T10:00:05Z
-#   duration: 4000ms
-#   logs: 4 total (3 info, 1 warn, 0 error)
-
-# JSON receipt for agent consumption
-calyx exec receipt --store store.json --run-id run-001 --json
-```
-
 ### `calyx exec validate`
 
 Validate exec run store structure and lifecycle constraints.
@@ -388,7 +557,7 @@ calyx exec validate --store <path> [--strict] [--json]
 
 **Options:**
 - `--store <path>` (required) — Path to exec run store JSON
-- `--strict` — Escalate warnings (e.g., missing `completed_at` on terminal states) to errors
+- `--strict` — Escalate warnings to errors
 - `--json` — Print machine-readable JSON summary
 
 **Exit codes:**
@@ -396,20 +565,34 @@ calyx exec validate --store <path> [--strict] [--json]
 - `1` — Store read/parse error
 - `3` — Validation failed (errors found)
 
-**Validation checks:**
-- Duplicate `run_id` values
-- Succeeded runs with non-zero `exit_code`
-- Timestamp ordering (`created_at` ≤ `started_at` ≤ `completed_at`)
-- Terminal states missing `completed_at` (warning; error in strict mode)
-- Active states missing `started_at` (warning; error in strict mode)
-- Failed runs missing both `exit_code` and `error` (warning; error in strict mode)
+---
 
-**Example:**
-```bash
-calyx exec validate --store store.json --strict
-# Exec validate FAILED: total=4, queued=0, running=0, succeeded=3, failed=1, cancelled=0.
-# [exec] errors:
-# - (exec.duplicate-run-id) runs[1].run_id: Duplicate run_id "run-dup-001".
+## Compatibility Wrappers
+
+Migration wrappers that forward to canonical `calyx` subcommands. Each wrapper emits a deprecation warning and a `calyx.wrapper.invoked` telemetry marker to stderr, making migration usage measurable. See [migration-wrappers.md](./migration-wrappers.md) for the full replacement map.
+
+| Wrapper command | Forwards to | Legacy surface |
+|---|---|---|
+| `calyx skills-sync` | `calyx skills sync` | `dev/run/skills-sync` |
+| `calyx skills-sync-claude` | `calyx skills sync --backend claude` | `dev/run/skills-sync-claude` |
+| `calyx skills-sync-codex` | `calyx skills sync --backend codex` | `dev/run/skills-sync-codex` |
+| `calyx prompts-sync-claude` | `calyx prompts sync --backend claude` | `dev/run/prompts-sync-claude` |
+| `calyx prompts-sync-codex` | `calyx prompts sync --backend codex` | `dev/run/prompts-sync-codex` |
+| `calyx agents-render` | `calyx instructions render` | `dev/run/agents-render` |
+| `calyx exec-launch` | `calyx exec launch` | `dev/run/launch-runner` |
+
+**Telemetry output** (stderr):
+```
+[calyx][deprecated] skills-sync-claude is a compatibility wrapper. Use "calyx skills sync --backend claude".
+[calyx][telemetry] {"event":"calyx.wrapper.invoked","wrapper":"skills-sync-claude","target":"calyx skills sync --backend claude","timestamp":"..."}
+```
+
+**JSON mode:** When `--json` is passed, wrappers return a `{ wrapper, result }` envelope:
+```json
+{
+  "wrapper": { "event": "calyx.wrapper.invoked", "wrapper": "...", "target": "...", "timestamp": "..." },
+  "result": { ... }
+}
 ```
 
 ---

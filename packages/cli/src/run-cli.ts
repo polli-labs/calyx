@@ -1098,6 +1098,173 @@ export async function runCli(argv = process.argv): Promise<void> {
       }
     });
 
+  // ── Compatibility wrappers ──────────────────────────────────────────
+  // Each wrapper forwards to the canonical calyx subcommand, emits a
+  // deprecation warning, and prints a calyx.wrapper.invoked telemetry
+  // marker so migration usage is measurable.
+
+  program
+    .command("skills-sync-claude")
+    .description("Compatibility wrapper: skills sync --backend claude")
+    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--apply", "Apply sync actions")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: SkillsSyncCommandOptions) => {
+      const telemetry = emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
+      const result = await syncSkillsRegistry(options.registry, {
+        backend: "claude",
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify({ wrapper: telemetry, result }, null, 2));
+        return;
+      }
+
+      printSyncActions("skills", result.actions);
+      console.error(`Wrapper ${telemetry.wrapper} generated ${result.actions.length} action(s).`);
+    });
+
+  program
+    .command("skills-sync-codex")
+    .description("Compatibility wrapper: skills sync --backend codex")
+    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--apply", "Apply sync actions")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: SkillsSyncCommandOptions) => {
+      const telemetry = emitWrapperTelemetry("skills-sync-codex", "calyx skills sync --backend codex");
+      const result = await syncSkillsRegistry(options.registry, {
+        backend: "codex",
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify({ wrapper: telemetry, result }, null, 2));
+        return;
+      }
+
+      printSyncActions("skills", result.actions);
+      console.error(`Wrapper ${telemetry.wrapper} generated ${result.actions.length} action(s).`);
+    });
+
+  program
+    .command("prompts-sync-claude")
+    .description("Compatibility wrapper: prompts sync --backend claude")
+    .requiredOption("--registry <path>", "Path to prompts registry JSON")
+    .option("--apply", "Apply sync actions")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: PromptsSyncCommandOptions) => {
+      const telemetry = emitWrapperTelemetry("prompts-sync-claude", "calyx prompts sync --backend claude");
+      const result = await syncPromptsRegistry(options.registry, {
+        backend: "claude",
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify({ wrapper: telemetry, result }, null, 2));
+        return;
+      }
+
+      printSyncActions("prompts", result.actions);
+      console.error(`Wrapper ${telemetry.wrapper} generated ${result.actions.length} action(s).`);
+    });
+
+  program
+    .command("prompts-sync-codex")
+    .description("Compatibility wrapper: prompts sync --backend codex")
+    .requiredOption("--registry <path>", "Path to prompts registry JSON")
+    .option("--apply", "Apply sync actions")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: PromptsSyncCommandOptions) => {
+      const telemetry = emitWrapperTelemetry("prompts-sync-codex", "calyx prompts sync --backend codex");
+      const result = await syncPromptsRegistry(options.registry, {
+        backend: "codex",
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify({ wrapper: telemetry, result }, null, 2));
+        return;
+      }
+
+      printSyncActions("prompts", result.actions);
+      console.error(`Wrapper ${telemetry.wrapper} generated ${result.actions.length} action(s).`);
+    });
+
+  program
+    .command("agents-render")
+    .description("Compatibility wrapper: instructions render (legacy agents-render path)")
+    .requiredOption("--fleet <path>", "Path to fleet instructions YAML")
+    .requiredOption("--hosts-dir <path>", "Path to host instructions directory")
+    .requiredOption("--template <path>", "Path to instruction template (*.md.mustache)")
+    .requiredOption("--partials-dir <path>", "Path to partial templates directory")
+    .option("--host <host>", "Host alias to render")
+    .option("--all", "Render all hosts under --hosts-dir")
+    .option("--out-dir <path>", "Write rendered output files to this directory")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: InstructionsBaseCommandOptions) => {
+      const telemetry = emitWrapperTelemetry("agents-render", "calyx instructions render");
+      const renderOptions = {
+        all: Boolean(options.all),
+        ...(options.host ? { host: options.host } : {}),
+        ...(options.outDir ? { outputDir: options.outDir } : {})
+      };
+      const result = await renderInstructionsFromFiles(
+        {
+          fleetPath: options.fleet,
+          hostsDir: options.hostsDir,
+          templatePath: options.template,
+          partialsDir: options.partialsDir
+        },
+        renderOptions
+      );
+
+      if (options.json) {
+        console.log(JSON.stringify({ wrapper: telemetry, result }, null, 2));
+        return;
+      }
+
+      const firstResult = result.results[0];
+      if (!options.outDir && result.results.length === 1 && firstResult) {
+        process.stdout.write(firstResult.output);
+      }
+
+      if (options.outDir) {
+        for (const hostResult of result.results) {
+          if (hostResult.outputPath) {
+            console.error(`Rendered ${hostResult.host} -> ${hostResult.outputPath}`);
+          }
+        }
+      }
+
+      console.error(`Wrapper ${telemetry.wrapper} rendered ${result.results.length} host(s).`);
+    });
+
+  program
+    .command("exec-launch")
+    .description("Compatibility wrapper: exec launch (legacy launch-runner path)")
+    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .requiredOption("--command <command>", "Command string to launch")
+    .option("--apply", "Apply the launch (create a real run record)")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExecLaunchCommandOptions) => {
+      const telemetry = emitWrapperTelemetry("exec-launch", "calyx exec launch");
+      const result = await launchExecRun(options.store, {
+        command: options.command,
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify({ wrapper: telemetry, result }, null, 2));
+        return;
+      }
+
+      console.error(
+        `[exec] ${result.apply ? "launched" : "plan-launch"} run ${result.run_id}: command="${result.command}", state=${result.state}`
+      );
+      console.error(`Wrapper ${telemetry.wrapper} forwarded to calyx exec launch.`);
+    });
+
   program.addCommand(config);
   program.addCommand(instructions);
   program.addCommand(skills);
