@@ -14,7 +14,8 @@
     "build": "pnpm -r --filter './packages/*' build",
     "lint": "eslint .",
     "typecheck": "pnpm -r --filter './packages/*' typecheck",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",

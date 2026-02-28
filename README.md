@@ -35,11 +35,12 @@ docs/               ADRs, CLI reference, SDK docs, migration guides
 
 ```bash
 pnpm install
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
+pnpm verify   # lint → typecheck → test → build
 ```
+
+Individual stages can also be run separately: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+
+See [CI Reliability Runbook](docs/ci-reliability-runbook.md) for failure classification and CI override policy.
 
 ## Domain commands
 
@@ -151,7 +152,8 @@ See [docs/migration-wrappers.md](docs/migration-wrappers.md) for the full replac
 | [Extension SDK](docs/extension-sdk.md) | SDK contracts, lifecycle hooks, and quick start |
 | [Migration Guide](docs/migration-guide.md) | Step-by-step legacy → calyx transition |
 | [Migration Wrappers](docs/migration-wrappers.md) | Wrapper replacement map and telemetry |
-| [RC Checklist](docs/rc-checklist.md) | Release candidate checklist and runbook |
+| [RC Checklist](docs/rc-checklist.md) | Release candidate checklist, promotion paths, and rollback |
+| [CI Reliability Runbook](docs/ci-reliability-runbook.md) | CI failure taxonomy, decision tree, and override policy |
 | [ADR-0002](docs/adr/adr-0002-repo-structure-and-build.md) | Repo structure, build, and naming decisions |
 
 ## Release
