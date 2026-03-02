@@ -1,0 +1,17 @@
+{
+  "backend": "codex",
+  "apply": false,
+  "version": "2026-02-27",
+  "actions": [
+    {
+      "action": "plan-sync",
+      "id": "agents-fleet",
+      "details": "backend=codex"
+    },
+    {
+      "action": "plan-sync",
+      "id": "agents-fleet-bootstrap",
+      "details": "backend=codex"
+    }
+  ]
+}

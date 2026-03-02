@@ -29,6 +29,7 @@ All four stages must pass. See [CI Reliability Runbook](ci-reliability-runbook.m
 - [ ] `docs/extension-sdk.md` documents SDK contracts, lifecycle, and quick start
 - [ ] `docs/migration-guide.md` covers legacy → calyx transition
 - [ ] `docs/migration-wrappers.md` documents all implemented wrappers
+- [ ] `docs/operator-runbook.md` covers all 8 domains and verification checklist
 - [ ] `docs/ci-reliability-runbook.md` is current
 - [ ] `docs/adr/adr-0002-repo-structure-and-build.md` is current
 - [ ] `README.md` frames package boundaries and extension model

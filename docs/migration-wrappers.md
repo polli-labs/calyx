@@ -12,6 +12,8 @@ Every `Port+Shim` row in the migration map gets a compatibility wrapper in the `
 
 No command is removed until parity gate passes and usage drops below threshold.
 
+**Deprecation timeline:** As of P7A internal adoption cutover (2026-03), all new operator workflows must use canonical commands. Wrapper removal is targeted for post-GA, after `calyx.wrapper.invoked` telemetry confirms zero internal usage. See [operator-runbook.md](operator-runbook.md) for the canonical daily reference.
+
 ## Implemented Wrappers (v0.1.0)
 
 | Legacy surface | Calyx wrapper | Canonical command | Status |

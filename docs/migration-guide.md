@@ -2,6 +2,10 @@
 
 This guide helps teams transition from the legacy `dev/run/*` shell scripts to the unified `calyx` CLI.
 
+## Current status (P7A)
+
+> **Internal operators should be at Phase 3 (canonical commands).** As of P7A internal adoption cutover, all new runbooks and operator workflows must use canonical `calyx <domain> <verb>` commands. Compatibility wrappers remain functional but are deprecated. See the [Operator Runbook](operator-runbook.md) for the canonical daily reference.
+
 ## Overview
 
 Calyx replaces a constellation of ad-hoc Bash/Python scripts under `dev/run/` with a single, typed CLI organized into 8 domain command groups. The migration is incremental — compatibility wrappers let you switch at your own pace.
@@ -110,9 +114,10 @@ Replace `skills` with `tools`, `prompts`, `agents`, or `knowledge` as needed.
 # Before: dev/run/async-runner + dev/run/execplan-receipt
 # After:
 calyx exec launch --store runs.json --command "calyx config compile --host blade" --apply
-calyx exec status --store runs.json --run-id run-001
-calyx exec logs --store runs.json --run-id run-001 --tail 20
-calyx exec receipt --store runs.json --run-id run-001
+RUN_ID="<run-id-from-launch-or-existing-store>"
+calyx exec status --store runs.json --run-id "$RUN_ID"
+calyx exec logs --store runs.json --run-id "$RUN_ID" --tail 20
+calyx exec receipt --store runs.json --run-id "$RUN_ID"
 ```
 
 ## Output modes

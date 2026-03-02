@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [],
+  "version": "2026-02-28",
+  "total": 5,
+  "queued": 1,
+  "running": 1,
+  "succeeded": 1,
+  "failed": 1,
+  "cancelled": 1
+}

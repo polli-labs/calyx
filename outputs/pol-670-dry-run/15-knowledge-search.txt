@@ -1,0 +1,22 @@
+{
+  "query": "exec",
+  "total": 1,
+  "items": [
+    {
+      "id": "execplan-unified-agents",
+      "title": "Unified Agents Package Implementation Mega ExecPlan",
+      "kind": "execplan",
+      "source_path": "planning/execplan-unified-agents-package-implementation-mega.md",
+      "tags": [
+        "calyx",
+        "agents",
+        "implementation"
+      ],
+      "linked_issues": [
+        "POL-605",
+        "POL-627"
+      ],
+      "created_at": "2026-02-25"
+    }
+  ]
+}
