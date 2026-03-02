@@ -1,6 +1,6 @@
 # Operator Runbook: Calyx-First Daily Operations
 
-This runbook is the canonical reference for internal Polli operators using the Calyx CLI. All commands use the canonical `calyx <domain> <verb>` form. Compatibility wrappers (`calyx skills-sync`, `calyx exec-launch`, etc.) are deprecated and should not appear in new workflows.
+This runbook is the canonical reference for internal Polli operators using the Calyx CLI. All commands use the canonical `calyx <domain> <verb>` form. Compatibility wrappers (`calyx skills-sync`, `calyx exec-launch`, etc.) are deprecated and should not appear in new workflows. For first-time setup, see the [Onboarding Guide](onboarding.md).
 
 ## Prerequisites
 

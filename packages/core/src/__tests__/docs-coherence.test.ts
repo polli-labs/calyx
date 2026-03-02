@@ -176,6 +176,7 @@ describe("README completeness", () => {
     const readme = await readFile(path.resolve(process.cwd(), "README.md"), "utf8");
 
     const requiredLinks = [
+      "docs/onboarding.md",
       "docs/cli-reference.md",
       "docs/extension-sdk.md",
       "docs/migration-guide.md",
@@ -340,6 +341,55 @@ describe("skills subsumption catalogue completeness", () => {
     expect(catalogue).toContain("### Phase 8");
     expect(catalogue).toContain("### Phase 9");
     expect(catalogue).toContain("### Post-v1");
+  });
+});
+
+describe("onboarding guide completeness", () => {
+  test("onboarding.md exists and has required sections", async () => {
+    const guide = await readFile(path.join(docsRoot(), "onboarding.md"), "utf8");
+
+    const requiredSections = [
+      "## Prerequisites",
+      "## Install",
+      "## First commands",
+      "## Command surface map",
+      "## Migrating from legacy scripts",
+      "## Building extensions",
+      "## Troubleshooting"
+    ];
+
+    for (const section of requiredSections) {
+      expect(guide, `onboarding.md missing section: ${section}`).toContain(section);
+    }
+  });
+
+  test("onboarding.md links to key reference docs", async () => {
+    const guide = await readFile(path.join(docsRoot(), "onboarding.md"), "utf8");
+
+    const requiredLinks = [
+      "cli-reference.md",
+      "migration-guide.md",
+      "extension-sdk.md",
+      "operator-runbook.md",
+      "skills-subsumption-catalogue.md"
+    ];
+
+    for (const link of requiredLinks) {
+      expect(guide, `onboarding.md missing link: ${link}`).toContain(link);
+    }
+  });
+
+  test("onboarding.md covers all 8 domains in surface map", async () => {
+    const guide = await readFile(path.join(docsRoot(), "onboarding.md"), "utf8");
+
+    const domains = [
+      "config", "instructions", "skills", "tools",
+      "prompts", "agents", "knowledge", "exec"
+    ];
+
+    for (const domain of domains) {
+      expect(guide, `onboarding.md missing domain: ${domain}`).toContain(domain);
+    }
   });
 });
 
