@@ -176,7 +176,20 @@ After the RC is validated:
 - Update `CHANGELOG.md` with release notes.
 - Post receipts to POL-639 and POL-605.
 
+## Post-GA support readiness
+
+After GA is published, activate the first-week support operating package:
+
+1. **Support playbook:** Follow the [Post-GA Support Playbook](post-ga-support-playbook.md) for ownership, intake channels, severity classification, and operating cadence.
+2. **Telemetry watchlist:** Run the daily watchlist from [Post-GA Watchlist](post-ga-watchlist.md) to monitor package health, CI pipeline, wrapper telemetry, and adoption signals.
+3. **Incident response:** Use the [Post-GA Incident Checklist](post-ga-incident-checklist.md) for step-by-step response to install failures, publish/provenance issues, auth problems, and CI outages.
+
+The first-week cadence includes daily morning scans and watchlist checks. See the support playbook for steady-state transition criteria.
+
 ## Related documents
 
 - [CI Reliability Runbook](ci-reliability-runbook.md) — failure taxonomy, decision tree, override protocol
+- [Post-GA Support Playbook](post-ga-support-playbook.md) — support ownership and operating cadence
+- [Post-GA Watchlist](post-ga-watchlist.md) — monitoring signals and collection commands
+- [Post-GA Incident Checklist](post-ga-incident-checklist.md) — incident response for common failure classes
 - [README](../README.md) — local verification instructions

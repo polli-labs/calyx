@@ -219,3 +219,6 @@ Wrapper removal is targeted for post-GA, after usage drops below threshold. See 
 - [Migration Wrappers](migration-wrappers.md) — wrapper replacement map and telemetry
 - [CI Reliability Runbook](ci-reliability-runbook.md) — CI failure classification and override policy
 - [RC Checklist](rc-checklist.md) — release candidate process
+- [Post-GA Support Playbook](post-ga-support-playbook.md) — support ownership and first-week cadence
+- [Post-GA Watchlist](post-ga-watchlist.md) — monitoring signals and collection commands
+- [Post-GA Incident Checklist](post-ga-incident-checklist.md) — incident response for common failure classes
