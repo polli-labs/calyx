@@ -1,6 +1,6 @@
 {
   "name": "@polli-labs/calyx-web",
-  "version": "0.1.0",
+  "version": "0.1.5-trusted.0",
   "description": "Web companion surface for Calyx.",
   "repository": {
     "type": "git",
@@ -16,7 +16,9 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
