@@ -2,6 +2,11 @@
   "name": "@polli-labs/calyx-sdk",
   "version": "0.1.0",
   "description": "Extension SDK contracts for Calyx.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/sdk"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

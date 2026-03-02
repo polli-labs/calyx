@@ -2,6 +2,11 @@
   "name": "@polli-labs/calyx-core",
   "version": "0.1.0",
   "description": "Core contracts and config compiler for Calyx.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/core"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
