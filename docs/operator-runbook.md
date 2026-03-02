@@ -8,6 +8,11 @@ This runbook is the canonical reference for internal Polli operators using the C
 - pnpm >= 9
 - `calyx` CLI installed: `npm install -g @polli-labs/calyx`
 - Verify installation: `calyx --help`
+- (Optional) Configure production source paths — see [Production Wiring](production-wiring.md)
+
+## Source resolution
+
+Registry and store paths are resolved using: CLI flag > environment variable > config file. With production wiring configured, most commands work without explicit `--registry` / `--store` flags. Run `calyx config show` to see resolved paths.
 
 ## Command pattern
 

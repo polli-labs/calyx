@@ -13,6 +13,17 @@ export {
 } from "./knowledge";
 export { launchExecRun, getExecStatus, getExecLogs, getExecReceipt, validateExecStore } from "./exec";
 export {
+  resolveSourcePath,
+  requireSourcePath,
+  loadCalyxConfig,
+  showConfig,
+  ENV_VARS,
+  CONFIG_ENV_VAR,
+  REGISTRY_DOMAINS,
+  STORE_DOMAINS,
+  ALL_DOMAINS
+} from "./resolve";
+export {
   WRAPPER_REGISTRY,
   emitWrapperTelemetry,
   checkWrapperGuardrail,
@@ -38,10 +49,13 @@ export type {
   AgentsValidateResult,
   ArrayMergePolicy,
   ArrayPolicyConfig,
+  CalyxConfig,
+  CalyxConfigLoadResult,
   CodexInput,
   CompileInputFiles,
   CompileOptions,
   CompileResult,
+  ConfigShowResult,
   InstructionContext,
   InstructionContextValue,
   InstructionDrift,
@@ -77,6 +91,9 @@ export type {
   PromptsSyncResult,
   PromptsValidateOptions,
   PromptsValidateResult,
+  RegistryDomain,
+  ResolveSourceOptions,
+  ResolveSourceResult,
   SkillLifecycleStatus,
   SkillRegistryEntry,
   SkillSource,
@@ -87,6 +104,8 @@ export type {
   SkillsSyncResult,
   SkillsValidateOptions,
   SkillsValidateResult,
+  SourceDomain,
+  StoreDomain,
   SyncBackend,
   ToolInstallSpec,
   ToolRegistryEntry,
