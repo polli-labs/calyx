@@ -172,6 +172,7 @@ See [docs/migration-wrappers.md](docs/migration-wrappers.md) for the full replac
 | [Post-GA Support Playbook](docs/post-ga-support-playbook.md) | Support ownership, intake, severity classification, and first-week cadence |
 | [Post-GA Watchlist](docs/post-ga-watchlist.md) | Telemetry signals, package health checks, and monitoring commands |
 | [Post-GA Incident Checklist](docs/post-ga-incident-checklist.md) | Incident response steps for install, publish, auth, and CI failures |
+| [Skills Subsumption Catalogue](docs/skills-subsumption-catalogue.md) | Authoritative skill-by-skill disposition, retirement sequencing, and migration mapping |
 | [ADR-0002](docs/adr/adr-0002-repo-structure-and-build.md) | Repo structure, build, and naming decisions |
 
 ## Release

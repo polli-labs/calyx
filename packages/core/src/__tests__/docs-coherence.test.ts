@@ -181,7 +181,8 @@ describe("README completeness", () => {
       "docs/migration-guide.md",
       "docs/migration-wrappers.md",
       "docs/rc-checklist.md",
-      "docs/operator-runbook.md"
+      "docs/operator-runbook.md",
+      "docs/skills-subsumption-catalogue.md"
     ];
 
     for (const link of requiredLinks) {
@@ -282,6 +283,63 @@ describe("operator runbook completeness", () => {
 
     expect(runbook).toContain("deprecated");
     expect(runbook).toContain("calyx.wrapper.invoked");
+  });
+});
+
+describe("skills subsumption catalogue completeness", () => {
+  test("skills-subsumption-catalogue.md exists and has required sections", async () => {
+    const catalogue = await readFile(path.join(docsRoot(), "skills-subsumption-catalogue.md"), "utf8");
+
+    const requiredSections = [
+      "## Scope and terminology",
+      "## Disposition matrix",
+      "## Migration examples",
+      "## Unresolved gaps",
+      "## Retirement sequencing",
+      "## Summary counts"
+    ];
+
+    for (const section of requiredSections) {
+      expect(catalogue, `skills-subsumption-catalogue.md missing section: ${section}`).toContain(section);
+    }
+  });
+
+  test("skills-subsumption-catalogue.md documents all disposition values", async () => {
+    const catalogue = await readFile(path.join(docsRoot(), "skills-subsumption-catalogue.md"), "utf8");
+
+    const dispositions = [
+      "`subsumed`",
+      "`partially_subsumed`",
+      "`not_planned`",
+      "`defer_phase`"
+    ];
+
+    for (const disposition of dispositions) {
+      expect(catalogue, `catalogue missing disposition: ${disposition}`).toContain(disposition);
+    }
+  });
+
+  test("skills-subsumption-catalogue.md references all implemented wrappers", async () => {
+    const catalogue = await readFile(path.join(docsRoot(), "skills-subsumption-catalogue.md"), "utf8");
+
+    const wrappers = [
+      "skills-sync",
+      "agents-render",
+      "exec-launch"
+    ];
+
+    for (const wrapper of wrappers) {
+      expect(catalogue, `catalogue missing wrapper: ${wrapper}`).toContain(wrapper);
+    }
+  });
+
+  test("skills-subsumption-catalogue.md includes retirement phases", async () => {
+    const catalogue = await readFile(path.join(docsRoot(), "skills-subsumption-catalogue.md"), "utf8");
+
+    expect(catalogue).toContain("### Phase 7");
+    expect(catalogue).toContain("### Phase 8");
+    expect(catalogue).toContain("### Phase 9");
+    expect(catalogue).toContain("### Post-v1");
   });
 });
 
