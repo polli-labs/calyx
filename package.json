@@ -1,7 +1,7 @@
 {
   "name": "calyx-dev",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Private development monorepo for the Calyx agent control plane.",
   "license": "UNLICENSED",
   "type": "module",

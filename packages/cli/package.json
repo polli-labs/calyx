@@ -1,6 +1,6 @@
 {
   "name": "@polli-labs/calyx",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Calyx CLI.",
   "repository": {
     "type": "git",
