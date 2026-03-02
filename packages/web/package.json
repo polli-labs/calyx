@@ -2,6 +2,11 @@
   "name": "@polli-labs/calyx-web",
   "version": "0.1.0",
   "description": "Web companion surface for Calyx.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/web"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

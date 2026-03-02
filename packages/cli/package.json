@@ -2,6 +2,11 @@
   "name": "@polli-labs/calyx",
   "version": "0.1.0",
   "description": "Calyx CLI.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/cli"
+  },
   "type": "module",
   "bin": {
     "calyx": "dist/bin.js"
