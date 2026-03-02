@@ -491,6 +491,36 @@ export interface KnowledgeValidateResult extends DomainValidationResult {
   total: number;
 }
 
+// ── Wrapper guardrails ──────────────────────────────────────────────
+
+export type WrapperDeprecationPhase = "active" | "warn" | "error";
+
+export type WrapperStatus = "implemented" | "deferred";
+
+export interface WrapperDefinition {
+  wrapper: string;
+  target: string;
+  status: WrapperStatus;
+  phase: string;
+  notes?: string;
+}
+
+export interface WrapperTelemetryEvent {
+  event: "calyx.wrapper.invoked";
+  wrapper: string;
+  target: string;
+  timestamp: string;
+  pid: number;
+  cwd: string;
+  deprecation_phase: WrapperDeprecationPhase;
+}
+
+export interface WrapperGuardrailResult {
+  allowed: boolean;
+  phase: WrapperDeprecationPhase;
+  message?: string;
+}
+
 // ── Exec lifecycle domain ───────────────────────────────────────────
 
 export type ExecRunState = "queued" | "running" | "succeeded" | "failed" | "cancelled";

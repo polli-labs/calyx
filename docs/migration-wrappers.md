@@ -5,10 +5,13 @@ Replacement map from legacy `dev/run/*` entrypoints to canonical `calyx` command
 ## Strategy
 
 Every `Port+Shim` row in the migration map gets a compatibility wrapper in the `calyx` CLI:
-1. The wrapper emits a **deprecation warning** to stderr.
-2. The wrapper emits a **`calyx.wrapper.invoked` telemetry marker** (JSON) to stderr.
-3. The wrapper delegates to the canonical calyx subcommand.
-4. In `--json` mode, the wrapper returns a `{ wrapper, result }` envelope.
+1. The wrapper checks **guardrails** — if `CALYX_FAIL_ON_DEPRECATED=1`, it exits with code 4.
+2. The wrapper emits a **deprecation warning** to stderr.
+3. The wrapper emits a **`calyx.wrapper.invoked` telemetry marker** (JSON) to stderr.
+4. The wrapper delegates to the canonical calyx subcommand.
+5. In `--json` mode, the wrapper returns a `{ wrapper, result }` envelope.
+
+Deferred wrappers that are not yet implemented are registered as **tombstone commands** — they emit a clear "not yet implemented" error with phase information and exit with code 5.
 
 No command is removed until parity gate passes and usage drops below threshold.
 
@@ -43,6 +46,8 @@ These surfaces were ported directly into calyx domain commands and do not need w
 
 ## Deferred (P4+ / post-v1)
 
+Deferred wrappers are registered as tombstone commands. Invoking them produces a clear error message with the target phase and notes. See `WRAPPER_REGISTRY` in `packages/core/src/wrappers.ts` for the canonical list.
+
 | Legacy surface | Target | Phase | Notes |
 |---|---|---|---|
 | `dev/run/agents-fleet` | Split across domain commands | P2-P4 | Partial: domain commands cover subsystems |
@@ -58,6 +63,39 @@ These surfaces were ported directly into calyx domain commands and do not need w
 | `dev/run/agents-bootstrap` | `calyx install bootstrap` | P4+ | After core stabilizes |
 | `dev/run/agents-worktree-init` | `calyx workspace init` | post-v1 | Low core leverage |
 
+## Guardrails
+
+### Deprecation Phase Control
+
+The `CALYX_FAIL_ON_DEPRECATED` environment variable controls wrapper behavior:
+
+| Value | Phase | Behavior |
+|---|---|---|
+| unset / `0` | `warn` | Emit deprecation warning + telemetry, then proceed normally |
+| `1` / `true` | `error` | Emit deprecation warning + telemetry, then exit with code **4** |
+
+Use `CALYX_FAIL_ON_DEPRECATED=1` in CI or on hosts that have fully migrated to canonical commands. This prevents accidental regression to legacy entrypoints.
+
+### Exit Codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 2 | Invalid CLI argument (bad backend, bad flag value) |
+| 3 | Domain validation failure (registry/store errors) |
+| 4 | Wrapper blocked by `CALYX_FAIL_ON_DEPRECATED` |
+| 5 | Deferred wrapper invoked (not yet implemented) |
+
+### Tombstone Commands
+
+All 12 deferred wrappers are registered as CLI commands. They accept any flags (`--allowUnknownOption`) and always exit with code 5 and a message like:
+
+```
+[calyx][error] "agents-fleet" is not yet implemented (deferred to P2-P4) (Split across domain commands). Target: calyx (domain commands)
+```
+
+This prevents confusing "unknown command" errors when someone tries a legacy entrypoint that hasn't been ported yet.
+
 ## Telemetry Contract
 
 All wrappers emit a structured telemetry event to stderr:
@@ -67,17 +105,28 @@ All wrappers emit a structured telemetry event to stderr:
   "event": "calyx.wrapper.invoked",
   "wrapper": "<wrapper-name>",
   "target": "<canonical-command>",
-  "timestamp": "<ISO-8601>"
+  "timestamp": "<ISO-8601>",
+  "pid": 12345,
+  "cwd": "/home/user/repo",
+  "deprecation_phase": "warn"
 }
 ```
+
+Enriched fields added in v0.1.0 (POL-671):
+- **`pid`**: Process ID of the wrapper invocation.
+- **`cwd`**: Working directory at invocation time.
+- **`deprecation_phase`**: Current phase (`warn` or `error`).
 
 This enables:
 - **Usage tracking:** grep logs for `calyx.wrapper.invoked` to measure migration progress.
 - **Retirement gating:** do not remove a wrapper until its invocation count drops below threshold.
 - **Audit trail:** every wrapper invocation leaves a machine-parseable breadcrumb.
+- **Per-host analysis:** `pid` + `cwd` help distinguish wrapper usage across hosts and sessions.
+- **Migration enforcement:** `deprecation_phase=error` invocations indicate blocked calls on enforcing hosts.
 
 ## Verification
 
-- Wrapper behavior is tested in `packages/core/src/__tests__/wrappers.test.ts`.
+- Wrapper guardrails and telemetry contract are tested in `packages/core/src/__tests__/wrappers.test.ts`.
 - Docs coherence is tested in `packages/core/src/__tests__/docs-coherence.test.ts`.
 - Smoke CI validates wrapper `--help` output.
+- Canonical wrapper definitions live in `WRAPPER_REGISTRY` (`packages/core/src/wrappers.ts`).

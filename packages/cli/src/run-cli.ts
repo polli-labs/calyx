@@ -27,7 +27,11 @@ import {
   validatePromptsRegistry,
   validateSkillsRegistry,
   validateToolsRegistry,
-  verifyInstructionsFromFiles
+  verifyInstructionsFromFiles,
+  WRAPPER_REGISTRY,
+  emitWrapperTelemetry,
+  checkWrapperGuardrail,
+  getDeferredWrapperMessage
 } from "@polli-labs/calyx-core";
 import type {
   AgentDeployBackend,
@@ -205,13 +209,6 @@ interface CliError extends Error {
   exitCode?: number;
 }
 
-interface WrapperTelemetryEvent {
-  event: "calyx.wrapper.invoked";
-  wrapper: string;
-  target: string;
-  timestamp: string;
-}
-
 function createCliError(message: string, exitCode: number): CliError {
   const error = new Error(message) as CliError;
   error.exitCode = exitCode;
@@ -297,17 +294,15 @@ function normalizeToolsSyncTarget(options: ToolsSyncCommandOptions): ToolsSyncOp
   };
 }
 
-function emitWrapperTelemetry(wrapper: string, target: string): WrapperTelemetryEvent {
-  const event: WrapperTelemetryEvent = {
-    event: "calyx.wrapper.invoked",
-    wrapper,
-    target,
-    timestamp: new Date().toISOString()
-  };
-
-  console.error(`[calyx][deprecated] ${wrapper} is a compatibility wrapper. Use "${target}".`);
-  console.error(`[calyx][telemetry] ${JSON.stringify(event)}`);
-  return event;
+/**
+ * Guardrail gate: check CALYX_FAIL_ON_DEPRECATED and throw if blocked.
+ * Call at the top of every wrapper action, before domain work.
+ */
+function enforceWrapperGuardrail(wrapper: string, target: string): void {
+  const guard = checkWrapperGuardrail(wrapper, target);
+  if (!guard.allowed) {
+    throw createCliError(guard.message ?? `Wrapper "${wrapper}" is blocked.`, 4);
+  }
 }
 
 export async function runCli(argv = process.argv): Promise<void> {
@@ -705,6 +700,7 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsSyncCommandOptions) => {
+      enforceWrapperGuardrail("skills-sync", "calyx skills sync");
       const backend = parseSkillsBackend(options.backend);
       const telemetry = emitWrapperTelemetry("skills-sync", "calyx skills sync");
       const result = await syncSkillsRegistry(options.registry, {
@@ -1110,6 +1106,7 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsSyncCommandOptions) => {
+      enforceWrapperGuardrail("skills-sync-claude", "calyx skills sync --backend claude");
       const telemetry = emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
       const result = await syncSkillsRegistry(options.registry, {
         backend: "claude",
@@ -1132,6 +1129,7 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsSyncCommandOptions) => {
+      enforceWrapperGuardrail("skills-sync-codex", "calyx skills sync --backend codex");
       const telemetry = emitWrapperTelemetry("skills-sync-codex", "calyx skills sync --backend codex");
       const result = await syncSkillsRegistry(options.registry, {
         backend: "codex",
@@ -1154,6 +1152,7 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: PromptsSyncCommandOptions) => {
+      enforceWrapperGuardrail("prompts-sync-claude", "calyx prompts sync --backend claude");
       const telemetry = emitWrapperTelemetry("prompts-sync-claude", "calyx prompts sync --backend claude");
       const result = await syncPromptsRegistry(options.registry, {
         backend: "claude",
@@ -1176,6 +1175,7 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: PromptsSyncCommandOptions) => {
+      enforceWrapperGuardrail("prompts-sync-codex", "calyx prompts sync --backend codex");
       const telemetry = emitWrapperTelemetry("prompts-sync-codex", "calyx prompts sync --backend codex");
       const result = await syncPromptsRegistry(options.registry, {
         backend: "codex",
@@ -1203,6 +1203,7 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--out-dir <path>", "Write rendered output files to this directory")
     .option("--json", "Print machine-readable summary")
     .action(async (options: InstructionsBaseCommandOptions) => {
+      enforceWrapperGuardrail("agents-render", "calyx instructions render");
       const telemetry = emitWrapperTelemetry("agents-render", "calyx instructions render");
       const renderOptions = {
         all: Boolean(options.all),
@@ -1248,6 +1249,7 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--apply", "Apply the launch (create a real run record)")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ExecLaunchCommandOptions) => {
+      enforceWrapperGuardrail("exec-launch", "calyx exec launch");
       const telemetry = emitWrapperTelemetry("exec-launch", "calyx exec launch");
       const result = await launchExecRun(options.store, {
         command: options.command,
@@ -1264,6 +1266,22 @@ export async function runCli(argv = process.argv): Promise<void> {
       );
       console.error(`Wrapper ${telemetry.wrapper} forwarded to calyx exec launch.`);
     });
+
+  // ── Deferred wrapper tombstones ───────────────────────────────────
+  // Register placeholder commands for known-deferred wrappers so users
+  // get a clear "not yet implemented" message instead of commander's
+  // default "unknown command" error.
+
+  for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "deferred")) {
+    program
+      .command(def.wrapper)
+      .description(`[deferred] Not yet implemented — target: ${def.target}`)
+      .allowUnknownOption(true)
+      .action(() => {
+        const message = getDeferredWrapperMessage(def.wrapper);
+        throw createCliError(message, 5);
+      });
+  }
 
   program.addCommand(config);
   program.addCommand(instructions);
