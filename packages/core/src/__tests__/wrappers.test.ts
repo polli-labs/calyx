@@ -1,32 +1,30 @@
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { syncSkillsRegistry } from "../skills";
 import { syncPromptsRegistry } from "../prompts";
+import {
+  WRAPPER_REGISTRY,
+  emitWrapperTelemetry,
+  checkWrapperGuardrail,
+  getWrapperDeprecationPhase,
+  getDeferredWrapperMessage
+} from "../wrappers";
+import type { WrapperTelemetryEvent } from "../types";
 
 /**
  * Wrapper behavior tests.
  *
- * These tests validate the emitWrapperTelemetry contract that all
- * compatibility wrappers must follow:
- * 1. A deprecation warning is emitted to stderr.
- * 2. A calyx.wrapper.invoked telemetry JSON marker is emitted to stderr.
- * 3. The underlying domain function is called with the correct backend.
- *
- * Rather than importing from the CLI (which bundles everything), we test
- * the core domain functions directly and validate the wrapper telemetry
- * contract structurally: every wrapper result in --json mode wraps
- * { wrapper: WrapperTelemetryEvent, result: ... }.
+ * These tests validate the wrapper guardrail contract (POL-671):
+ * 1. Deprecation warnings are always emitted.
+ * 2. Telemetry events carry enriched fields (pid, cwd, deprecation_phase).
+ * 3. CALYX_FAIL_ON_DEPRECATED=1 blocks wrapper invocations.
+ * 4. Deferred wrappers produce clear "not yet implemented" messages.
+ * 5. The canonical WRAPPER_REGISTRY is complete and consistent.
+ * 6. Domain functions are called with the correct backend routing.
  */
 
 function fixtureRoot(): string {
   return path.resolve(process.cwd(), "fixtures/domains");
-}
-
-interface WrapperTelemetryEvent {
-  event: "calyx.wrapper.invoked";
-  wrapper: string;
-  target: string;
-  timestamp: string;
 }
 
 function isValidTelemetryEvent(event: WrapperTelemetryEvent): boolean {
@@ -37,19 +35,29 @@ function isValidTelemetryEvent(event: WrapperTelemetryEvent): boolean {
     typeof event.target === "string" &&
     event.target.length > 0 &&
     typeof event.timestamp === "string" &&
-    !isNaN(Date.parse(event.timestamp))
+    !isNaN(Date.parse(event.timestamp)) &&
+    typeof event.pid === "number" &&
+    event.pid > 0 &&
+    typeof event.cwd === "string" &&
+    event.cwd.length > 0 &&
+    typeof event.deprecation_phase === "string" &&
+    (event.deprecation_phase === "warn" || event.deprecation_phase === "error" || event.deprecation_phase === "active")
   );
 }
 
+afterEach(() => {
+  delete process.env["CALYX_FAIL_ON_DEPRECATED"];
+});
+
+// ── Telemetry contract ──────────────────────────────────────────────
+
 describe("wrapper telemetry contract", () => {
-  test("telemetry event shape is valid", () => {
-    const event: WrapperTelemetryEvent = {
-      event: "calyx.wrapper.invoked",
-      wrapper: "skills-sync",
-      target: "calyx skills sync",
-      timestamp: new Date().toISOString()
-    };
+  test("telemetry event shape is valid with enriched fields", () => {
+    const event = emitWrapperTelemetry("skills-sync", "calyx skills sync");
     expect(isValidTelemetryEvent(event)).toBe(true);
+    expect(event.pid).toBe(process.pid);
+    expect(event.cwd).toBe(process.cwd());
+    expect(event.deprecation_phase).toBe("warn");
   });
 
   test("telemetry event rejects invalid timestamp", () => {
@@ -57,11 +65,113 @@ describe("wrapper telemetry contract", () => {
       event: "calyx.wrapper.invoked",
       wrapper: "skills-sync",
       target: "calyx skills sync",
-      timestamp: "not-a-date"
+      timestamp: "not-a-date",
+      pid: 1,
+      cwd: "/tmp",
+      deprecation_phase: "warn"
     };
     expect(isValidTelemetryEvent(event)).toBe(false);
   });
+
+  test("telemetry event includes deprecation_phase=error when env is set", () => {
+    process.env["CALYX_FAIL_ON_DEPRECATED"] = "1";
+    const event = emitWrapperTelemetry("skills-sync", "calyx skills sync");
+    expect(event.deprecation_phase).toBe("error");
+  });
 });
+
+// ── Guardrail behavior ──────────────────────────────────────────────
+
+describe("wrapper guardrails", () => {
+  test("default phase is warn (wrappers allowed)", () => {
+    expect(getWrapperDeprecationPhase()).toBe("warn");
+  });
+
+  test("CALYX_FAIL_ON_DEPRECATED=1 sets phase to error", () => {
+    process.env["CALYX_FAIL_ON_DEPRECATED"] = "1";
+    expect(getWrapperDeprecationPhase()).toBe("error");
+  });
+
+  test("CALYX_FAIL_ON_DEPRECATED=true sets phase to error", () => {
+    process.env["CALYX_FAIL_ON_DEPRECATED"] = "true";
+    expect(getWrapperDeprecationPhase()).toBe("error");
+  });
+
+  test("checkWrapperGuardrail allows in warn phase", () => {
+    const result = checkWrapperGuardrail("skills-sync", "calyx skills sync");
+    expect(result.allowed).toBe(true);
+    expect(result.phase).toBe("warn");
+  });
+
+  test("checkWrapperGuardrail blocks in error phase", () => {
+    process.env["CALYX_FAIL_ON_DEPRECATED"] = "1";
+    const result = checkWrapperGuardrail("skills-sync", "calyx skills sync");
+    expect(result.allowed).toBe(false);
+    expect(result.phase).toBe("error");
+    expect(result.message).toContain("CALYX_FAIL_ON_DEPRECATED");
+    expect(result.message).toContain("calyx skills sync");
+  });
+});
+
+// ── Deferred wrapper messages ───────────────────────────────────────
+
+describe("deferred wrapper tombstones", () => {
+  test("getDeferredWrapperMessage returns clear message for known deferred wrapper", () => {
+    const msg = getDeferredWrapperMessage("agents-fleet");
+    expect(msg).toContain("not yet implemented");
+    expect(msg).toContain("P2-P4");
+    expect(msg).toContain("Split across domain commands");
+  });
+
+  test("getDeferredWrapperMessage handles unknown wrapper", () => {
+    const msg = getDeferredWrapperMessage("nonexistent-wrapper");
+    expect(msg).toContain("Unknown wrapper");
+  });
+
+  test("all deferred wrappers produce messages", () => {
+    const deferred = WRAPPER_REGISTRY.filter((d) => d.status === "deferred");
+    expect(deferred.length).toBeGreaterThan(0);
+    for (const def of deferred) {
+      const msg = getDeferredWrapperMessage(def.wrapper);
+      expect(msg).toContain("not yet implemented");
+      expect(msg).toContain(def.phase);
+    }
+  });
+});
+
+// ── Wrapper registry completeness ───────────────────────────────────
+
+describe("wrapper registry", () => {
+  const implemented = WRAPPER_REGISTRY.filter((d) => d.status === "implemented");
+  const deferred = WRAPPER_REGISTRY.filter((d) => d.status === "deferred");
+
+  test("registry has 7 implemented wrappers", () => {
+    expect(implemented).toHaveLength(7);
+  });
+
+  test("registry has 12 deferred wrappers", () => {
+    expect(deferred).toHaveLength(12);
+  });
+
+  test("all implemented wrappers have calyx targets", () => {
+    for (const def of implemented) {
+      expect(def.target).toMatch(/^calyx /);
+    }
+  });
+
+  test("no duplicate wrapper names", () => {
+    const names = WRAPPER_REGISTRY.map((d) => d.wrapper);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  test("all entries have phase tags", () => {
+    for (const def of WRAPPER_REGISTRY) {
+      expect(def.phase).toBeTruthy();
+    }
+  });
+});
+
+// ── Backend routing ─────────────────────────────────────────────────
 
 describe("wrapper backend routing", () => {
   const root = fixtureRoot();
@@ -99,14 +209,11 @@ describe("wrapper backend routing", () => {
   });
 });
 
+// ── Envelope shape ──────────────────────────────────────────────────
+
 describe("wrapper envelope shape", () => {
-  test("wrapper JSON envelope includes telemetry and result", () => {
-    const telemetry: WrapperTelemetryEvent = {
-      event: "calyx.wrapper.invoked",
-      wrapper: "skills-sync-claude",
-      target: "calyx skills sync --backend claude",
-      timestamp: new Date().toISOString()
-    };
+  test("wrapper JSON envelope includes enriched telemetry and result", () => {
+    const telemetry = emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
     const result = { backend: "claude", apply: false, version: 1, actions: [] };
     const envelope = { wrapper: telemetry, result };
 
@@ -114,31 +221,75 @@ describe("wrapper envelope shape", () => {
     expect(envelope).toHaveProperty("result");
     expect(envelope.wrapper.event).toBe("calyx.wrapper.invoked");
     expect(envelope.wrapper.wrapper).toBe("skills-sync-claude");
+    expect(envelope.wrapper.pid).toBeGreaterThan(0);
+    expect(envelope.wrapper.cwd).toBeTruthy();
+    expect(envelope.wrapper.deprecation_phase).toBe("warn");
     expect(JSON.stringify(envelope)).toBeDefined();
   });
 
-  const WRAPPER_DEFINITIONS = [
-    { wrapper: "skills-sync", target: "calyx skills sync" },
-    { wrapper: "skills-sync-claude", target: "calyx skills sync --backend claude" },
-    { wrapper: "skills-sync-codex", target: "calyx skills sync --backend codex" },
-    { wrapper: "prompts-sync-claude", target: "calyx prompts sync --backend claude" },
-    { wrapper: "prompts-sync-codex", target: "calyx prompts sync --backend codex" },
-    { wrapper: "agents-render", target: "calyx instructions render" },
-    { wrapper: "exec-launch", target: "calyx exec launch" }
-  ];
+  const IMPLEMENTED_WRAPPERS = WRAPPER_REGISTRY.filter((d) => d.status === "implemented");
 
-  test.each(WRAPPER_DEFINITIONS)(
+  test.each(IMPLEMENTED_WRAPPERS)(
     "wrapper $wrapper has valid target mapping",
     ({ wrapper, target }) => {
       expect(wrapper).toBeTruthy();
       expect(target).toMatch(/^calyx /);
-      const event: WrapperTelemetryEvent = {
-        event: "calyx.wrapper.invoked",
-        wrapper,
-        target,
-        timestamp: new Date().toISOString()
-      };
+      const event = emitWrapperTelemetry(wrapper, target);
       expect(isValidTelemetryEvent(event)).toBe(true);
     }
   );
+});
+
+// ── E2E telemetry validation ────────────────────────────────────────
+
+describe("e2e telemetry validation", () => {
+  test("full wrapper invocation emits valid telemetry to stderr", () => {
+    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
+
+    expect(stderrSpy).toHaveBeenCalledTimes(2);
+
+    // First call: deprecation warning
+    const deprecationCall = stderrSpy.mock.calls[0]?.[0] as string;
+    expect(deprecationCall).toContain("[calyx][deprecated]");
+    expect(deprecationCall).toContain("skills-sync-claude");
+    expect(deprecationCall).toContain("calyx skills sync --backend claude");
+
+    // Second call: telemetry JSON
+    const telemetryCall = stderrSpy.mock.calls[1]?.[0] as string;
+    expect(telemetryCall).toContain("[calyx][telemetry]");
+    const jsonPart = telemetryCall.replace("[calyx][telemetry] ", "");
+    const parsed = JSON.parse(jsonPart) as WrapperTelemetryEvent;
+    expect(isValidTelemetryEvent(parsed)).toBe(true);
+    expect(parsed.wrapper).toBe("skills-sync-claude");
+    expect(parsed.pid).toBe(process.pid);
+    expect(parsed.deprecation_phase).toBe("warn");
+
+    stderrSpy.mockRestore();
+  });
+
+  test("full wrapper invocation with domain function produces enriched envelope", async () => {
+    const root = fixtureRoot();
+    const skillsPath = path.join(root, "skills/registry.valid.json");
+
+    const telemetry = emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
+    const result = await syncSkillsRegistry(skillsPath, { backend: "claude", apply: false });
+    const envelope = { wrapper: telemetry, result };
+
+    // Validate complete envelope
+    expect(envelope.wrapper.event).toBe("calyx.wrapper.invoked");
+    expect(envelope.wrapper.pid).toBeGreaterThan(0);
+    expect(envelope.wrapper.cwd).toBeTruthy();
+    expect(envelope.wrapper.deprecation_phase).toBe("warn");
+    expect(envelope.result.backend).toBe("claude");
+    expect(envelope.result.apply).toBe(false);
+    expect(Array.isArray(envelope.result.actions)).toBe(true);
+
+    // JSON round-trip
+    const serialized = JSON.stringify(envelope);
+    const deserialized = JSON.parse(serialized);
+    expect(deserialized.wrapper.event).toBe("calyx.wrapper.invoked");
+    expect(deserialized.wrapper.pid).toBe(process.pid);
+  });
 });
