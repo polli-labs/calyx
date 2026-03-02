@@ -1,6 +1,6 @@
 # Migration Guide: Legacy Scripts → Calyx
 
-This guide helps teams transition from the legacy `dev/run/*` shell scripts to the unified `calyx` CLI.
+This guide helps teams transition from the legacy `dev/run/*` shell scripts to the unified `calyx` CLI. If you're new to Calyx, start with the [Onboarding Guide](onboarding.md) for install and first-run orientation.
 
 ## Current status (P7A)
 
