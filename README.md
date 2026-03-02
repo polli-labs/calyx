@@ -31,7 +31,9 @@ fixtures/           test fixture corpus
 docs/               ADRs, CLI reference, SDK docs, migration guides
 ```
 
-## Operator quick start
+## Getting started
+
+New to Calyx? Start with the **[Onboarding Guide](docs/onboarding.md)** — install, first commands, surface map, migration pointers, and extension primer.
 
 For daily Calyx operations, see the **[Operator Runbook](docs/operator-runbook.md)** — a condensed reference covering all 8 domain commands, verification checklists, and failure classification.
 
@@ -162,6 +164,7 @@ See [docs/migration-wrappers.md](docs/migration-wrappers.md) for the full replac
 
 | Document | Description |
 |----------|-------------|
+| [Onboarding Guide](docs/onboarding.md) | First-time setup, quickstart, and surface orientation |
 | [CLI Reference](docs/cli-reference.md) | Complete command reference for all 8 domains |
 | [Extension SDK](docs/extension-sdk.md) | SDK contracts, lifecycle hooks, and quick start |
 | [Migration Guide](docs/migration-guide.md) | Step-by-step legacy → calyx transition |
