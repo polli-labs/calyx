@@ -1,0 +1,26 @@
+{
+  "version": "2026-02-27",
+  "total": 3,
+  "items": [
+    {
+      "id": "agents-fleet",
+      "source": {
+        "type": "internal",
+        "repo": "polli",
+        "path": "docs/org-kb/agents/skills/agents-fleet/SKILL.md"
+      }
+    },
+    {
+      "id": "agents-fleet-bootstrap",
+      "status": "deprecated",
+      "deprecated_by": "agents-fleet",
+      "archived_at": "2026-02-18",
+      "local_archive_path": "docs/org-kb/agents/skills/_deprecated/agents-fleet-bootstrap/SKILL.md",
+      "source": {
+        "type": "internal",
+        "repo": "polli",
+        "path": "docs/org-kb/agents/skills/_deprecated/agents-fleet-bootstrap/SKILL.md"
+      }
+    }
+  ]
+}

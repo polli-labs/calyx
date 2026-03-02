@@ -31,6 +31,20 @@ fixtures/           test fixture corpus
 docs/               ADRs, CLI reference, SDK docs, migration guides
 ```
 
+## Operator quick start
+
+For daily Calyx operations, see the **[Operator Runbook](docs/operator-runbook.md)** — a condensed reference covering all 8 domain commands, verification checklists, and failure classification.
+
+Quick verification (all domains, fixture-based):
+
+```bash
+pnpm install
+pnpm verify                          # lint → typecheck → test → build
+node packages/cli/dist/bin.js --help # smoke-test CLI
+```
+
+For command-by-command reference, see [docs/cli-reference.md](docs/cli-reference.md).
+
 ## Local verification
 
 ```bash
@@ -122,9 +136,9 @@ calyx knowledge validate --registry fixtures/domains/knowledge/registry.valid.js
 
 ```bash
 calyx exec launch --store fixtures/domains/exec/store.valid.json --command "calyx config compile --host blade"
-calyx exec status --store fixtures/domains/exec/store.valid.json --run-id run-001
-calyx exec logs --store fixtures/domains/exec/store.valid.json --run-id run-001
-calyx exec receipt --store fixtures/domains/exec/store.valid.json --run-id run-001
+calyx exec status --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
+calyx exec logs --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
+calyx exec receipt --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
 calyx exec validate --store fixtures/domains/exec/store.valid.json --strict
 ```
 
@@ -153,6 +167,7 @@ See [docs/migration-wrappers.md](docs/migration-wrappers.md) for the full replac
 | [Migration Guide](docs/migration-guide.md) | Step-by-step legacy → calyx transition |
 | [Migration Wrappers](docs/migration-wrappers.md) | Wrapper replacement map and telemetry |
 | [RC Checklist](docs/rc-checklist.md) | Release candidate checklist, promotion paths, and rollback |
+| [Operator Runbook](docs/operator-runbook.md) | Canonical operator reference for daily Calyx-first operations |
 | [CI Reliability Runbook](docs/ci-reliability-runbook.md) | CI failure taxonomy, decision tree, and override policy |
 | [ADR-0002](docs/adr/adr-0002-repo-structure-and-build.md) | Repo structure, build, and naming decisions |
 

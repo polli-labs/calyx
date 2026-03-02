@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
@@ -102,6 +102,15 @@ async function loadRunStore(storePath: string): Promise<ExecRunStore> {
   }
 
   return parsedStore.data as ExecRunStore;
+}
+
+async function saveRunStore(storePath: string, store: ExecRunStore): Promise<void> {
+  try {
+    await writeFile(storePath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to write exec run store at ${storePath}: ${message}`);
+  }
 }
 
 function findRun(store: ExecRunStore, runId: string, storePath: string): ExecRunRecord {
@@ -310,12 +319,28 @@ export async function launchExecRun(
   const apply = Boolean(options.apply);
   const runId = randomUUID();
   const now = new Date().toISOString();
-
-  return {
+  const runRecord: ExecRunRecord = {
     run_id: runId,
     command: options.command,
     state: "queued",
-    created_at: now,
+    created_at: now
+  };
+
+  if (apply) {
+    const nextStore: ExecRunStore = {
+      ...store,
+      runs: [...store.runs, runRecord]
+    };
+    const nextValidation = evaluateRunStore(nextStore);
+    ensureValidOrThrow(nextValidation, storePath);
+    await saveRunStore(storePath, nextStore);
+  }
+
+  return {
+    run_id: runRecord.run_id,
+    command: runRecord.command,
+    state: runRecord.state,
+    created_at: runRecord.created_at,
     apply
   };
 }

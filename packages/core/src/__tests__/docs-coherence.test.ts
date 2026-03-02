@@ -180,7 +180,8 @@ describe("README completeness", () => {
       "docs/extension-sdk.md",
       "docs/migration-guide.md",
       "docs/migration-wrappers.md",
-      "docs/rc-checklist.md"
+      "docs/rc-checklist.md",
+      "docs/operator-runbook.md"
     ];
 
     for (const link of requiredLinks) {
@@ -235,6 +236,52 @@ describe("migration guide completeness", () => {
     for (const topic of requiredTopics) {
       expect(guide, `migration-guide.md missing topic: ${topic}`).toContain(topic);
     }
+  });
+});
+
+describe("operator runbook completeness", () => {
+  test("operator-runbook.md exists and has required sections", async () => {
+    const runbook = await readFile(path.join(docsRoot(), "operator-runbook.md"), "utf8");
+
+    const requiredSections = [
+      "## Prerequisites",
+      "## Command pattern",
+      "## Daily operator workflows",
+      "## Operator verification checklist",
+      "## Failure classification",
+      "## Wrapper deprecation notice"
+    ];
+
+    for (const section of requiredSections) {
+      expect(runbook, `operator-runbook.md missing section: ${section}`).toContain(section);
+    }
+  });
+
+  test("operator-runbook.md covers all 8 domain commands", async () => {
+    const runbook = await readFile(path.join(docsRoot(), "operator-runbook.md"), "utf8");
+
+    const domains = [
+      "calyx config compile",
+      "calyx instructions render",
+      "calyx instructions verify",
+      "calyx skills validate",
+      "calyx tools validate",
+      "calyx prompts validate",
+      "calyx agents validate",
+      "calyx knowledge validate",
+      "calyx exec validate"
+    ];
+
+    for (const cmd of domains) {
+      expect(runbook, `operator-runbook.md missing command: ${cmd}`).toContain(cmd);
+    }
+  });
+
+  test("operator-runbook.md marks wrappers as deprecated", async () => {
+    const runbook = await readFile(path.join(docsRoot(), "operator-runbook.md"), "utf8");
+
+    expect(runbook).toContain("deprecated");
+    expect(runbook).toContain("calyx.wrapper.invoked");
   });
 });
 
