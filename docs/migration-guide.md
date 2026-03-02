@@ -154,6 +154,10 @@ Compatibility wrappers emit structured telemetry to stderr:
 
 Use this to track migration progress and decide when to retire wrappers.
 
+## Skills subsumption
+
+For a complete skill-by-skill mapping of legacy skills/wrappers to Calyx replacements — including disposition, retirement phase, and migration examples — see the **[Skills Subsumption Catalogue](skills-subsumption-catalogue.md)**.
+
 ## FAQ
 
 **Q: Can I use calyx and legacy scripts side by side?**

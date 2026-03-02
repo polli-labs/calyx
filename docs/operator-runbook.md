@@ -215,6 +215,7 @@ Wrapper removal is targeted for post-GA, after usage drops below threshold. See 
 ## Related documents
 
 - [CLI Reference](cli-reference.md) — complete command reference
+- [Skills Subsumption Catalogue](skills-subsumption-catalogue.md) — authoritative skill-by-skill disposition and retirement sequencing
 - [Migration Guide](migration-guide.md) — legacy-to-calyx transition walkthrough
 - [Migration Wrappers](migration-wrappers.md) — wrapper replacement map and telemetry
 - [CI Reliability Runbook](ci-reliability-runbook.md) — CI failure classification and override policy
