@@ -211,8 +211,8 @@ The B2 backend and artifact type taxonomy are retained; Calyx provides the regis
 | Bundle build | `agents-bundle-build` packages agent bundles for deployment. No `calyx bundle` domain exists. | Low | Deferred wrapper targets `calyx bundle build` — P8+ pending bundle schema. Tracked under [POL-665](https://linear.app/polli-labs/issue/POL-665). |
 | Tool version bumping | `agents-tools-bump` atomically bumps tool versions. `calyx tools` has index/sync/validate but no version mutation. | Low | Deferred wrapper targets `calyx tools versions bump` — P8+. Tracked under [POL-665](https://linear.app/polli-labs/issue/POL-665). |
 | Bootstrap/install | `agents-bootstrap` initializes a new host. No `calyx install` domain exists. | Low | Deferred to P8+ (after core stabilizes). Tracked under [POL-665](https://linear.app/polli-labs/issue/POL-665). |
-| Workspace init | `agents-worktree-init` creates isolated worktrees. Low Calyx leverage. | Very low | Deferred to post-v1. |
-| ExecPlan authoring UX | `ingest-execplan`, `issue-to-execplan`, `transform-into-execplan` provide rich ExecPlan workflows. `calyx knowledge` has basic artifact ops but no authoring UX. | Medium | P9 — depends on knowledge domain extension maturity. |
+| Workspace init | `agents-worktree-init` creates isolated worktrees. Low Calyx leverage. | Very low | Deferred to post-v1; tracked in [POL-665](https://linear.app/polli-labs/issue/POL-665) backlog for explicit non-goal confirmation before wrapper retirement. |
+| ExecPlan authoring UX | `ingest-execplan`, `issue-to-execplan`, `transform-into-execplan` provide rich ExecPlan workflows. `calyx knowledge` has basic artifact ops but no authoring UX. | Medium | P9 — depends on knowledge domain extension maturity. Tracked under [POL-665](https://linear.app/polli-labs/issue/POL-665). |
 | Agent-mail as extension | `agent-mail` MCP server needs packaging as a Calyx extension. Extension registry + discovery not yet designed. | Medium | P8+ — depends on extension ecosystem maturity. Tracked under [POL-665](https://linear.app/polli-labs/issue/POL-665). |
 
 ## Retirement sequencing
