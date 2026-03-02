@@ -1,6 +1,6 @@
 {
   "name": "@polli-labs/calyx-core",
-  "version": "0.1.0",
+  "version": "0.1.4-trusted.0",
   "description": "Core contracts and config compiler for Calyx.",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,9 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"

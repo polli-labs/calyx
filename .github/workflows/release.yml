@@ -34,13 +34,23 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
+      - run: npm install -g npm@^11.5.1
+      - run: npm --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Publish @polli-labs/calyx-core
-        run: pnpm --filter @polli-labs/calyx-core publish --no-git-checks --access public --provenance
+        run: pnpm --filter @polli-labs/calyx-core publish --no-git-checks --access public --provenance --tag trusted-smoke
+        env:
+          NODE_AUTH_TOKEN: ""
       - name: Publish @polli-labs/calyx-sdk
-        run: pnpm --filter @polli-labs/calyx-sdk publish --no-git-checks --access public --provenance
+        run: pnpm --filter @polli-labs/calyx-sdk publish --no-git-checks --access public --provenance --tag trusted-smoke
+        env:
+          NODE_AUTH_TOKEN: ""
       - name: Publish @polli-labs/calyx
-        run: pnpm --filter @polli-labs/calyx publish --no-git-checks --access public --provenance
+        run: pnpm --filter @polli-labs/calyx publish --no-git-checks --access public --provenance --tag trusted-smoke
+        env:
+          NODE_AUTH_TOKEN: ""
       - name: Publish @polli-labs/calyx-web
-        run: pnpm --filter @polli-labs/calyx-web publish --no-git-checks --access public --provenance
+        run: pnpm --filter @polli-labs/calyx-web publish --no-git-checks --access public --provenance --tag trusted-smoke
+        env:
+          NODE_AUTH_TOKEN: ""
