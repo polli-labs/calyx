@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-02
 **Branch:** `pol-673-p7b-onboarding-docs-r1`
-**Environment:** blade (Linux 5.15.0-168-generic), Node v22.x, pnpm 9.15.9
+**Environment:** blade (Linux 5.15.0-168-generic), Node v20.19.4, pnpm 9.15.9
 
 All commands executed from repository root using `node packages/cli/dist/bin.js` (source build path, equivalent to globally installed `calyx`).
 
