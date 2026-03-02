@@ -12,6 +12,13 @@ export {
   validateKnowledgeRegistry
 } from "./knowledge";
 export { launchExecRun, getExecStatus, getExecLogs, getExecReceipt, validateExecStore } from "./exec";
+export {
+  WRAPPER_REGISTRY,
+  emitWrapperTelemetry,
+  checkWrapperGuardrail,
+  getWrapperDeprecationPhase,
+  getDeferredWrapperMessage
+} from "./wrappers";
 export type {
   AgentDeployBackend,
   AgentHostBinding,
@@ -90,6 +97,11 @@ export type {
   ToolsValidateOptions,
   ToolsValidateResult,
   ValidationMode,
+  WrapperDefinition,
+  WrapperDeprecationPhase,
+  WrapperGuardrailResult,
+  WrapperStatus,
+  WrapperTelemetryEvent,
   ExecLaunchOptions,
   ExecLaunchResult,
   ExecLogEntry,

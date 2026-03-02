@@ -515,4 +515,43 @@ declare module "@polli-labs/calyx-core" {
   export function getExecReceipt(storePath: string, options: ExecReceiptOptions): Promise<ExecReceiptResult>;
 
   export function validateExecStore(storePath: string, options?: ExecValidateOptions): Promise<ExecValidateResult>;
+
+  // Wrapper guardrails
+
+  export type WrapperDeprecationPhase = "active" | "warn" | "error";
+  export type WrapperStatus = "implemented" | "deferred";
+
+  export interface WrapperDefinition {
+    wrapper: string;
+    target: string;
+    status: WrapperStatus;
+    phase: string;
+    notes?: string;
+  }
+
+  export interface WrapperTelemetryEvent {
+    event: "calyx.wrapper.invoked";
+    wrapper: string;
+    target: string;
+    timestamp: string;
+    pid: number;
+    cwd: string;
+    deprecation_phase: WrapperDeprecationPhase;
+  }
+
+  export interface WrapperGuardrailResult {
+    allowed: boolean;
+    phase: WrapperDeprecationPhase;
+    message?: string;
+  }
+
+  export const WRAPPER_REGISTRY: WrapperDefinition[];
+
+  export function emitWrapperTelemetry(wrapper: string, target: string): WrapperTelemetryEvent;
+
+  export function checkWrapperGuardrail(wrapper: string, target: string): WrapperGuardrailResult;
+
+  export function getWrapperDeprecationPhase(): WrapperDeprecationPhase;
+
+  export function getDeferredWrapperMessage(wrapper: string): string;
 }
