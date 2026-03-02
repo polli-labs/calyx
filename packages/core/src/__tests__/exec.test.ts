@@ -1,3 +1,5 @@
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -72,13 +74,29 @@ describe("exec domain – launch", () => {
 
   test("applies a launch with apply flag", async () => {
     const root = fixtureRoot();
-    const result = await launchExecRun(path.join(root, "exec/store.valid.json"), {
-      command: "calyx skills sync",
-      apply: true
-    });
+    const tempDir = await mkdtemp(path.join(tmpdir(), "calyx-exec-test-"));
+    const storePath = path.join(tempDir, "store.valid.json");
+    try {
+      await cp(path.join(root, "exec/store.valid.json"), storePath);
 
-    expect(result.apply).toBe(true);
-    expect(result.state).toBe("queued");
+      const before = JSON.parse(await readFile(storePath, "utf8")) as { runs: Array<{ run_id: string }> };
+
+      const result = await launchExecRun(storePath, { command: "calyx skills sync", apply: true });
+      const after = JSON.parse(await readFile(storePath, "utf8")) as {
+        runs: Array<{ run_id: string; command: string; state: string }>;
+      };
+
+      expect(result.apply).toBe(true);
+      expect(result.state).toBe("queued");
+      expect(after.runs).toHaveLength(before.runs.length + 1);
+      expect(
+        after.runs.some(
+          (run) => run.run_id === result.run_id && run.command === "calyx skills sync" && run.state === "queued"
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("launch rejects on invalid store", async () => {

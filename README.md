@@ -122,9 +122,9 @@ calyx knowledge validate --registry fixtures/domains/knowledge/registry.valid.js
 
 ```bash
 calyx exec launch --store fixtures/domains/exec/store.valid.json --command "calyx config compile --host blade"
-calyx exec status --store fixtures/domains/exec/store.valid.json --run-id run-001
-calyx exec logs --store fixtures/domains/exec/store.valid.json --run-id run-001
-calyx exec receipt --store fixtures/domains/exec/store.valid.json --run-id run-001
+calyx exec status --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
+calyx exec logs --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
+calyx exec receipt --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
 calyx exec validate --store fixtures/domains/exec/store.valid.json --strict
 ```
 
