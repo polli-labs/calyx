@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [],
+  "version": "2026-02-27",
+  "total": 3,
+  "active": 1,
+  "deprecated": 1,
+  "archived": 1
+}

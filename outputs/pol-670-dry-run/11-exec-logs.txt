@@ -1,0 +1,26 @@
+{
+  "run_id": "run-001-succeeded",
+  "total": 4,
+  "entries": [
+    {
+      "timestamp": "2026-02-28T10:00:01Z",
+      "level": "info",
+      "message": "Starting config compile for blade"
+    },
+    {
+      "timestamp": "2026-02-28T10:00:03Z",
+      "level": "info",
+      "message": "Merged fleet + host inputs"
+    },
+    {
+      "timestamp": "2026-02-28T10:00:04Z",
+      "level": "warn",
+      "message": "Advisory: codex.otel section has no schema"
+    },
+    {
+      "timestamp": "2026-02-28T10:00:05Z",
+      "level": "info",
+      "message": "Config compile succeeded"
+    }
+  ]
+}

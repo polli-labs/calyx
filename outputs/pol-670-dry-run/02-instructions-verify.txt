@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "drifts": [],
+  "results": [
+    {
+      "host": "blade",
+      "output": "# polli-labs Instructions\n[polli-labs::blade]\n\nWelcome caleb. Host alias is blade.\n\n\n## Routing Hints\n- Use docstore before re-deriving.\n- Keep receipts in Linear.\n\n\n## Host Context\nGPU host with dual RTX 3090 cards.\n\n## Sprint\n2026-W09 - Detection + eval hardening\n\nRendered for blade (blade) by caleb at /home/caleb.\n",
+      "missingPartials": [],
+      "unresolvedTokens": []
+    },
+    {
+      "host": "worm",
+      "output": "# polli-labs Instructions\n[polli-labs::worm]\n\nWelcome caleb. Host alias is worm.\n\n\n## Routing Hints\n- Use docstore before re-deriving.\n- Keep receipts in Linear.\n\n\n## Host Context\nStorage and ingest worker with large local datasets.\n\n## Sprint\n2026-W09 - Detection + eval hardening\n\nRendered for worm (worm) by caleb at /home/caleb.\n",
+      "missingPartials": [],
+      "unresolvedTokens": []
+    }
+  ]
+}

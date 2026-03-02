@@ -1,0 +1,9 @@
+{
+  "host": "blade",
+  "warnings": [],
+  "wrote": false,
+  "outputPath": null,
+  "parity": {
+    "equal": true
+  }
+}

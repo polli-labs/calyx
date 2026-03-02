@@ -1,0 +1,34 @@
+Usage: calyx [options] [command]
+
+Calyx control plane CLI
+
+Options:
+  -V, --version                  output the version number
+  -h, --help                     display help for command
+
+Commands:
+  skills-sync [options]          Compatibility wrapper seed for legacy skills
+                                 sync path
+  skills-sync-claude [options]   Compatibility wrapper: skills sync --backend
+                                 claude
+  skills-sync-codex [options]    Compatibility wrapper: skills sync --backend
+                                 codex
+  prompts-sync-claude [options]  Compatibility wrapper: prompts sync --backend
+                                 claude
+  prompts-sync-codex [options]   Compatibility wrapper: prompts sync --backend
+                                 codex
+  agents-render [options]        Compatibility wrapper: instructions render
+                                 (legacy agents-render path)
+  exec-launch [options]          Compatibility wrapper: exec launch (legacy
+                                 launch-runner path)
+  config                         Config compiler commands
+  instructions                   Instructions rendering and parity commands
+  skills                         Skills registry index/sync/validate commands
+  tools                          Tools registry index/sync/validate commands
+  prompts                        Prompts registry index/sync/validate commands
+  agents                         Agents registry index/sync/validate commands
+  knowledge                      Knowledge artifact index/search/link/validate
+                                 commands
+  exec                           Execution lifecycle commands
+                                 (launch/status/logs/receipt)
+  help [command]                 display help for command

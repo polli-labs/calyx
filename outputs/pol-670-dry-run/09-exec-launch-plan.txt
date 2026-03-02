@@ -1,0 +1,7 @@
+{
+  "run_id": "a5d9438d-b068-4f33-8b78-07a8a9cdd96a",
+  "command": "calyx config compile --host blade",
+  "state": "queued",
+  "created_at": "2026-03-02T20:57:07.458Z",
+  "apply": false
+}
