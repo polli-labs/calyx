@@ -40,6 +40,7 @@ describe("CLI reference completeness", () => {
 
     const requiredSubcommands = [
       "calyx config compile",
+      "calyx config show",
       "calyx instructions render",
       "calyx instructions verify",
       "calyx skills index",
@@ -177,6 +178,7 @@ describe("README completeness", () => {
 
     const requiredLinks = [
       "docs/onboarding.md",
+      "docs/production-wiring.md",
       "docs/cli-reference.md",
       "docs/extension-sdk.md",
       "docs/migration-guide.md",
@@ -390,6 +392,47 @@ describe("onboarding guide completeness", () => {
     for (const domain of domains) {
       expect(guide, `onboarding.md missing domain: ${domain}`).toContain(domain);
     }
+  });
+});
+
+describe("production wiring doc completeness", () => {
+  test("production-wiring.md exists and has required sections", async () => {
+    const doc = await readFile(path.join(docsRoot(), "production-wiring.md"), "utf8");
+
+    const requiredSections = [
+      "## Configuration Model",
+      "## Quick Start",
+      "## Environment Variable Reference",
+      "## Config File Schema",
+      "## Fixture Mode"
+    ];
+
+    for (const section of requiredSections) {
+      expect(doc, `production-wiring.md missing section: ${section}`).toContain(section);
+    }
+  });
+
+  test("production-wiring.md documents all domain env vars", async () => {
+    const doc = await readFile(path.join(docsRoot(), "production-wiring.md"), "utf8");
+
+    const envVars = [
+      "CALYX_SKILLS_REGISTRY",
+      "CALYX_TOOLS_REGISTRY",
+      "CALYX_PROMPTS_REGISTRY",
+      "CALYX_AGENTS_REGISTRY",
+      "CALYX_KNOWLEDGE_REGISTRY",
+      "CALYX_EXEC_STORE",
+      "CALYX_CONFIG"
+    ];
+
+    for (const envVar of envVars) {
+      expect(doc, `production-wiring.md missing env var: ${envVar}`).toContain(envVar);
+    }
+  });
+
+  test("production-wiring.md documents calyx config show", async () => {
+    const doc = await readFile(path.join(docsRoot(), "production-wiring.md"), "utf8");
+    expect(doc).toContain("calyx config show");
   });
 });
 

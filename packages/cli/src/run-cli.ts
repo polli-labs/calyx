@@ -16,7 +16,9 @@ import {
   linkKnowledgeArtifact,
   renderAgentProfiles,
   renderInstructionsFromFiles,
+  requireSourcePath,
   searchKnowledgeRegistry,
+  showConfig,
   syncAgentsRegistry,
   syncPromptsRegistry,
   syncSkillsRegistry,
@@ -39,6 +41,7 @@ import type {
   DomainValidationIssue,
   KnowledgeArtifactKind,
   PromptBackend,
+  SourceDomain,
   SyncBackend,
   ToolsSyncOptions
 } from "@polli-labs/calyx-core";
@@ -70,7 +73,7 @@ interface InstructionsVerifyCommandOptions extends InstructionsBaseCommandOption
 }
 
 interface SkillsIndexCommandOptions {
-  registry: string;
+  registry?: string;
   includeArchived?: boolean;
   excludeDeprecated?: boolean;
   json?: boolean;
@@ -83,13 +86,13 @@ interface SkillsSyncCommandOptions extends SkillsIndexCommandOptions {
 }
 
 interface SkillsValidateCommandOptions {
-  registry: string;
+  registry?: string;
   strict?: boolean;
   json?: boolean;
 }
 
 interface ToolsIndexCommandOptions {
-  registry: string;
+  registry?: string;
   json?: boolean;
 }
 
@@ -104,7 +107,7 @@ interface ToolsValidateCommandOptions extends ToolsIndexCommandOptions {
 }
 
 interface PromptsIndexCommandOptions {
-  registry: string;
+  registry?: string;
   json?: boolean;
 }
 
@@ -118,7 +121,7 @@ interface PromptsValidateCommandOptions extends PromptsIndexCommandOptions {
 }
 
 interface AgentsIndexCommandOptions {
-  registry: string;
+  registry?: string;
   includeArchived?: boolean;
   excludeDeprecated?: boolean;
   json?: boolean;
@@ -139,19 +142,19 @@ interface AgentsSyncCommandOptions extends AgentsIndexCommandOptions {
 }
 
 interface AgentsValidateCommandOptions {
-  registry: string;
+  registry?: string;
   strict?: boolean;
   json?: boolean;
 }
 
 interface KnowledgeIndexCommandOptions {
-  registry: string;
+  registry?: string;
   kind?: string;
   json?: boolean;
 }
 
 interface KnowledgeSearchCommandOptions {
-  registry: string;
+  registry?: string;
   query: string;
   kind?: string;
   tags?: string;
@@ -159,7 +162,7 @@ interface KnowledgeSearchCommandOptions {
 }
 
 interface KnowledgeLinkCommandOptions {
-  registry: string;
+  registry?: string;
   artifact: string;
   issue: string;
   apply?: boolean;
@@ -167,26 +170,26 @@ interface KnowledgeLinkCommandOptions {
 }
 
 interface KnowledgeValidateCommandOptions {
-  registry: string;
+  registry?: string;
   strict?: boolean;
   json?: boolean;
 }
 
 interface ExecLaunchCommandOptions {
-  store: string;
+  store?: string;
   command: string;
   apply?: boolean;
   json?: boolean;
 }
 
 interface ExecStatusCommandOptions {
-  store: string;
+  store?: string;
   runId: string;
   json?: boolean;
 }
 
 interface ExecLogsCommandOptions {
-  store: string;
+  store?: string;
   runId: string;
   level?: string;
   tail?: string;
@@ -194,14 +197,18 @@ interface ExecLogsCommandOptions {
 }
 
 interface ExecReceiptCommandOptions {
-  store: string;
+  store?: string;
   runId: string;
   json?: boolean;
 }
 
 interface ExecValidateCommandOptions {
-  store: string;
+  store?: string;
   strict?: boolean;
+  json?: boolean;
+}
+
+interface ConfigShowCommandOptions {
   json?: boolean;
 }
 
@@ -295,6 +302,14 @@ function normalizeToolsSyncTarget(options: ToolsSyncCommandOptions): ToolsSyncOp
 }
 
 /**
+ * Resolve a source path for a domain using production wiring precedence:
+ * CLI flag > env var > config file.
+ */
+async function resolve(domain: SourceDomain, cliValue?: string): Promise<string> {
+  return requireSourcePath(domain, { cliValue });
+}
+
+/**
  * Guardrail gate: check CALYX_FAIL_ON_DEPRECATED and throw if blocked.
  * Call at the top of every wrapper action, before domain work.
  */
@@ -368,6 +383,31 @@ export async function runCli(argv = process.argv): Promise<void> {
 
       if (parity?.equal) {
         console.error(`Semantic parity OK for ${options.host}.`);
+      }
+    });
+
+  config
+    .command("show")
+    .description("Show resolved source paths for all domains (config/env/defaults)")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ConfigShowCommandOptions) => {
+      const result = await showConfig();
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      if (result.configPath) {
+        console.error(`Config file: ${result.configPath} (source: ${result.configSource})`);
+      } else {
+        console.error("Config file: not found");
+      }
+
+      console.error("");
+      for (const [domain, info] of Object.entries(result.resolved)) {
+        const pathStr = info.path ?? "(not configured)";
+        console.log(`${domain}\t${pathStr}\t[${info.source}]`);
       }
     });
 
@@ -477,12 +517,13 @@ export async function runCli(argv = process.argv): Promise<void> {
   skills
     .command("index")
     .description("Index skills from a registry")
-    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--registry <path>", "Path to skills registry JSON (or set CALYX_SKILLS_REGISTRY)")
     .option("--include-archived", "Include archived skills in index output")
     .option("--exclude-deprecated", "Exclude deprecated skills from index output")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsIndexCommandOptions) => {
-      const result = await indexSkillsRegistry(options.registry, {
+      const registryPath = await resolve("skills", options.registry);
+      const result = await indexSkillsRegistry(registryPath, {
         includeArchived: Boolean(options.includeArchived),
         includeDeprecated: !options.excludeDeprecated
       });
@@ -496,13 +537,13 @@ export async function runCli(argv = process.argv): Promise<void> {
         const status = skill.status ?? "active";
         console.log(`${skill.id}\t${status}`);
       }
-      console.error(`Indexed ${result.items.length}/${result.total} skills from ${options.registry}.`);
+      console.error(`Indexed ${result.items.length}/${result.total} skills from ${registryPath}.`);
     });
 
   skills
     .command("sync")
     .description("Sync skills from a registry into target backend(s)")
-    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--registry <path>", "Path to skills registry JSON (or set CALYX_SKILLS_REGISTRY)")
     .option("--backend <backend>", "Sync backend (claude|codex|agents|all)", "all")
     .option("--include-archived", "Include archived skills")
     .option("--exclude-deprecated", "Exclude deprecated skills")
@@ -510,8 +551,9 @@ export async function runCli(argv = process.argv): Promise<void> {
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsSyncCommandOptions) => {
+      const registryPath = await resolve("skills", options.registry);
       const backend = parseSkillsBackend(options.backend);
-      const result = await syncSkillsRegistry(options.registry, {
+      const result = await syncSkillsRegistry(registryPath, {
         backend,
         apply: Boolean(options.apply),
         includeArchived: Boolean(options.includeArchived),
@@ -533,11 +575,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   skills
     .command("validate")
     .description("Validate skills registry structure and lifecycle constraints")
-    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--registry <path>", "Path to skills registry JSON (or set CALYX_SKILLS_REGISTRY)")
     .option("--strict", "Escalate warnings to strict checks")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsValidateCommandOptions) => {
-      const result = await validateSkillsRegistry(options.registry, {
+      const registryPath = await resolve("skills", options.registry);
+      const result = await validateSkillsRegistry(registryPath, {
         strict: Boolean(options.strict)
       });
 
@@ -561,10 +604,11 @@ export async function runCli(argv = process.argv): Promise<void> {
   tools
     .command("index")
     .description("Index tools from a registry")
-    .requiredOption("--registry <path>", "Path to tools registry JSON")
+    .option("--registry <path>", "Path to tools registry JSON (or set CALYX_TOOLS_REGISTRY)")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ToolsIndexCommandOptions) => {
-      const result = await indexToolsRegistry(options.registry);
+      const registryPath = await resolve("tools", options.registry);
+      const result = await indexToolsRegistry(registryPath);
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -574,20 +618,21 @@ export async function runCli(argv = process.argv): Promise<void> {
       for (const tool of result.items) {
         console.log(`${tool.name}\t${tool.version}`);
       }
-      console.error(`Indexed ${result.items.length} tools from ${options.registry}.`);
+      console.error(`Indexed ${result.items.length} tools from ${registryPath}.`);
     });
 
   tools
     .command("sync")
     .description("Sync tools from a registry into host targets")
-    .requiredOption("--registry <path>", "Path to tools registry JSON")
+    .option("--registry <path>", "Path to tools registry JSON (or set CALYX_TOOLS_REGISTRY)")
     .option("--host <alias>", "Single host alias to target")
     .option("--all", "Sync all known hosts")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ToolsSyncCommandOptions) => {
+      const registryPath = await resolve("tools", options.registry);
       const syncOptions = normalizeToolsSyncTarget(options);
-      const result = await syncToolsRegistry(options.registry, syncOptions);
+      const result = await syncToolsRegistry(registryPath, syncOptions);
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -601,11 +646,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   tools
     .command("validate")
     .description("Validate tools registry structure and version metadata")
-    .requiredOption("--registry <path>", "Path to tools registry JSON")
+    .option("--registry <path>", "Path to tools registry JSON (or set CALYX_TOOLS_REGISTRY)")
     .option("--strict", "Escalate warnings to strict checks")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ToolsValidateCommandOptions) => {
-      const result = await validateToolsRegistry(options.registry, {
+      const registryPath = await resolve("tools", options.registry);
+      const result = await validateToolsRegistry(registryPath, {
         strict: Boolean(options.strict)
       });
 
@@ -627,10 +673,11 @@ export async function runCli(argv = process.argv): Promise<void> {
   prompts
     .command("index")
     .description("Index prompts from a registry")
-    .requiredOption("--registry <path>", "Path to prompts registry JSON")
+    .option("--registry <path>", "Path to prompts registry JSON (or set CALYX_PROMPTS_REGISTRY)")
     .option("--json", "Print machine-readable summary")
     .action(async (options: PromptsIndexCommandOptions) => {
-      const result = await indexPromptsRegistry(options.registry);
+      const registryPath = await resolve("prompts", options.registry);
+      const result = await indexPromptsRegistry(registryPath);
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -640,19 +687,20 @@ export async function runCli(argv = process.argv): Promise<void> {
       for (const prompt of result.items) {
         console.log(`${prompt.id}\t${prompt.template_path}`);
       }
-      console.error(`Indexed ${result.items.length} prompts from ${options.registry}.`);
+      console.error(`Indexed ${result.items.length} prompts from ${registryPath}.`);
     });
 
   prompts
     .command("sync")
     .description("Sync prompts from a registry into backend targets")
-    .requiredOption("--registry <path>", "Path to prompts registry JSON")
+    .option("--registry <path>", "Path to prompts registry JSON (or set CALYX_PROMPTS_REGISTRY)")
     .option("--backend <backend>", "Sync backend (claude|codex|all)", "all")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: PromptsSyncCommandOptions) => {
+      const registryPath = await resolve("prompts", options.registry);
       const backend = parsePromptsBackend(options.backend);
-      const result = await syncPromptsRegistry(options.registry, {
+      const result = await syncPromptsRegistry(registryPath, {
         backend,
         apply: Boolean(options.apply)
       });
@@ -671,11 +719,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   prompts
     .command("validate")
     .description("Validate prompts registry structure and variable contracts")
-    .requiredOption("--registry <path>", "Path to prompts registry JSON")
+    .option("--registry <path>", "Path to prompts registry JSON (or set CALYX_PROMPTS_REGISTRY)")
     .option("--strict", "Escalate warnings to strict checks")
     .option("--json", "Print machine-readable summary")
     .action(async (options: PromptsValidateCommandOptions) => {
-      const result = await validatePromptsRegistry(options.registry, {
+      const registryPath = await resolve("prompts", options.registry);
+      const result = await validatePromptsRegistry(registryPath, {
         strict: Boolean(options.strict)
       });
 
@@ -695,15 +744,16 @@ export async function runCli(argv = process.argv): Promise<void> {
   program
     .command("skills-sync")
     .description("Compatibility wrapper seed for legacy skills sync path")
-    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--registry <path>", "Path to skills registry JSON (or set CALYX_SKILLS_REGISTRY)")
     .option("--backend <backend>", "Sync backend (claude|codex|agents|all)", "all")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsSyncCommandOptions) => {
       enforceWrapperGuardrail("skills-sync", "calyx skills sync");
+      const registryPath = await resolve("skills", options.registry);
       const backend = parseSkillsBackend(options.backend);
       const telemetry = emitWrapperTelemetry("skills-sync", "calyx skills sync");
-      const result = await syncSkillsRegistry(options.registry, {
+      const result = await syncSkillsRegistry(registryPath, {
         backend,
         apply: Boolean(options.apply)
       });
@@ -731,12 +781,13 @@ export async function runCli(argv = process.argv): Promise<void> {
   agents
     .command("index")
     .description("Index agents from a registry")
-    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--registry <path>", "Path to agents registry JSON (or set CALYX_AGENTS_REGISTRY)")
     .option("--include-archived", "Include archived agents in index output")
     .option("--exclude-deprecated", "Exclude deprecated agents from index output")
     .option("--json", "Print machine-readable summary")
     .action(async (options: AgentsIndexCommandOptions) => {
-      const result = await indexAgentsRegistry(options.registry, {
+      const registryPath = await resolve("agents", options.registry);
+      const result = await indexAgentsRegistry(registryPath, {
         includeArchived: Boolean(options.includeArchived),
         includeDeprecated: !options.excludeDeprecated
       });
@@ -750,18 +801,19 @@ export async function runCli(argv = process.argv): Promise<void> {
         const status = agent.status ?? "active";
         console.log(`${agent.id}\t${agent.name}\t${status}`);
       }
-      console.error(`Indexed ${result.items.length}/${result.total} agents from ${options.registry}.`);
+      console.error(`Indexed ${result.items.length}/${result.total} agents from ${registryPath}.`);
     });
 
   agents
     .command("render-profiles")
     .description("Render agent profiles from a registry (id, name, status, hosts, capabilities)")
-    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--registry <path>", "Path to agents registry JSON (or set CALYX_AGENTS_REGISTRY)")
     .option("--include-archived", "Include archived agents in profile output")
     .option("--exclude-deprecated", "Exclude deprecated agents from profile output")
     .option("--json", "Print machine-readable summary")
     .action(async (options: AgentsRenderProfilesCommandOptions) => {
-      const result = await renderAgentProfiles(options.registry, {
+      const registryPath = await resolve("agents", options.registry);
+      const result = await renderAgentProfiles(registryPath, {
         includeArchived: Boolean(options.includeArchived),
         includeDeprecated: !options.excludeDeprecated
       });
@@ -776,21 +828,22 @@ export async function runCli(argv = process.argv): Promise<void> {
         const caps = profile.capabilities.join(", ") || "none";
         console.log(`${profile.id}\t${profile.name}\t${profile.status}\thosts=${hosts}\tcapabilities=${caps}`);
       }
-      console.error(`Rendered ${result.profiles.length}/${result.total} agent profiles from ${options.registry}.`);
+      console.error(`Rendered ${result.profiles.length}/${result.total} agent profiles from ${registryPath}.`);
     });
 
   agents
     .command("deploy")
     .description("Deploy agents from a registry into target backend(s) (plan/apply)")
-    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--registry <path>", "Path to agents registry JSON (or set CALYX_AGENTS_REGISTRY)")
     .option("--backend <backend>", "Deploy backend (claude|codex|all)", "all")
     .option("--include-archived", "Include archived agents")
     .option("--exclude-deprecated", "Exclude deprecated agents")
     .option("--apply", "Apply deploy actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: AgentsDeployCommandOptions) => {
+      const registryPath = await resolve("agents", options.registry);
       const backend = parseAgentsBackend(options.backend);
-      const result = await deployAgentsRegistry(options.registry, {
+      const result = await deployAgentsRegistry(registryPath, {
         backend,
         apply: Boolean(options.apply),
         includeArchived: Boolean(options.includeArchived),
@@ -811,15 +864,16 @@ export async function runCli(argv = process.argv): Promise<void> {
   agents
     .command("sync")
     .description("Sync agents from a registry into target backend(s)")
-    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--registry <path>", "Path to agents registry JSON (or set CALYX_AGENTS_REGISTRY)")
     .option("--backend <backend>", "Deploy backend (claude|codex|all)", "all")
     .option("--include-archived", "Include archived agents")
     .option("--exclude-deprecated", "Exclude deprecated agents")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: AgentsSyncCommandOptions) => {
+      const registryPath = await resolve("agents", options.registry);
       const backend = parseAgentsBackend(options.backend);
-      const result = await syncAgentsRegistry(options.registry, {
+      const result = await syncAgentsRegistry(registryPath, {
         backend,
         apply: Boolean(options.apply),
         includeArchived: Boolean(options.includeArchived),
@@ -840,11 +894,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   agents
     .command("validate")
     .description("Validate agents registry structure and lifecycle constraints")
-    .requiredOption("--registry <path>", "Path to agents registry JSON")
+    .option("--registry <path>", "Path to agents registry JSON (or set CALYX_AGENTS_REGISTRY)")
     .option("--strict", "Escalate warnings to strict checks")
     .option("--json", "Print machine-readable summary")
     .action(async (options: AgentsValidateCommandOptions) => {
-      const result = await validateAgentsRegistry(options.registry, {
+      const registryPath = await resolve("agents", options.registry);
+      const result = await validateAgentsRegistry(registryPath, {
         strict: Boolean(options.strict)
       });
 
@@ -868,11 +923,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   knowledge
     .command("index")
     .description("Index knowledge artifacts from a registry")
-    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .option("--registry <path>", "Path to knowledge registry JSON (or set CALYX_KNOWLEDGE_REGISTRY)")
     .option("--kind <kind>", "Filter by artifact kind")
     .option("--json", "Print machine-readable summary")
     .action(async (options: KnowledgeIndexCommandOptions) => {
-      const result = await indexKnowledgeRegistry(options.registry, {
+      const registryPath = await resolve("knowledge", options.registry);
+      const result = await indexKnowledgeRegistry(registryPath, {
         ...(options.kind ? { kind: parseKnowledgeKind(options.kind) } : {})
       });
 
@@ -884,19 +940,20 @@ export async function runCli(argv = process.argv): Promise<void> {
       for (const artifact of result.items) {
         console.log(`${artifact.id}\t${artifact.kind}\t${artifact.title}`);
       }
-      console.error(`Indexed ${result.items.length}/${result.total} artifacts from ${options.registry}.`);
+      console.error(`Indexed ${result.items.length}/${result.total} artifacts from ${registryPath}.`);
     });
 
   knowledge
     .command("search")
     .description("Search knowledge artifacts by query")
-    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .option("--registry <path>", "Path to knowledge registry JSON (or set CALYX_KNOWLEDGE_REGISTRY)")
     .requiredOption("--query <query>", "Search query string")
     .option("--kind <kind>", "Filter by artifact kind")
     .option("--tags <tags>", "Comma-separated tag filter")
     .option("--json", "Print machine-readable summary")
     .action(async (options: KnowledgeSearchCommandOptions) => {
-      const result = await searchKnowledgeRegistry(options.registry, {
+      const registryPath = await resolve("knowledge", options.registry);
+      const result = await searchKnowledgeRegistry(registryPath, {
         query: options.query,
         ...(options.kind ? { kind: parseKnowledgeKind(options.kind) } : {}),
         ...(options.tags ? { tags: options.tags.split(",").map((t) => t.trim()) } : {})
@@ -916,13 +973,14 @@ export async function runCli(argv = process.argv): Promise<void> {
   knowledge
     .command("link")
     .description("Link a knowledge artifact to a Linear issue")
-    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .option("--registry <path>", "Path to knowledge registry JSON (or set CALYX_KNOWLEDGE_REGISTRY)")
     .requiredOption("--artifact <id>", "Artifact ID to link")
     .requiredOption("--issue <id>", "Linear issue ID to link to")
     .option("--apply", "Apply the link action")
     .option("--json", "Print machine-readable summary")
     .action(async (options: KnowledgeLinkCommandOptions) => {
-      const result = await linkKnowledgeArtifact(options.registry, {
+      const registryPath = await resolve("knowledge", options.registry);
+      const result = await linkKnowledgeArtifact(registryPath, {
         artifactId: options.artifact,
         issueId: options.issue,
         apply: Boolean(options.apply)
@@ -939,11 +997,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   knowledge
     .command("validate")
     .description("Validate knowledge registry structure and artifact contracts")
-    .requiredOption("--registry <path>", "Path to knowledge registry JSON")
+    .option("--registry <path>", "Path to knowledge registry JSON (or set CALYX_KNOWLEDGE_REGISTRY)")
     .option("--strict", "Escalate warnings to strict checks")
     .option("--json", "Print machine-readable summary")
     .action(async (options: KnowledgeValidateCommandOptions) => {
-      const result = await validateKnowledgeRegistry(options.registry, {
+      const registryPath = await resolve("knowledge", options.registry);
+      const result = await validateKnowledgeRegistry(registryPath, {
         strict: Boolean(options.strict)
       });
 
@@ -965,12 +1024,13 @@ export async function runCli(argv = process.argv): Promise<void> {
   exec
     .command("launch")
     .description("Launch a new execution run (plan/apply)")
-    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .option("--store <path>", "Path to exec run store JSON (or set CALYX_EXEC_STORE)")
     .requiredOption("--command <command>", "Command string to launch")
     .option("--apply", "Apply the launch (create a real run record)")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ExecLaunchCommandOptions) => {
-      const result = await launchExecRun(options.store, {
+      const storePath = await resolve("exec", options.store);
+      const result = await launchExecRun(storePath, {
         command: options.command,
         apply: Boolean(options.apply)
       });
@@ -988,11 +1048,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   exec
     .command("status")
     .description("Get status of an execution run")
-    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .option("--store <path>", "Path to exec run store JSON (or set CALYX_EXEC_STORE)")
     .requiredOption("--run-id <id>", "Run ID to query")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ExecStatusCommandOptions) => {
-      const result = await getExecStatus(options.store, {
+      const storePath = await resolve("exec", options.store);
+      const result = await getExecStatus(storePath, {
         run_id: options.runId
       });
 
@@ -1014,13 +1075,14 @@ export async function runCli(argv = process.argv): Promise<void> {
   exec
     .command("logs")
     .description("View logs of an execution run")
-    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .option("--store <path>", "Path to exec run store JSON (or set CALYX_EXEC_STORE)")
     .requiredOption("--run-id <id>", "Run ID to query")
     .option("--level <level>", "Filter by log level (info|warn|error)")
     .option("--tail <n>", "Show only the last N log entries")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ExecLogsCommandOptions) => {
-      const result = await getExecLogs(options.store, {
+      const storePath = await resolve("exec", options.store);
+      const result = await getExecLogs(storePath, {
         run_id: options.runId,
         ...(options.level ? { level: parseLogLevel(options.level) } : {}),
         ...(options.tail ? { tail: parseInt(options.tail, 10) } : {})
@@ -1040,11 +1102,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   exec
     .command("receipt")
     .description("Generate a receipt for an execution run")
-    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .option("--store <path>", "Path to exec run store JSON (or set CALYX_EXEC_STORE)")
     .requiredOption("--run-id <id>", "Run ID to query")
     .option("--json", "Print machine-readable JSON receipt")
     .action(async (options: ExecReceiptCommandOptions) => {
-      const result = await getExecReceipt(options.store, {
+      const storePath = await resolve("exec", options.store);
+      const result = await getExecReceipt(storePath, {
         run_id: options.runId
       });
 
@@ -1071,11 +1134,12 @@ export async function runCli(argv = process.argv): Promise<void> {
   exec
     .command("validate")
     .description("Validate exec run store structure and lifecycle constraints")
-    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .option("--store <path>", "Path to exec run store JSON (or set CALYX_EXEC_STORE)")
     .option("--strict", "Escalate warnings to strict checks")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ExecValidateCommandOptions) => {
-      const result = await validateExecStore(options.store, {
+      const storePath = await resolve("exec", options.store);
+      const result = await validateExecStore(storePath, {
         strict: Boolean(options.strict)
       });
 
@@ -1102,13 +1166,14 @@ export async function runCli(argv = process.argv): Promise<void> {
   program
     .command("skills-sync-claude")
     .description("Compatibility wrapper: skills sync --backend claude")
-    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--registry <path>", "Path to skills registry JSON (or set CALYX_SKILLS_REGISTRY)")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsSyncCommandOptions) => {
       enforceWrapperGuardrail("skills-sync-claude", "calyx skills sync --backend claude");
+      const registryPath = await resolve("skills", options.registry);
       const telemetry = emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
-      const result = await syncSkillsRegistry(options.registry, {
+      const result = await syncSkillsRegistry(registryPath, {
         backend: "claude",
         apply: Boolean(options.apply)
       });
@@ -1125,13 +1190,14 @@ export async function runCli(argv = process.argv): Promise<void> {
   program
     .command("skills-sync-codex")
     .description("Compatibility wrapper: skills sync --backend codex")
-    .requiredOption("--registry <path>", "Path to skills registry JSON")
+    .option("--registry <path>", "Path to skills registry JSON (or set CALYX_SKILLS_REGISTRY)")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SkillsSyncCommandOptions) => {
       enforceWrapperGuardrail("skills-sync-codex", "calyx skills sync --backend codex");
+      const registryPath = await resolve("skills", options.registry);
       const telemetry = emitWrapperTelemetry("skills-sync-codex", "calyx skills sync --backend codex");
-      const result = await syncSkillsRegistry(options.registry, {
+      const result = await syncSkillsRegistry(registryPath, {
         backend: "codex",
         apply: Boolean(options.apply)
       });
@@ -1148,13 +1214,14 @@ export async function runCli(argv = process.argv): Promise<void> {
   program
     .command("prompts-sync-claude")
     .description("Compatibility wrapper: prompts sync --backend claude")
-    .requiredOption("--registry <path>", "Path to prompts registry JSON")
+    .option("--registry <path>", "Path to prompts registry JSON (or set CALYX_PROMPTS_REGISTRY)")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: PromptsSyncCommandOptions) => {
       enforceWrapperGuardrail("prompts-sync-claude", "calyx prompts sync --backend claude");
+      const registryPath = await resolve("prompts", options.registry);
       const telemetry = emitWrapperTelemetry("prompts-sync-claude", "calyx prompts sync --backend claude");
-      const result = await syncPromptsRegistry(options.registry, {
+      const result = await syncPromptsRegistry(registryPath, {
         backend: "claude",
         apply: Boolean(options.apply)
       });
@@ -1171,13 +1238,14 @@ export async function runCli(argv = process.argv): Promise<void> {
   program
     .command("prompts-sync-codex")
     .description("Compatibility wrapper: prompts sync --backend codex")
-    .requiredOption("--registry <path>", "Path to prompts registry JSON")
+    .option("--registry <path>", "Path to prompts registry JSON (or set CALYX_PROMPTS_REGISTRY)")
     .option("--apply", "Apply sync actions")
     .option("--json", "Print machine-readable summary")
     .action(async (options: PromptsSyncCommandOptions) => {
       enforceWrapperGuardrail("prompts-sync-codex", "calyx prompts sync --backend codex");
+      const registryPath = await resolve("prompts", options.registry);
       const telemetry = emitWrapperTelemetry("prompts-sync-codex", "calyx prompts sync --backend codex");
-      const result = await syncPromptsRegistry(options.registry, {
+      const result = await syncPromptsRegistry(registryPath, {
         backend: "codex",
         apply: Boolean(options.apply)
       });
@@ -1244,14 +1312,15 @@ export async function runCli(argv = process.argv): Promise<void> {
   program
     .command("exec-launch")
     .description("Compatibility wrapper: exec launch (legacy launch-runner path)")
-    .requiredOption("--store <path>", "Path to exec run store JSON")
+    .option("--store <path>", "Path to exec run store JSON (or set CALYX_EXEC_STORE)")
     .requiredOption("--command <command>", "Command string to launch")
     .option("--apply", "Apply the launch (create a real run record)")
     .option("--json", "Print machine-readable summary")
     .action(async (options: ExecLaunchCommandOptions) => {
       enforceWrapperGuardrail("exec-launch", "calyx exec launch");
+      const storePath = await resolve("exec", options.store);
       const telemetry = emitWrapperTelemetry("exec-launch", "calyx exec launch");
-      const result = await launchExecRun(options.store, {
+      const result = await launchExecRun(storePath, {
         command: options.command,
         apply: Boolean(options.apply)
       });

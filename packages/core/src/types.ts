@@ -628,3 +628,51 @@ export interface ExecValidateResult extends DomainValidationResult {
   failed: number;
   cancelled: number;
 }
+
+// ── Production wiring: source resolution ────────────────────────────
+
+/** Domains that use a `--registry` path. */
+export type RegistryDomain = "skills" | "tools" | "prompts" | "agents" | "knowledge";
+
+/** Domains that use a `--store` path. */
+export type StoreDomain = "exec";
+
+/** Union of all resolvable source domains. */
+export type SourceDomain = RegistryDomain | StoreDomain;
+
+/** Calyx configuration file schema. */
+export interface CalyxConfig {
+  version: string;
+  registries?: Partial<Record<RegistryDomain, string>>;
+  stores?: Partial<Record<StoreDomain, string>>;
+}
+
+/** Options controlling how source paths are resolved. */
+export interface ResolveSourceOptions {
+  /** Explicit CLI flag value — highest precedence. */
+  cliValue?: string;
+  /** Override for the config file path (instead of default location). */
+  configPath?: string;
+}
+
+/** Result of resolving a source path. */
+export interface ResolveSourceResult {
+  /** The resolved path (if found). */
+  path: string | undefined;
+  /** How the path was resolved. */
+  source: "cli" | "env" | "config" | "default" | "none";
+}
+
+/** Result of loading the Calyx config file. */
+export interface CalyxConfigLoadResult {
+  config: CalyxConfig | undefined;
+  configPath: string | undefined;
+  source: "env" | "default" | "none";
+}
+
+/** Result of the `calyx config show` command. */
+export interface ConfigShowResult {
+  configPath: string | undefined;
+  configSource: "env" | "default" | "none";
+  resolved: Record<SourceDomain, ResolveSourceResult>;
+}

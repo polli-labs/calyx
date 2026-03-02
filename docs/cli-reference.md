@@ -39,6 +39,28 @@ calyx config compile \
 
 ---
 
+### `calyx config show`
+
+Show resolved source paths for all domains (config file, environment variables).
+
+```bash
+calyx config show [options]
+```
+
+**Options:**
+- `--json` — Print machine-readable summary
+
+**Exit codes:**
+- `0` — Success
+
+**Example:**
+```bash
+calyx config show
+calyx config show --json
+```
+
+---
+
 ## Instructions Commands
 
 Instruction template rendering and parity verification.

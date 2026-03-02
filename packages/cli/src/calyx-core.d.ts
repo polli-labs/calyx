@@ -554,4 +554,38 @@ declare module "@polli-labs/calyx-core" {
   export function getWrapperDeprecationPhase(): WrapperDeprecationPhase;
 
   export function getDeferredWrapperMessage(wrapper: string): string;
+
+  // Production wiring: source resolution
+
+  export type RegistryDomain = "skills" | "tools" | "prompts" | "agents" | "knowledge";
+  export type StoreDomain = "exec";
+  export type SourceDomain = RegistryDomain | StoreDomain;
+
+  export interface ResolveSourceOptions {
+    cliValue?: string | undefined;
+    configPath?: string | undefined;
+  }
+
+  export interface ResolveSourceResult {
+    path: string | undefined;
+    source: "cli" | "env" | "config" | "default" | "none";
+  }
+
+  export interface ConfigShowResult {
+    configPath: string | undefined;
+    configSource: "env" | "default" | "none";
+    resolved: Record<SourceDomain, ResolveSourceResult>;
+  }
+
+  export function resolveSourcePath(
+    domain: SourceDomain,
+    options?: ResolveSourceOptions
+  ): Promise<ResolveSourceResult>;
+
+  export function requireSourcePath(
+    domain: SourceDomain,
+    options?: ResolveSourceOptions
+  ): Promise<string>;
+
+  export function showConfig(configPathOverride?: string): Promise<ConfigShowResult>;
 }
