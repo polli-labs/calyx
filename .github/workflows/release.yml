@@ -37,10 +37,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Publish @polli-labs/calyx-core
-        run: pnpm --filter @polli-labs/calyx-core publish --no-git-checks --access public
+        run: pnpm --filter @polli-labs/calyx-core publish --no-git-checks --access public --provenance
       - name: Publish @polli-labs/calyx-sdk
-        run: pnpm --filter @polli-labs/calyx-sdk publish --no-git-checks --access public
+        run: pnpm --filter @polli-labs/calyx-sdk publish --no-git-checks --access public --provenance
       - name: Publish @polli-labs/calyx
-        run: pnpm --filter @polli-labs/calyx publish --no-git-checks --access public
+        run: pnpm --filter @polli-labs/calyx publish --no-git-checks --access public --provenance
       - name: Publish @polli-labs/calyx-web
-        run: pnpm --filter @polli-labs/calyx-web publish --no-git-checks --access public
+        run: pnpm --filter @polli-labs/calyx-web publish --no-git-checks --access public --provenance
