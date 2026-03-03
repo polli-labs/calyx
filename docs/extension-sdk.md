@@ -324,7 +324,44 @@ The `calyx-ext-polli` package is the first-party Polli extension. It provides:
 - **Environment readiness** diagnostics (checks for expected env vars)
 - **Structured summaries** after command failures
 
-Install: the extension ships in `packages/calyx-ext-polli` within the monorepo.
+Targets: `skills`, `tools`, `agents`. Ships in `packages/calyx-ext-polli` within the monorepo.
+
+### calyx-ext-linear
+
+The `calyx-ext-linear` package provides Linear issue-tracking context for agents and execution workflows. It provides:
+
+- **Environment hints** for `LINEAR_API_KEY` and `LINEAR_TEAM` on activation
+- **Issue context checks** before `launch`, `deploy`, `sync`, and `status` commands
+- **Failure diagnostics** with Linear-friendly suggestions (structured receipts for issue comments)
+
+Targets: `agents`, `exec`. Ships in `packages/calyx-ext-linear` within the monorepo. Non-destructive — never blocks commands.
+
+## Starter Template
+
+A copy-and-customize starter template is available at [`examples/extensions/starter/`](../examples/extensions/starter/). It includes:
+
+- `package.json` with a complete `calyx` manifest block
+- `src/index.ts` — annotated extension entrypoint with all 4 lifecycle hooks
+- `src/validate.ts` — standalone manifest validation script
+- `src/__tests__/extension.test.ts` — test scaffold with vitest
+- `README.md` — quickstart for external authors
+
+To use:
+
+```bash
+# Copy the starter
+cp -r examples/extensions/starter calyx-ext-myname
+cd calyx-ext-myname
+
+# Update package.json: name, description, domains
+# Implement your hooks in src/index.ts
+# Validate
+npx tsx src/validate.ts
+
+# Build and test with Calyx
+npm run build
+CALYX_EXTENSIONS_PATH=$(dirname $(pwd)) calyx extensions list
+```
 
 ## Compatibility
 

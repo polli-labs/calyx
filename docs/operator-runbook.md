@@ -219,7 +219,14 @@ If you encounter scripts or automation still using these commands, update them t
 
 ## Extension management
 
-Extensions extend Calyx's domain command lifecycle with custom hooks. Use these commands to manage extensions:
+Extensions extend Calyx's domain command lifecycle with custom hooks. Two first-party extensions ship in the monorepo:
+
+| Extension | Domains | Purpose |
+|-----------|---------|---------|
+| `calyx-ext-polli` | skills, tools, agents | Registry pre-flight checks, fleet diagnostics |
+| `calyx-ext-linear` | agents, exec | Linear issue context hints, exec failure diagnostics |
+
+Use these commands to manage extensions:
 
 ```bash
 # Set search paths (colon-separated)
@@ -233,6 +240,7 @@ calyx extensions validate --strict
 
 # Check a single extension
 calyx extensions check --path ./packages/calyx-ext-polli
+calyx extensions check --path ./packages/calyx-ext-linear
 ```
 
 **Troubleshooting:**
@@ -240,7 +248,7 @@ calyx extensions check --path ./packages/calyx-ext-polli
 - If an extension fails to load, run `calyx extensions check --path <dir> --json` for diagnostics.
 - Domain conflicts (multiple extensions claiming the same domain) are warnings by default; use `--strict` to treat as errors.
 
-For extension authoring, see [Extension SDK](extension-sdk.md).
+For extension authoring, see [Extension SDK](extension-sdk.md). A starter template is available at `examples/extensions/starter/`.
 
 ## Related documents
 

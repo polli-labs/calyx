@@ -1,0 +1,30 @@
+{
+  "name": "calyx-ext-starter",
+  "version": "0.1.0",
+  "description": "Starter template for building a Calyx extension.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "calyx": {
+    "apiVersion": "1",
+    "domains": ["skills"]
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "validate": "npx tsx src/validate.ts"
+  },
+  "peerDependencies": {
+    "@polli-labs/calyx-sdk": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@polli-labs/calyx-sdk": "workspace:*"
+  }
+}
