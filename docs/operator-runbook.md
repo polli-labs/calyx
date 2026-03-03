@@ -219,12 +219,13 @@ If you encounter scripts or automation still using these commands, update them t
 
 ## Extension management
 
-Extensions extend Calyx's domain command lifecycle with custom hooks. Two first-party extensions ship in the monorepo:
+Extensions extend Calyx's domain command lifecycle with custom hooks. Three extensions ship in the monorepo:
 
-| Extension | Domains | Purpose |
-|-----------|---------|---------|
-| `calyx-ext-polli` | skills, tools, agents | Registry pre-flight checks, fleet diagnostics |
-| `calyx-ext-linear` | agents, exec | Linear issue context hints, exec failure diagnostics |
+| Extension | Type | Domains | Purpose |
+|-----------|------|---------|---------|
+| `calyx-ext-polli` | First-party | skills, tools, agents | Registry pre-flight checks, fleet diagnostics |
+| `calyx-ext-linear` | First-party | agents, exec | Linear issue context hints, exec failure diagnostics |
+| `calyx-ext-cursor` | Harness-target | config, instructions, skills | Cursor environment hints, rules-format awareness |
 
 Use these commands to manage extensions:
 
@@ -241,7 +242,50 @@ calyx extensions validate --strict
 # Check a single extension
 calyx extensions check --path ./packages/calyx-ext-polli
 calyx extensions check --path ./packages/calyx-ext-linear
+calyx extensions check --path ./packages/calyx-ext-cursor
 ```
+
+### Conflict resolution
+
+When multiple extensions claim the same domain, Calyx reports a **domain conflict**:
+
+- **Advisory mode** (default): conflicts are warnings. All extensions load and hooks run in alphabetical order. Appropriate for development.
+- **Strict mode** (`--strict`): conflicts are errors. Resolve before production use.
+
+To resolve conflicts:
+
+1. **Remove** the unwanted extension from `CALYX_EXTENSIONS_PATH`.
+2. **Narrow** an extension's domain list (edit its `package.json` `calyx.domains`).
+3. **Shadow** via search path ordering — place the preferred extension in a later search path.
+
+### Compatibility
+
+Extensions target an `apiVersion` (currently `"1"`). An extension will fail to load if its `apiVersion` doesn't match the installed SDK. When upgrading Calyx:
+
+1. Run `calyx extensions validate --strict` to check all extensions.
+2. Watch for `API_VERSION_MISMATCH` diagnostics.
+3. Update extension packages to target the new apiVersion.
+
+See [Extension SDK — Compatibility Policy](extension-sdk.md#compatibility-policy) for the full version matrix and migration path.
+
+### Harness-target extensions
+
+Harness-target extensions (e.g., `calyx-ext-cursor`) provide harness-specific environment detection and advisory diagnostics. They are non-destructive (never block commands). To smoke-test a harness-target extension:
+
+```bash
+# Discover and validate
+CALYX_EXTENSIONS_PATH=packages calyx extensions list
+CALYX_EXTENSIONS_PATH=packages calyx extensions validate --strict
+
+# Verify hook invocation (config compile as example)
+CALYX_EXTENSIONS_PATH=packages calyx config compile \
+  --fleet fixtures/config-compiler/inputs/fleet.v2.yaml \
+  --hosts-dir fixtures/config-compiler/inputs/hosts \
+  --host blade \
+  --parity fixtures/config-compiler/expected/blade.config.toml
+```
+
+Extension hooks will emit advisory messages (e.g., "Cursor hint: ...") during command execution.
 
 **Troubleshooting:**
 - If `extensions list` shows no extensions, verify `CALYX_EXTENSIONS_PATH` or `--search-path` is set.

@@ -287,10 +287,14 @@ export async function discoverExtensions(
   for (const [domain, owners] of Object.entries(domainOwners)) {
     if (owners && owners.length > 1) {
       conflicts[domain] = owners;
+      const severity = options.strict ? "error" : "warning";
+      const resolution = options.strict
+        ? ` In strict mode, this is an error. Remove or reconfigure one of the conflicting extensions before proceeding.`
+        : ` This is advisory — hooks from all listed extensions will run in alphabetical order. Use --strict to treat as an error.`;
       diagnostics.push({
         code: "DOMAIN_CONFLICT",
-        message: `Domain "${domain}" claimed by multiple extensions: ${owners.join(", ")}`,
-        severity: options.strict ? "error" : "warning",
+        message: `Domain "${domain}" claimed by multiple extensions: ${owners.join(", ")}.${resolution}`,
+        severity,
       });
     }
   }
