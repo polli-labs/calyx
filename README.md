@@ -155,21 +155,11 @@ calyx exec receipt --store fixtures/domains/exec/store.valid.json --run-id run-0
 calyx exec validate --store fixtures/domains/exec/store.valid.json --strict
 ```
 
-## Migration wrappers
+## Migration status
 
-Compatibility wrappers forward legacy `dev/run/*` entrypoints to canonical calyx subcommands, emitting deprecation warnings and `calyx.wrapper.invoked` telemetry markers.
+Legacy `dev/run/*` compatibility wrappers were retired in P9 (2026-03-02). All operator workflows now use canonical `calyx <domain> <verb>` commands exclusively. Invoking a retired wrapper name produces a clear error with the canonical replacement.
 
-| Wrapper | Canonical command |
-|---|---|
-| `calyx skills-sync` | `calyx skills sync` |
-| `calyx skills-sync-claude` | `calyx skills sync --backend claude` |
-| `calyx skills-sync-codex` | `calyx skills sync --backend codex` |
-| `calyx prompts-sync-claude` | `calyx prompts sync --backend claude` |
-| `calyx prompts-sync-codex` | `calyx prompts sync --backend codex` |
-| `calyx agents-render` | `calyx instructions render` |
-| `calyx exec-launch` | `calyx exec launch` |
-
-See [docs/migration-wrappers.md](docs/migration-wrappers.md) for the full replacement map and retirement policy, or [docs/migration-guide.md](docs/migration-guide.md) for a step-by-step migration walkthrough.
+See [docs/migration-wrappers.md](docs/migration-wrappers.md) for the full history and replacement map, or [docs/migration-guide.md](docs/migration-guide.md) for the migration reference.
 
 ## Documentation
 

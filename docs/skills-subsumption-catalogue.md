@@ -4,10 +4,10 @@
 
 ## Status
 
-- **Version:** 1.0 (2026-03-02)
+- **Version:** 2.0 (2026-03-02, P9 update)
 - **Calyx GA:** v0.1.1 (2026-03-02)
-- **Tracking issue:** [POL-668](https://linear.app/polli-labs/issue/POL-668)
-- **Next:** Feeds [POL-673](https://linear.app/polli-labs/issue/POL-673) (onboarding docs) and [POL-665](https://linear.app/polli-labs/issue/POL-665) (production wiring)
+- **P9 wrapper retirement:** 2026-03-02 — 7 wrappers retired, 0 implemented
+- **Tracking issues:** [POL-668](https://linear.app/polli-labs/issue/POL-668) (v1), [POL-666](https://linear.app/polli-labs/issue/POL-666) (P9 retirement)
 
 ## Scope and terminology
 
@@ -38,13 +38,13 @@ Some skills primarily *wrap* commands (e.g., `agents-fleet` wraps `skills-sync`,
 | Skill / Surface | Current purpose | Calyx replacement | Disposition | Phase | Owner | Issues |
 |----------------|----------------|-------------------|-------------|-------|-------|--------|
 | `agents-fleet` (skill) | Unified fleet maintenance: config, instructions, skills, tools, prompts, agents deployment | `calyx config compile`, `calyx instructions render`, `calyx skills sync`, `calyx tools sync`, `calyx prompts sync`, `calyx agents deploy` | `partially_subsumed` | P7–P8 | Calyx core | [POL-665](https://linear.app/polli-labs/issue/POL-665) |
-| `skills-sync` (wrapper) | Sync skills registry to backends | `calyx skills sync` | `subsumed` | P7 (done) | Calyx core | — |
-| `skills-sync-claude` (wrapper) | Sync skills to Claude harness | `calyx skills sync --backend claude` | `subsumed` | P7 (done) | Calyx core | — |
-| `skills-sync-codex` (wrapper) | Sync skills to Codex harness | `calyx skills sync --backend codex` | `subsumed` | P7 (done) | Calyx core | — |
-| `prompts-sync-claude` (wrapper) | Sync prompts to Claude harness | `calyx prompts sync --backend claude` | `subsumed` | P7 (done) | Calyx core | — |
-| `prompts-sync-codex` (wrapper) | Sync prompts to Codex harness | `calyx prompts sync --backend codex` | `subsumed` | P7 (done) | Calyx core | — |
-| `agents-render` (wrapper) | Render agent instruction templates | `calyx instructions render` | `subsumed` | P7 (done) | Calyx core | — |
-| `exec-launch` (wrapper) | Launch async execution runs | `calyx exec launch` | `subsumed` | P7 (done) | Calyx core | — |
+| `skills-sync` (wrapper) | Sync skills registry to backends | `calyx skills sync` | `subsumed` | **P9 (retired)** | Calyx core | [POL-666](https://linear.app/polli-labs/issue/POL-666) |
+| `skills-sync-claude` (wrapper) | Sync skills to Claude harness | `calyx skills sync --backend claude` | `subsumed` | **P9 (retired)** | Calyx core | [POL-666](https://linear.app/polli-labs/issue/POL-666) |
+| `skills-sync-codex` (wrapper) | Sync skills to Codex harness | `calyx skills sync --backend codex` | `subsumed` | **P9 (retired)** | Calyx core | [POL-666](https://linear.app/polli-labs/issue/POL-666) |
+| `prompts-sync-claude` (wrapper) | Sync prompts to Claude harness | `calyx prompts sync --backend claude` | `subsumed` | **P9 (retired)** | Calyx core | [POL-666](https://linear.app/polli-labs/issue/POL-666) |
+| `prompts-sync-codex` (wrapper) | Sync prompts to Codex harness | `calyx prompts sync --backend codex` | `subsumed` | **P9 (retired)** | Calyx core | [POL-666](https://linear.app/polli-labs/issue/POL-666) |
+| `agents-render` (wrapper) | Render agent instruction templates | `calyx instructions render` | `subsumed` | **P9 (retired)** | Calyx core | [POL-666](https://linear.app/polli-labs/issue/POL-666) |
+| `exec-launch` (wrapper) | Launch async execution runs | `calyx exec launch` | `subsumed` | **P9 (retired)** | Calyx core | [POL-666](https://linear.app/polli-labs/issue/POL-666) |
 | `launch-async-runner` (skill) | Durable async runner dispatch with ExecPlan guardrails, docstore receipts | `calyx exec launch` (core lifecycle); runner orchestration remains skill-level | `partially_subsumed` | P8 | Calyx core + runner ext | [POL-665](https://linear.app/polli-labs/issue/POL-665) |
 | `skill-creator` (skill) | Guide for creating/updating skill packages | `calyx skills validate` (validation); authoring guidance remains skill-level | `partially_subsumed` | P8 | Calyx core | — |
 | `add-agent-tool` (skill) | Checklist for adding/upgrading toolkit CLI/MCP tools | `calyx tools index`, `calyx tools validate` (registration/validation); onboarding ritual remains skill-level | `partially_subsumed` | P8 | Calyx core | — |
@@ -217,15 +217,13 @@ The B2 backend and artifact type taxonomy are retained; Calyx provides the regis
 
 ## Retirement sequencing
 
-### Phase 7 (current — P7B, GA bridge)
+### Phase 7 (P7B — GA bridge)
 
 **Completed actions:**
 - 7 compatibility wrappers implemented with deprecation telemetry (POL-671)
 - Operator runbook cut over to canonical commands (POL-670)
 - All new workflows use `calyx <domain> <verb>` form
 - Skills subsumption catalogue v1 published (POL-668, this document)
-
-**Retirement state:** Wrappers functional but deprecated. `CALYX_FAIL_ON_DEPRECATED=1` available for enforcement.
 
 ### Phase 8 (P8 — production wiring)
 
@@ -239,32 +237,32 @@ The B2 backend and artifact type taxonomy are retained; Calyx provides the regis
 | Design `calyx doctor` health check surface | Calyx core | POL-665 |
 | Wire `launch-async-runner` to use `calyx exec` lifecycle | Runner ext | POL-665 |
 
-**Retirement target:** After P8, `CALYX_FAIL_ON_DEPRECATED=1` becomes default on all fleet hosts. Wrapper invocation count should reach zero.
+### Phase 9 (P9 — migration completion) ✓ COMPLETED 2026-03-02
 
-### Phase 9 (P9 — migration completion)
-
-| Action | Owner | Dependency |
-|--------|-------|-----------|
-| Remove deprecated wrappers from CLI | Calyx core | Zero wrapper invocation confirmed via telemetry |
-| Remove legacy `dev/run/*` scripts | Fleet ops | All hosts on canonical commands |
-| Implement ExecPlan authoring UX in knowledge domain | Knowledge ext | Knowledge domain maturity |
-| Implement Linear-to-ExecPlan extension | Extension author | Knowledge ext + Linear API |
-| Full `launch-async-runner` → `calyx exec` migration | Runner ext | Runner extension complete |
+| Action | Status | Notes |
+|--------|--------|-------|
+| Remove deprecated wrappers from CLI | **Done** | 7 wrappers retired; invoking them produces exit code 6 with canonical command |
+| Legacy surface inventory with explicit final disposition | **Done** | All 53 surfaces inventoried with disposition, sunset criteria, and deadlines |
+| Sunset criteria for remaining shims | **Done** | All 12 deferred tombstones have sunset deadlines (2026-06-01 to 2026-08-01) |
+| Documentation no longer presents legacy-first paths | **Done** | All docs updated to canonical-first; onboarding, operator runbook, migration guide revised |
+| ExecPlan authoring UX in knowledge domain | Deferred | Sunset: 2026-07-01 — depends on knowledge domain extension maturity |
+| Linear-to-ExecPlan extension | Deferred | Sunset: 2026-07-01 — depends on knowledge ext + Linear API |
+| Full `launch-async-runner` → `calyx exec` migration | Deferred | Sunset: 2026-07-01 — depends on runner extension |
 
 ### Post-v1
 
-| Action | Owner | Dependency |
-|--------|-------|-----------|
-| `calyx workspace init` (worktree management) | Calyx core | Low priority |
-| `calyx bundle build` (agent bundle packaging) | Calyx core | Bundle schema design |
-| `calyx install bootstrap` (host bootstrapping) | Calyx core | Core stability |
-| Extension discovery and marketplace | Calyx SDK | Extension ecosystem growth |
+| Action | Owner | Sunset |
+|--------|-------|--------|
+| `calyx workspace init` (worktree management) | Calyx core | 2026-08-01 — remove tombstone if no demand |
+| `calyx bundle build` (agent bundle packaging) | Calyx core | 2026-07-01 — depends on extension ecosystem |
+| `calyx install bootstrap` (host bootstrapping) | Calyx core | 2026-08-01 — remove tombstone if no demand |
+| Extension discovery and marketplace | Calyx SDK | No hard deadline — depends on ecosystem growth |
 
 ## Summary counts
 
 | Disposition | Count | Examples |
 |-------------|-------|---------|
-| `subsumed` | 7 | skills-sync, agents-render, exec-launch (all implemented wrappers) |
+| `subsumed` (retired P9) | 7 | skills-sync, agents-render, exec-launch — all wrappers removed from CLI |
 | `partially_subsumed` | 4 | agents-fleet, launch-async-runner, skill-creator, add-agent-tool |
 | `defer_phase` | 7 | docstore, agent-mail, agent-notify, ingest-execplan, issue-to-execplan, transform-into-execplan, mcp-builder |
 | `not_planned` | 27 | All repo knowledge, external services, planning/review, content/search skills |

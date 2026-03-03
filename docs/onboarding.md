@@ -129,18 +129,9 @@ All commands use consistent exit codes:
 | `2` | Invalid CLI arguments |
 | `3` | Domain validation failure |
 
-## Migrating from legacy scripts
+## Coming from legacy scripts?
 
-If you're transitioning from `dev/run/*` shell scripts, Calyx provides compatibility wrappers that emit deprecation warnings and telemetry while forwarding to canonical commands. The recommended migration path:
-
-1. **Install Calyx** alongside legacy scripts (coexistence).
-2. **Switch to wrappers** (`calyx skills-sync` instead of `dev/run/skills-sync`) to get telemetry.
-3. **Adopt canonical commands** (`calyx skills sync --backend claude`) — the stable, long-term form.
-4. **Remove legacy scripts** once wrapper telemetry shows zero usage.
-
-For the complete migration walkthrough, see [Migration Guide](migration-guide.md).
-
-For a skill-by-skill disposition of what Calyx replaces, retains, or defers, see the [Skills Subsumption Catalogue](skills-subsumption-catalogue.md).
+Legacy `dev/run/*` shell scripts have been fully replaced by canonical `calyx <domain> <verb>` commands. Compatibility wrappers were retired in P9 (2026-03-02). If you encounter scripts still referencing legacy entrypoints, replace them with the canonical Calyx command — see the [Migration Guide](migration-guide.md) for the command mapping.
 
 ## Building extensions
 

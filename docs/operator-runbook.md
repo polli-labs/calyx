@@ -1,6 +1,6 @@
 # Operator Runbook: Calyx-First Daily Operations
 
-This runbook is the canonical reference for internal Polli operators using the Calyx CLI. All commands use the canonical `calyx <domain> <verb>` form. Compatibility wrappers (`calyx skills-sync`, `calyx exec-launch`, etc.) are deprecated and should not appear in new workflows. For first-time setup, see the [Onboarding Guide](onboarding.md).
+This runbook is the canonical reference for internal Polli operators using the Calyx CLI. All commands use the canonical `calyx <domain> <verb>` form. Legacy compatibility wrappers were removed in P9 (2026-03-02). For first-time setup, see the [Onboarding Guide](onboarding.md).
 
 ## Prerequisites
 
@@ -201,11 +201,11 @@ Command failed (exit != 0)
 2. **Infra outage:** CI/CD unavailable. Follow the [CI Reliability Runbook](ci-reliability-runbook.md) outage override protocol.
 3. **External dependency:** npm registry, GitHub Actions, etc. Wait for resolution; document in PR if merge is needed.
 
-## Wrapper deprecation notice
+## Retired wrappers
 
-The following wrappers still function but are **deprecated** as of P7A. All new runbooks and operator workflows must use canonical commands. Wrappers emit `calyx.wrapper.invoked` telemetry to stderr.
+The following legacy compatibility wrappers were retired and **removed in P9** (2026-03-02). Invoking them produces exit code 6 with a message directing to the canonical command:
 
-| Deprecated wrapper | Use instead |
+| Removed wrapper | Canonical replacement |
 |---|---|
 | `calyx skills-sync` | `calyx skills sync` |
 | `calyx skills-sync-claude` | `calyx skills sync --backend claude` |
@@ -215,7 +215,7 @@ The following wrappers still function but are **deprecated** as of P7A. All new 
 | `calyx agents-render` | `calyx instructions render` |
 | `calyx exec-launch` | `calyx exec launch` |
 
-Wrapper removal is targeted for post-GA, after usage drops below threshold. See [migration-wrappers.md](migration-wrappers.md) for the full map.
+If you encounter scripts or automation still using these commands, update them to the canonical form. See [migration-wrappers.md](migration-wrappers.md) for the full history.
 
 ## Related documents
 
