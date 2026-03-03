@@ -231,6 +231,8 @@ load → activate → (beforeCommand → command → afterCommand)* → deactiva
 3. **Before/After command**: These hooks bracket every domain command invocation. `beforeCommand` can abort execution by returning `{ ok: false }`.
 4. **Deactivate**: Runs on CLI exit. Use it for cleanup.
 
+The CLI automatically wires extension hooks into all domain commands (`skills`, `tools`, `prompts`, `agents`, `knowledge`, `exec`). When `CALYX_EXTENSIONS_PATH` is set, extensions are discovered, loaded, and activated on the first domain command. Hooks run via commander `preAction`/`postAction` hooks on each domain's parent command.
+
 ## Extension Loader & Runtime
 
 ### Discovery

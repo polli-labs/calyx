@@ -604,6 +604,18 @@ declare module "@polli-labs/calyx-core" {
     extensionName?: string;
   }
 
+  export interface LoadedCalyxExtension {
+    manifest: {
+      name: string;
+      version: string;
+      calyx: {
+        apiVersion: string;
+        domains: string[];
+      };
+    };
+    hooks?: unknown;
+  }
+
   export interface ExtensionLoadResult {
     ok: boolean;
     packageDir: string;
@@ -615,7 +627,7 @@ declare module "@polli-labs/calyx-core" {
         domains: string[];
       };
     };
-    extension?: unknown;
+    extension?: LoadedCalyxExtension;
     diagnostics: ExtensionDiagnostic[];
   }
 
@@ -634,4 +646,25 @@ declare module "@polli-labs/calyx-core" {
   export function discoverExtensions(options: ExtensionDiscoveryOptions): Promise<ExtensionDiscoveryResult>;
 
   export function loadExtension(packageDir: string): Promise<ExtensionLoadResult>;
+
+  export interface ExtensionRunnerOptions {
+    workspaceRoot: string;
+    calyxVersion: string;
+  }
+
+  export interface ExtensionHookRunResult {
+    ok: boolean;
+    messages: string[];
+    blockedBy?: string;
+  }
+
+  export class ExtensionRunner {
+    constructor(extensions: LoadedCalyxExtension[], options: ExtensionRunnerOptions);
+    get count(): number;
+    get isActivated(): boolean;
+    activate(): Promise<ExtensionHookRunResult>;
+    beforeCommand(domain: string, command: string): Promise<ExtensionHookRunResult>;
+    afterCommand(domain: string, command: string, exitCode: number): Promise<ExtensionHookRunResult>;
+    deactivate(): Promise<ExtensionHookRunResult>;
+  }
 }

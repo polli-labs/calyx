@@ -29,6 +29,7 @@
     "@polli-labs/calyx-sdk": ">=0.1.0"
   },
   "devDependencies": {
+    "@polli-labs/calyx-core": "workspace:*",
     "@polli-labs/calyx-sdk": "workspace:*"
   }
 }

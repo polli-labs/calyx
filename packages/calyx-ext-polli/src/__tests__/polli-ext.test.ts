@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { validateManifest } from "@polli-labs/calyx-sdk";
+import { ExtensionRunner } from "@polli-labs/calyx-core";
 import extension from "../index";
 
 describe("calyx-ext-polli", () => {
@@ -86,5 +87,88 @@ describe("calyx-ext-polli", () => {
     };
     const result = await extension.hooks!.deactivate!(ctx);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("calyx-ext-polli via ExtensionRunner (integration)", () => {
+  test("full lifecycle: activate → beforeCommand → afterCommand → deactivate for skills sync", async () => {
+    const runner = new ExtensionRunner([extension], {
+      workspaceRoot: "/tmp/test",
+      calyxVersion: "0.1.1",
+    });
+
+    // activate
+    const activate = await runner.activate();
+    expect(activate.ok).toBe(true);
+    expect(activate.messages.some((m) => m.includes("Polli extension activated"))).toBe(true);
+
+    // beforeCommand — skills sync triggers pre-flight
+    const before = await runner.beforeCommand("skills", "sync");
+    expect(before.ok).toBe(true);
+    expect(before.messages.some((m) => m.includes("Pre-flight check: skills sync"))).toBe(true);
+
+    // afterCommand — success exit
+    const after = await runner.afterCommand("skills", "sync", 0);
+    expect(after.ok).toBe(true);
+
+    // deactivate
+    const deactivate = await runner.deactivate();
+    expect(deactivate.ok).toBe(true);
+    expect(deactivate.messages.some((m) => m.includes("Polli extension deactivated"))).toBe(true);
+  });
+
+  test("beforeCommand fires for all targeted domains (skills, tools, agents)", async () => {
+    const runner = new ExtensionRunner([extension], {
+      workspaceRoot: "/tmp/test",
+      calyxVersion: "0.1.1",
+    });
+    await runner.activate();
+
+    for (const domain of ["skills", "tools", "agents"] as const) {
+      const result = await runner.beforeCommand(domain, "validate");
+      expect(result.ok).toBe(true);
+      expect(result.messages.some((m) => m.includes(`Pre-flight check: ${domain} validate`))).toBe(true);
+    }
+
+    await runner.deactivate();
+  });
+
+  test("beforeCommand does NOT fire for non-targeted domains", async () => {
+    const runner = new ExtensionRunner([extension], {
+      workspaceRoot: "/tmp/test",
+      calyxVersion: "0.1.1",
+    });
+    await runner.activate();
+
+    // calyx-ext-polli targets skills, tools, agents — NOT config, knowledge, exec
+    for (const domain of ["config", "knowledge", "exec"] as const) {
+      const result = await runner.beforeCommand(domain, "validate");
+      expect(result.ok).toBe(true);
+      expect(result.messages).toHaveLength(0);
+    }
+
+    await runner.deactivate();
+  });
+
+  test("afterCommand reports non-zero exit through runner", async () => {
+    const runner = new ExtensionRunner([extension], {
+      workspaceRoot: "/tmp/test",
+      calyxVersion: "0.1.1",
+    });
+    await runner.activate();
+
+    const result = await runner.afterCommand("skills", "deploy", 1);
+    expect(result.ok).toBe(true);
+    expect(result.messages.some((m) => m.includes("exited with code 1"))).toBe(true);
+
+    await runner.deactivate();
+  });
+
+  test("runner reports correct extension count", () => {
+    const runner = new ExtensionRunner([extension], {
+      workspaceRoot: "/tmp/test",
+      calyxVersion: "0.1.1",
+    });
+    expect(runner.count).toBe(1);
   });
 });

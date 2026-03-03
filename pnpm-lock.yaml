@@ -38,6 +38,9 @@ importers:
 
   packages/calyx-ext-polli:
     devDependencies:
+      '@polli-labs/calyx-core':
+        specifier: workspace:*
+        version: link:../core
       '@polli-labs/calyx-sdk':
         specifier: workspace:*
         version: link:../sdk

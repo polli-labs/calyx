@@ -5,6 +5,7 @@ import {
   compareTomlSemantics,
   deployAgentsRegistry,
   discoverExtensions,
+  ExtensionRunner,
   loadExtension,
   getExecLogs,
   getExecReceipt,
@@ -323,6 +324,97 @@ function normalizeToolsSyncTarget(options: ToolsSyncCommandOptions): ToolsSyncOp
  */
 async function resolve(domain: SourceDomain, cliValue?: string): Promise<string> {
   return requireSourcePath(domain, { cliValue });
+}
+
+// ── Extension runtime wiring ──────────────────────────────────────
+
+/**
+ * Resolve extension search paths from CLI args or CALYX_EXTENSIONS_PATH.
+ */
+function resolveExtensionSearchPaths(rawPaths?: string[]): string[] {
+  if (rawPaths && rawPaths.length > 0) {
+    return rawPaths;
+  }
+  const envPaths = process.env["CALYX_EXTENSIONS_PATH"];
+  if (envPaths) {
+    return envPaths.split(":").filter((p) => p.length > 0);
+  }
+  return [];
+}
+
+/** Lazy singleton: undefined = not initialized, null = no extensions. */
+let _extensionRunner: ExtensionRunner | null | undefined;
+
+/**
+ * Lazily discover, load, and activate extensions. Returns null if no
+ * extension search paths are configured or no extensions are found.
+ */
+async function getExtensionRunner(): Promise<ExtensionRunner | null> {
+  if (_extensionRunner !== undefined) return _extensionRunner;
+
+  const searchPaths = resolveExtensionSearchPaths();
+  if (searchPaths.length === 0) {
+    _extensionRunner = null;
+    return null;
+  }
+
+  const discovery = await discoverExtensions({ searchPaths });
+  const extensions = discovery.loaded
+    .filter((r) => r.ok && r.extension)
+    .map((r) => r.extension!);
+
+  if (extensions.length === 0) {
+    _extensionRunner = null;
+    return null;
+  }
+
+  const runner = new ExtensionRunner(extensions, {
+    workspaceRoot: process.cwd(),
+    calyxVersion: "0.1.1",
+  });
+
+  const activateResult = await runner.activate();
+  for (const m of activateResult.messages) {
+    console.error(m);
+  }
+
+  _extensionRunner = runner;
+  return runner;
+}
+
+/**
+ * Wire extension lifecycle hooks into a domain parent command.
+ *
+ * Adds commander preAction/postAction hooks so that all subcommands
+ * under this domain automatically invoke beforeCommand/afterCommand
+ * on any loaded extensions targeting that domain.
+ */
+function hookDomainCommand(cmd: Command, domain: string): void {
+  cmd.hook("preAction", async (_thisCommand, actionCommand) => {
+    const runner = await getExtensionRunner();
+    if (!runner) return;
+
+    const before = await runner.beforeCommand(domain, actionCommand.name());
+    for (const m of before.messages) {
+      console.error(m);
+    }
+    if (!before.ok) {
+      throw createCliError(
+        `Extension "${before.blockedBy}" blocked ${domain} ${actionCommand.name()}.`,
+        7
+      );
+    }
+  });
+
+  cmd.hook("postAction", async (_thisCommand, actionCommand) => {
+    const runner = await getExtensionRunner();
+    if (!runner) return;
+
+    const after = await runner.afterCommand(domain, actionCommand.name(), 0);
+    for (const m of after.messages) {
+      console.error(m);
+    }
+  });
 }
 
 export async function runCli(argv = process.argv): Promise<void> {
@@ -1170,17 +1262,6 @@ export async function runCli(argv = process.argv): Promise<void> {
     }
   }
 
-  function resolveExtensionSearchPaths(rawPaths?: string[]): string[] {
-    if (rawPaths && rawPaths.length > 0) {
-      return rawPaths;
-    }
-    const envPaths = process.env["CALYX_EXTENSIONS_PATH"];
-    if (envPaths) {
-      return envPaths.split(":").filter((p) => p.length > 0);
-    }
-    return [];
-  }
-
   extensions
     .command("list")
     .description("Discover and list installed extensions from search paths")
@@ -1321,6 +1402,14 @@ export async function runCli(argv = process.argv): Promise<void> {
       }
     });
 
+  // Wire extension lifecycle hooks into domain commands
+  hookDomainCommand(skills, "skills");
+  hookDomainCommand(tools, "tools");
+  hookDomainCommand(prompts, "prompts");
+  hookDomainCommand(agents, "agents");
+  hookDomainCommand(knowledge, "knowledge");
+  hookDomainCommand(exec, "exec");
+
   program.addCommand(config);
   program.addCommand(instructions);
   program.addCommand(skills);
@@ -1330,5 +1419,15 @@ export async function runCli(argv = process.argv): Promise<void> {
   program.addCommand(knowledge);
   program.addCommand(exec);
   program.addCommand(extensions);
-  await program.parseAsync(argv);
+
+  try {
+    await program.parseAsync(argv);
+  } finally {
+    if (_extensionRunner) {
+      const result = await _extensionRunner.deactivate();
+      for (const m of result.messages) {
+        console.error(m);
+      }
+    }
+  }
 }
