@@ -15,7 +15,14 @@ Private development monorepo for the **Calyx** agent control plane — a unified
 
 Extensions are npm packages that depend on `@polli-labs/calyx-sdk` and declare a `calyx` key in their `package.json`. They can hook into the CLI lifecycle (activate, beforeCommand, afterCommand, deactivate) and target any of the 8 domains.
 
-See [docs/extension-sdk.md](docs/extension-sdk.md) for the full SDK reference and [examples/calyx-ext-hello](examples/calyx-ext-hello) for a working sample extension.
+Two first-party extensions ship in the monorepo:
+
+| Extension | Domains | Purpose |
+|-----------|---------|---------|
+| [`calyx-ext-polli`](packages/calyx-ext-polli) | skills, tools, agents | Registry pre-flight checks, fleet diagnostics |
+| [`calyx-ext-linear`](packages/calyx-ext-linear) | agents, exec | Linear issue context hints, exec failure diagnostics |
+
+See [docs/extension-sdk.md](docs/extension-sdk.md) for the full SDK reference, [examples/calyx-ext-hello](examples/calyx-ext-hello) for a minimal sample, and [examples/extensions/starter](examples/extensions/starter) for a copy-and-customize starter template.
 
 Extension naming: `calyx-ext-<name>` (first-party), `@user/calyx-ext-<name>` (community).
 

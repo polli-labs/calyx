@@ -36,6 +36,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  examples/extensions/starter:
+    devDependencies:
+      '@polli-labs/calyx-sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+
+  packages/calyx-ext-linear:
+    devDependencies:
+      '@polli-labs/calyx-core':
+        specifier: workspace:*
+        version: link:../core
+      '@polli-labs/calyx-sdk':
+        specifier: workspace:*
+        version: link:../sdk
+
   packages/calyx-ext-polli:
     devDependencies:
       '@polli-labs/calyx-core':
