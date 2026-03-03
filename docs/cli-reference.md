@@ -589,32 +589,23 @@ calyx exec validate --store <path> [--strict] [--json]
 
 ---
 
-## Compatibility Wrappers
+## Retired Wrappers
 
-Migration wrappers that forward to canonical `calyx` subcommands. Each wrapper emits a deprecation warning and a `calyx.wrapper.invoked` telemetry marker to stderr, making migration usage measurable. See [migration-wrappers.md](./migration-wrappers.md) for the full replacement map.
+The following compatibility wrappers were **removed in P9** (2026-03-02). Invoking them produces a clear error (exit code 6) pointing to the canonical command. See [migration-wrappers.md](./migration-wrappers.md) for history and the full replacement map.
 
-| Wrapper command | Forwards to | Legacy surface |
+| Retired wrapper | Use instead | Retired |
 |---|---|---|
-| `calyx skills-sync` | `calyx skills sync` | `dev/run/skills-sync` |
-| `calyx skills-sync-claude` | `calyx skills sync --backend claude` | `dev/run/skills-sync-claude` |
-| `calyx skills-sync-codex` | `calyx skills sync --backend codex` | `dev/run/skills-sync-codex` |
-| `calyx prompts-sync-claude` | `calyx prompts sync --backend claude` | `dev/run/prompts-sync-claude` |
-| `calyx prompts-sync-codex` | `calyx prompts sync --backend codex` | `dev/run/prompts-sync-codex` |
-| `calyx agents-render` | `calyx instructions render` | `dev/run/agents-render` |
-| `calyx exec-launch` | `calyx exec launch` | `dev/run/launch-runner` |
+| `calyx skills-sync` | `calyx skills sync` | P9 (2026-03-02) |
+| `calyx skills-sync-claude` | `calyx skills sync --backend claude` | P9 (2026-03-02) |
+| `calyx skills-sync-codex` | `calyx skills sync --backend codex` | P9 (2026-03-02) |
+| `calyx prompts-sync-claude` | `calyx prompts sync --backend claude` | P9 (2026-03-02) |
+| `calyx prompts-sync-codex` | `calyx prompts sync --backend codex` | P9 (2026-03-02) |
+| `calyx agents-render` | `calyx instructions render` | P9 (2026-03-02) |
+| `calyx exec-launch` | `calyx exec launch` | P9 (2026-03-02) |
 
-**Telemetry output** (stderr):
+Invoking a retired wrapper produces:
 ```
-[calyx][deprecated] skills-sync-claude is a compatibility wrapper. Use "calyx skills sync --backend claude".
-[calyx][telemetry] {"event":"calyx.wrapper.invoked","wrapper":"skills-sync-claude","target":"calyx skills sync --backend claude","timestamp":"..."}
-```
-
-**JSON mode:** When `--json` is passed, wrappers return a `{ wrapper, result }` envelope:
-```json
-{
-  "wrapper": { "event": "calyx.wrapper.invoked", "wrapper": "...", "target": "...", "timestamp": "..." },
-  "result": { ... }
-}
+[calyx][error] "skills-sync-claude" was removed in P9 (2026-03-02). Use "calyx skills sync --backend claude" instead.
 ```
 
 ---
@@ -629,3 +620,5 @@ All calyx commands follow a consistent exit code convention:
 | `1`  | Unhandled runtime error (file not found, parse failure, etc.) |
 | `2`  | Invalid CLI arguments (bad flag values, missing required options) |
 | `3`  | Domain validation failure (registry has structural or lifecycle errors) |
+| `5`  | Deferred wrapper invoked (not yet implemented) |
+| `6`  | Retired wrapper invoked (removed, use canonical command) |

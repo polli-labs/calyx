@@ -519,7 +519,7 @@ declare module "@polli-labs/calyx-core" {
   // Wrapper guardrails
 
   export type WrapperDeprecationPhase = "active" | "warn" | "error";
-  export type WrapperStatus = "implemented" | "deferred";
+  export type WrapperStatus = "implemented" | "deferred" | "retired";
 
   export interface WrapperDefinition {
     wrapper: string;
@@ -527,6 +527,8 @@ declare module "@polli-labs/calyx-core" {
     status: WrapperStatus;
     phase: string;
     notes?: string;
+    /** ISO-8601 date when this wrapper was retired. Present only for retired wrappers. */
+    retiredAt?: string;
   }
 
   export interface WrapperTelemetryEvent {
@@ -554,6 +556,8 @@ declare module "@polli-labs/calyx-core" {
   export function getWrapperDeprecationPhase(): WrapperDeprecationPhase;
 
   export function getDeferredWrapperMessage(wrapper: string): string;
+
+  export function getRetiredWrapperMessage(wrapper: string): string;
 
   // Production wiring: source resolution
 

@@ -28,7 +28,8 @@ export {
   emitWrapperTelemetry,
   checkWrapperGuardrail,
   getWrapperDeprecationPhase,
-  getDeferredWrapperMessage
+  getDeferredWrapperMessage,
+  getRetiredWrapperMessage
 } from "./wrappers";
 export type {
   AgentDeployBackend,

@@ -4,30 +4,27 @@ Replacement map from legacy `dev/run/*` entrypoints to canonical `calyx` command
 
 ## Strategy
 
-Every `Port+Shim` row in the migration map gets a compatibility wrapper in the `calyx` CLI:
-1. The wrapper checks **guardrails** — if `CALYX_FAIL_ON_DEPRECATED=1`, it exits with code 4.
-2. The wrapper emits a **deprecation warning** to stderr.
-3. The wrapper emits a **`calyx.wrapper.invoked` telemetry marker** (JSON) to stderr.
-4. The wrapper delegates to the canonical calyx subcommand.
-5. In `--json` mode, the wrapper returns a `{ wrapper, result }` envelope.
+The migration strategy followed a phased approach:
 
-Deferred wrappers that are not yet implemented are registered as **tombstone commands** — they emit a clear "not yet implemented" error with phase information and exit with code 5.
+1. **P2–P4:** Compatibility wrappers forwarded legacy entrypoints to canonical commands, emitting deprecation warnings and telemetry.
+2. **P7A:** Internal adoption cutover — all new workflows on canonical commands; `CALYX_FAIL_ON_DEPRECATED=1` available for enforcement.
+3. **P9 (2026-03-02):** Wrapper retirement — all 7 compatibility wrappers removed from the CLI. Invoking them now produces exit code 6 with a clear "removed" message.
 
-No command is removed until parity gate passes and usage drops below threshold.
+Deferred wrappers remain registered as **tombstone commands** — they emit a clear "not yet implemented" error with phase information and exit with code 5.
 
-**Deprecation timeline:** As of P7A internal adoption cutover (2026-03), all new operator workflows must use canonical commands. Wrapper removal is targeted for post-GA, after `calyx.wrapper.invoked` telemetry confirms zero internal usage. See [operator-runbook.md](operator-runbook.md) for the canonical daily reference.
+## Retired Wrappers (P9)
 
-## Implemented Wrappers (v0.1.0)
+These wrappers were removed in P9 (2026-03-02). Invoking them produces exit code 6 with a message directing to the canonical command.
 
-| Legacy surface | Calyx wrapper | Canonical command | Status |
+| Legacy surface | Former wrapper | Canonical command | Retired |
 |---|---|---|---|
-| `dev/run/skills-sync` | `calyx skills-sync` | `calyx skills sync` | Implemented (P2) |
-| `dev/run/skills-sync-claude` | `calyx skills-sync-claude` | `calyx skills sync --backend claude` | Implemented (P4) |
-| `dev/run/skills-sync-codex` | `calyx skills-sync-codex` | `calyx skills sync --backend codex` | Implemented (P4) |
-| `dev/run/prompts-sync-claude` | `calyx prompts-sync-claude` | `calyx prompts sync --backend claude` | Implemented (P4) |
-| `dev/run/prompts-sync-codex` | `calyx prompts-sync-codex` | `calyx prompts sync --backend codex` | Implemented (P4) |
-| `dev/run/agents-render` | `calyx agents-render` | `calyx instructions render` | Implemented (P4) |
-| `dev/run/launch-runner` | `calyx exec-launch` | `calyx exec launch` | Implemented (P4) |
+| `dev/run/skills-sync` | `calyx skills-sync` | `calyx skills sync` | P9 (2026-03-02) |
+| `dev/run/skills-sync-claude` | `calyx skills-sync-claude` | `calyx skills sync --backend claude` | P9 (2026-03-02) |
+| `dev/run/skills-sync-codex` | `calyx skills-sync-codex` | `calyx skills sync --backend codex` | P9 (2026-03-02) |
+| `dev/run/prompts-sync-claude` | `calyx prompts-sync-claude` | `calyx prompts sync --backend claude` | P9 (2026-03-02) |
+| `dev/run/prompts-sync-codex` | `calyx prompts-sync-codex` | `calyx prompts sync --backend codex` | P9 (2026-03-02) |
+| `dev/run/agents-render` | `calyx agents-render` | `calyx instructions render` | P9 (2026-03-02) |
+| `dev/run/launch-runner` | `calyx exec-launch` | `calyx exec launch` | P9 (2026-03-02) |
 
 ## Ported Without Wrapper (core domain commands)
 
@@ -46,59 +43,50 @@ These surfaces were ported directly into calyx domain commands and do not need w
 
 ## Deferred (P4+ / post-v1)
 
-Deferred wrappers are registered as tombstone commands. Invoking them produces a clear error message with the target phase and notes. See `WRAPPER_REGISTRY` in `packages/core/src/wrappers.ts` for the canonical list.
+Deferred wrappers are registered as tombstone commands. Invoking them produces a clear error message with the target phase and notes. Each deferred wrapper has a **sunset deadline** — if no progress is made by the deadline, the tombstone is removed. See `WRAPPER_REGISTRY` in `packages/core/src/wrappers.ts` for the canonical list.
 
-| Legacy surface | Target | Phase | Notes |
-|---|---|---|---|
-| `dev/run/agents-fleet` | Split across domain commands | P2-P4 | Partial: domain commands cover subsystems |
-| `dev/run/agents-fleet-apply` | Convergent domain applies | P2-P4 | Decompose by subsystem |
-| `dev/run/agents-fleet-smoke` | `calyx verify fleet` | P4+ | Fold into verification matrix |
-| `dev/run/agents-toolkit-doctor` | `calyx doctor` | P3+ | Health check surface |
-| `dev/run/agents-bundle-build` | `calyx bundle build` | P4+ | Bundle schema required |
-| `dev/run/agents-tools-bump` | `calyx tools versions bump` | P3+ | Atomic version updates |
-| `dev/run/agent-notify` | `calyx exec notify` | P3+ | Keep Python backend initially |
-| `dev/run/agent-mail` | `calyx ext agent-mail` | P4+ | Extension package, not core |
-| `dev/run/docstore` | `calyx knowledge *` + adapter | P3+ | Backend retained |
-| `dev/run/execplan-new` | `calyx knowledge execplan new` | P4+ | Depends on knowledge UX |
-| `dev/run/agents-bootstrap` | `calyx install bootstrap` | P4+ | After core stabilizes |
-| `dev/run/agents-worktree-init` | `calyx workspace init` | post-v1 | Low core leverage |
+| Legacy surface | Target | Phase | Sunset | Notes |
+|---|---|---|---|---|
+| `dev/run/agents-fleet` | Split across domain commands | P2-P4 | 2026-06-01 | Design fleet convergence meta-command or confirm non-goal |
+| `dev/run/agents-fleet-apply` | Convergent domain applies | P2-P4 | 2026-06-01 | Design calyx fleet apply or confirm non-goal |
+| `dev/run/agents-fleet-smoke` | `calyx verify fleet` | P4+ | 2026-06-01 | Remove tombstone if no progress |
+| `dev/run/agents-toolkit-doctor` | `calyx doctor` | P3+ | 2026-06-01 | Remove tombstone if no progress |
+| `dev/run/agents-bundle-build` | `calyx bundle build` | P4+ | 2026-07-01 | Depends on extension ecosystem |
+| `dev/run/agents-tools-bump` | `calyx tools versions bump` | P3+ | 2026-06-01 | Remove tombstone if no progress |
+| `dev/run/agent-notify` | `calyx exec notify` | P3+ | 2026-07-01 | Evaluate exec extension model |
+| `dev/run/agent-mail` | `calyx ext agent-mail` | P4+ | 2026-07-01 | Depends on extension registry |
+| `dev/run/docstore` | `calyx knowledge *` + adapter | P3+ | 2026-07-01 | Depends on knowledge domain B2 adapter |
+| `dev/run/execplan-new` | `calyx knowledge execplan new` | P4+ | 2026-07-01 | Remove tombstone if knowledge UX not progressed |
+| `dev/run/agents-bootstrap` | `calyx install bootstrap` | P4+ | 2026-08-01 | Low priority, remove tombstone if no demand |
+| `dev/run/agents-worktree-init` | `calyx workspace init` | post-v1 | 2026-08-01 | Remove tombstone if no demand |
 
-## Guardrails
-
-### Deprecation Phase Control
-
-The `CALYX_FAIL_ON_DEPRECATED` environment variable controls wrapper behavior:
-
-| Value | Phase | Behavior |
-|---|---|---|
-| unset / `0` | `warn` | Emit deprecation warning + telemetry, then proceed normally |
-| `1` / `true` | `error` | Emit deprecation warning + telemetry, then exit with code **4** |
-
-Use `CALYX_FAIL_ON_DEPRECATED=1` in CI or on hosts that have fully migrated to canonical commands. This prevents accidental regression to legacy entrypoints.
-
-### Exit Codes
+## Exit Codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
 | 2 | Invalid CLI argument (bad backend, bad flag value) |
 | 3 | Domain validation failure (registry/store errors) |
-| 4 | Wrapper blocked by `CALYX_FAIL_ON_DEPRECATED` |
 | 5 | Deferred wrapper invoked (not yet implemented) |
+| 6 | Retired wrapper invoked (removed in P9) |
 
-### Tombstone Commands
+## Tombstone Commands
 
 All 12 deferred wrappers are registered as CLI commands. They accept any flags (`--allowUnknownOption`) and always exit with code 5 and a message like:
 
 ```
-[calyx][error] "agents-fleet" is not yet implemented (deferred to P2-P4) (Split across domain commands). Target: calyx (domain commands)
+[calyx][error] "agents-fleet" is not yet implemented (deferred to P2-P4) (Split across domain commands; sunset: design fleet convergence meta-command by 2026-06-01 or confirm non-goal). Target: calyx (domain commands)
 ```
 
-This prevents confusing "unknown command" errors when someone tries a legacy entrypoint that hasn't been ported yet.
+All 7 retired wrappers are also registered as CLI commands. They accept any flags and exit with code 6:
+
+```
+[calyx][error] "skills-sync-claude" was removed in P9 (2026-03-02). Use "calyx skills sync --backend claude" instead.
+```
 
 ## Telemetry Contract
 
-All wrappers emit a structured telemetry event to stderr:
+The telemetry contract from the wrapper era is retained in `@polli-labs/calyx-core` for audit and historical analysis. The structured event schema:
 
 ```json
 {
@@ -117,16 +105,8 @@ Enriched fields added in v0.1.0 (POL-671):
 - **`cwd`**: Working directory at invocation time.
 - **`deprecation_phase`**: Current phase (`warn` or `error`).
 
-This enables:
-- **Usage tracking:** grep logs for `calyx.wrapper.invoked` to measure migration progress.
-- **Retirement gating:** do not remove a wrapper until its invocation count drops below threshold.
-- **Audit trail:** every wrapper invocation leaves a machine-parseable breadcrumb.
-- **Per-host analysis:** `pid` + `cwd` help distinguish wrapper usage across hosts and sessions.
-- **Migration enforcement:** `deprecation_phase=error` invocations indicate blocked calls on enforcing hosts.
-
 ## Verification
 
-- Wrapper guardrails and telemetry contract are tested in `packages/core/src/__tests__/wrappers.test.ts`.
+- Wrapper lifecycle contract is tested in `packages/core/src/__tests__/wrappers.test.ts`.
 - Docs coherence is tested in `packages/core/src/__tests__/docs-coherence.test.ts`.
-- Smoke CI validates wrapper `--help` output.
 - Canonical wrapper definitions live in `WRAPPER_REGISTRY` (`packages/core/src/wrappers.ts`).

@@ -10,8 +10,8 @@ function docsRoot(): string {
  * Docs coherence tests.
  *
  * These assertions verify that the CLI reference documentation stays in
- * sync with the implemented command surface. If a new domain command or
- * wrapper is added without updating the docs, these tests will fail.
+ * sync with the implemented command surface. If a new domain command is
+ * added without updating the docs, these tests will fail.
  */
 
 describe("CLI reference completeness", () => {
@@ -27,7 +27,7 @@ describe("CLI reference completeness", () => {
       "## Agents Commands",
       "## Knowledge Commands",
       "## Exec Commands",
-      "## Compatibility Wrappers"
+      "## Retired Wrappers"
     ];
 
     for (const group of requiredGroups) {
@@ -73,21 +73,21 @@ describe("CLI reference completeness", () => {
     }
   });
 
-  test("documents all compatibility wrappers", async () => {
+  test("documents retired wrappers with canonical replacements", async () => {
     const cliRef = await readFile(path.join(docsRoot(), "cli-reference.md"), "utf8");
 
-    const requiredWrappers = [
-      "calyx skills-sync",
-      "calyx skills-sync-claude",
-      "calyx skills-sync-codex",
-      "calyx prompts-sync-claude",
-      "calyx prompts-sync-codex",
-      "calyx agents-render",
-      "calyx exec-launch"
+    const retiredWrappers = [
+      "skills-sync",
+      "skills-sync-claude",
+      "skills-sync-codex",
+      "prompts-sync-claude",
+      "prompts-sync-codex",
+      "agents-render",
+      "exec-launch"
     ];
 
-    for (const wrapper of requiredWrappers) {
-      expect(cliRef, `CLI reference missing wrapper: ${wrapper}`).toContain(wrapper);
+    for (const wrapper of retiredWrappers) {
+      expect(cliRef, `CLI reference missing retired wrapper: ${wrapper}`).toContain(wrapper);
     }
   });
 });
@@ -98,7 +98,7 @@ describe("migration wrappers doc completeness", () => {
 
     const requiredSections = [
       "## Strategy",
-      "## Implemented Wrappers",
+      "## Retired Wrappers",
       "## Ported Without Wrapper",
       "## Deferred",
       "## Telemetry Contract",
@@ -110,7 +110,7 @@ describe("migration wrappers doc completeness", () => {
     }
   });
 
-  test("migration-wrappers.md documents all implemented wrappers", async () => {
+  test("migration-wrappers.md documents all retired wrappers", async () => {
     const migDoc = await readFile(path.join(docsRoot(), "migration-wrappers.md"), "utf8");
 
     const wrappers = [
@@ -149,10 +149,10 @@ describe("README completeness", () => {
     }
   });
 
-  test("README documents migration wrappers", async () => {
+  test("README documents wrapper retirement", async () => {
     const readme = await readFile(path.resolve(process.cwd(), "README.md"), "utf8");
 
-    expect(readme).toContain("Migration wrappers");
+    expect(readme).toContain("retired");
     expect(readme).toContain("migration-wrappers.md");
   });
 
@@ -231,7 +231,6 @@ describe("migration guide completeness", () => {
 
     const requiredTopics = [
       "Prerequisites",
-      "compatibility wrappers",
       "canonical commands",
       "Exit codes",
       "--json"
@@ -253,7 +252,7 @@ describe("operator runbook completeness", () => {
       "## Daily operator workflows",
       "## Operator verification checklist",
       "## Failure classification",
-      "## Wrapper deprecation notice"
+      "## Retired wrappers"
     ];
 
     for (const section of requiredSections) {
@@ -281,11 +280,11 @@ describe("operator runbook completeness", () => {
     }
   });
 
-  test("operator-runbook.md marks wrappers as deprecated", async () => {
+  test("operator-runbook.md marks wrappers as retired", async () => {
     const runbook = await readFile(path.join(docsRoot(), "operator-runbook.md"), "utf8");
 
-    expect(runbook).toContain("deprecated");
-    expect(runbook).toContain("calyx.wrapper.invoked");
+    expect(runbook).toContain("retired");
+    expect(runbook).toContain("removed");
   });
 });
 
@@ -297,7 +296,6 @@ describe("skills subsumption catalogue completeness", () => {
       "## Scope and terminology",
       "## Disposition matrix",
       "## Migration examples",
-      "## Unresolved gaps",
       "## Retirement sequencing",
       "## Summary counts"
     ];
@@ -322,7 +320,7 @@ describe("skills subsumption catalogue completeness", () => {
     }
   });
 
-  test("skills-subsumption-catalogue.md references all implemented wrappers", async () => {
+  test("skills-subsumption-catalogue.md references all retired wrappers", async () => {
     const catalogue = await readFile(path.join(docsRoot(), "skills-subsumption-catalogue.md"), "utf8");
 
     const wrappers = [
@@ -355,7 +353,6 @@ describe("onboarding guide completeness", () => {
       "## Install",
       "## First commands",
       "## Command surface map",
-      "## Migrating from legacy scripts",
       "## Building extensions",
       "## Troubleshooting"
     ];
@@ -370,10 +367,8 @@ describe("onboarding guide completeness", () => {
 
     const requiredLinks = [
       "cli-reference.md",
-      "migration-guide.md",
       "extension-sdk.md",
-      "operator-runbook.md",
-      "skills-subsumption-catalogue.md"
+      "operator-runbook.md"
     ];
 
     for (const link of requiredLinks) {

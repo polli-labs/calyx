@@ -7,20 +7,20 @@ import {
   emitWrapperTelemetry,
   checkWrapperGuardrail,
   getWrapperDeprecationPhase,
-  getDeferredWrapperMessage
+  getDeferredWrapperMessage,
+  getRetiredWrapperMessage
 } from "../wrappers";
 import type { WrapperTelemetryEvent } from "../types";
 
 /**
  * Wrapper behavior tests.
  *
- * These tests validate the wrapper guardrail contract (POL-671):
- * 1. Deprecation warnings are always emitted.
- * 2. Telemetry events carry enriched fields (pid, cwd, deprecation_phase).
- * 3. CALYX_FAIL_ON_DEPRECATED=1 blocks wrapper invocations.
- * 4. Deferred wrappers produce clear "not yet implemented" messages.
- * 5. The canonical WRAPPER_REGISTRY is complete and consistent.
- * 6. Domain functions are called with the correct backend routing.
+ * These tests validate the wrapper lifecycle contract:
+ * 1. Retired wrappers (P9) produce clear "removed" messages.
+ * 2. Deferred wrappers produce clear "not yet implemented" messages.
+ * 3. The canonical WRAPPER_REGISTRY is complete and consistent.
+ * 4. Telemetry and guardrail helpers remain functional for audit.
+ * 5. Domain functions are called with the correct backend routing.
  */
 
 function fixtureRoot(): string {
@@ -53,7 +53,7 @@ afterEach(() => {
 
 describe("wrapper telemetry contract", () => {
   test("telemetry event shape is valid with enriched fields", () => {
-    const event = emitWrapperTelemetry("skills-sync", "calyx skills sync");
+    const event = emitWrapperTelemetry("test-wrapper", "calyx test command");
     expect(isValidTelemetryEvent(event)).toBe(true);
     expect(event.pid).toBe(process.pid);
     expect(event.cwd).toBe(process.cwd());
@@ -63,8 +63,8 @@ describe("wrapper telemetry contract", () => {
   test("telemetry event rejects invalid timestamp", () => {
     const event: WrapperTelemetryEvent = {
       event: "calyx.wrapper.invoked",
-      wrapper: "skills-sync",
-      target: "calyx skills sync",
+      wrapper: "test-wrapper",
+      target: "calyx test command",
       timestamp: "not-a-date",
       pid: 1,
       cwd: "/tmp",
@@ -75,7 +75,7 @@ describe("wrapper telemetry contract", () => {
 
   test("telemetry event includes deprecation_phase=error when env is set", () => {
     process.env["CALYX_FAIL_ON_DEPRECATED"] = "1";
-    const event = emitWrapperTelemetry("skills-sync", "calyx skills sync");
+    const event = emitWrapperTelemetry("test-wrapper", "calyx test command");
     expect(event.deprecation_phase).toBe("error");
   });
 });
@@ -98,18 +98,18 @@ describe("wrapper guardrails", () => {
   });
 
   test("checkWrapperGuardrail allows in warn phase", () => {
-    const result = checkWrapperGuardrail("skills-sync", "calyx skills sync");
+    const result = checkWrapperGuardrail("test-wrapper", "calyx test command");
     expect(result.allowed).toBe(true);
     expect(result.phase).toBe("warn");
   });
 
   test("checkWrapperGuardrail blocks in error phase", () => {
     process.env["CALYX_FAIL_ON_DEPRECATED"] = "1";
-    const result = checkWrapperGuardrail("skills-sync", "calyx skills sync");
+    const result = checkWrapperGuardrail("test-wrapper", "calyx test command");
     expect(result.allowed).toBe(false);
     expect(result.phase).toBe("error");
     expect(result.message).toContain("CALYX_FAIL_ON_DEPRECATED");
-    expect(result.message).toContain("calyx skills sync");
+    expect(result.message).toContain("calyx test command");
   });
 });
 
@@ -128,13 +128,42 @@ describe("deferred wrapper tombstones", () => {
     expect(msg).toContain("Unknown wrapper");
   });
 
-  test("all deferred wrappers produce messages", () => {
+  test("all deferred wrappers produce messages with sunset info", () => {
     const deferred = WRAPPER_REGISTRY.filter((d) => d.status === "deferred");
     expect(deferred.length).toBeGreaterThan(0);
     for (const def of deferred) {
       const msg = getDeferredWrapperMessage(def.wrapper);
       expect(msg).toContain("not yet implemented");
       expect(msg).toContain(def.phase);
+      // All deferred wrappers should have sunset criteria in notes
+      expect(def.notes).toContain("sunset");
+    }
+  });
+});
+
+// ── Retired wrapper messages ────────────────────────────────────────
+
+describe("retired wrapper tombstones", () => {
+  test("getRetiredWrapperMessage returns clear message for known retired wrapper", () => {
+    const msg = getRetiredWrapperMessage("skills-sync");
+    expect(msg).toContain("removed in P9");
+    expect(msg).toContain("calyx skills sync");
+    expect(msg).toContain("2026-03-02");
+  });
+
+  test("getRetiredWrapperMessage handles unknown wrapper", () => {
+    const msg = getRetiredWrapperMessage("nonexistent-wrapper");
+    expect(msg).toContain("Unknown wrapper");
+  });
+
+  test("all retired wrappers produce messages with retirement date", () => {
+    const retired = WRAPPER_REGISTRY.filter((d) => d.status === "retired");
+    expect(retired.length).toBeGreaterThan(0);
+    for (const def of retired) {
+      const msg = getRetiredWrapperMessage(def.wrapper);
+      expect(msg).toContain("removed in");
+      expect(msg).toContain(def.target);
+      expect(def.retiredAt).toBeTruthy();
     }
   });
 });
@@ -142,20 +171,32 @@ describe("deferred wrapper tombstones", () => {
 // ── Wrapper registry completeness ───────────────────────────────────
 
 describe("wrapper registry", () => {
-  const implemented = WRAPPER_REGISTRY.filter((d) => d.status === "implemented");
+  const retired = WRAPPER_REGISTRY.filter((d) => d.status === "retired");
   const deferred = WRAPPER_REGISTRY.filter((d) => d.status === "deferred");
+  const implemented = WRAPPER_REGISTRY.filter((d) => d.status === "implemented");
 
-  test("registry has 7 implemented wrappers", () => {
-    expect(implemented).toHaveLength(7);
+  test("registry has 7 retired wrappers", () => {
+    expect(retired).toHaveLength(7);
   });
 
   test("registry has 12 deferred wrappers", () => {
     expect(deferred).toHaveLength(12);
   });
 
-  test("all implemented wrappers have calyx targets", () => {
-    for (const def of implemented) {
+  test("registry has 0 implemented wrappers (all migrated)", () => {
+    expect(implemented).toHaveLength(0);
+  });
+
+  test("all retired wrappers have calyx targets", () => {
+    for (const def of retired) {
       expect(def.target).toMatch(/^calyx /);
+    }
+  });
+
+  test("all retired wrappers have retiredAt dates", () => {
+    for (const def of retired) {
+      expect(def.retiredAt).toBeTruthy();
+      expect(new Date(def.retiredAt!).toISOString()).toContain("2026");
     }
   });
 
@@ -173,88 +214,57 @@ describe("wrapper registry", () => {
 
 // ── Backend routing ─────────────────────────────────────────────────
 
-describe("wrapper backend routing", () => {
+describe("domain backend routing", () => {
   const root = fixtureRoot();
   const skillsPath = path.join(root, "skills/registry.valid.json");
   const promptsPath = path.join(root, "prompts/registry.valid.json");
 
-  test("skills-sync-claude routes to claude backend", async () => {
+  test("skills sync routes to claude backend", async () => {
     const result = await syncSkillsRegistry(skillsPath, { backend: "claude", apply: false });
     expect(result.backend).toBe("claude");
     expect(result.apply).toBe(false);
   });
 
-  test("skills-sync-codex routes to codex backend", async () => {
+  test("skills sync routes to codex backend", async () => {
     const result = await syncSkillsRegistry(skillsPath, { backend: "codex", apply: false });
     expect(result.backend).toBe("codex");
     expect(result.apply).toBe(false);
   });
 
-  test("skills-sync (generic) defaults to all backend", async () => {
+  test("skills sync defaults to all backend", async () => {
     const result = await syncSkillsRegistry(skillsPath, { backend: "all", apply: false });
     expect(result.backend).toBe("all");
     expect(result.apply).toBe(false);
   });
 
-  test("prompts-sync-claude routes to claude backend", async () => {
+  test("prompts sync routes to claude backend", async () => {
     const result = await syncPromptsRegistry(promptsPath, { backend: "claude", apply: false });
     expect(result.backend).toBe("claude");
     expect(result.apply).toBe(false);
   });
 
-  test("prompts-sync-codex routes to codex backend", async () => {
+  test("prompts sync routes to codex backend", async () => {
     const result = await syncPromptsRegistry(promptsPath, { backend: "codex", apply: false });
     expect(result.backend).toBe("codex");
     expect(result.apply).toBe(false);
   });
 });
 
-// ── Envelope shape ──────────────────────────────────────────────────
-
-describe("wrapper envelope shape", () => {
-  test("wrapper JSON envelope includes enriched telemetry and result", () => {
-    const telemetry = emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
-    const result = { backend: "claude", apply: false, version: 1, actions: [] };
-    const envelope = { wrapper: telemetry, result };
-
-    expect(envelope).toHaveProperty("wrapper");
-    expect(envelope).toHaveProperty("result");
-    expect(envelope.wrapper.event).toBe("calyx.wrapper.invoked");
-    expect(envelope.wrapper.wrapper).toBe("skills-sync-claude");
-    expect(envelope.wrapper.pid).toBeGreaterThan(0);
-    expect(envelope.wrapper.cwd).toBeTruthy();
-    expect(envelope.wrapper.deprecation_phase).toBe("warn");
-    expect(JSON.stringify(envelope)).toBeDefined();
-  });
-
-  const IMPLEMENTED_WRAPPERS = WRAPPER_REGISTRY.filter((d) => d.status === "implemented");
-
-  test.each(IMPLEMENTED_WRAPPERS)(
-    "wrapper $wrapper has valid target mapping",
-    ({ wrapper, target }) => {
-      expect(wrapper).toBeTruthy();
-      expect(target).toMatch(/^calyx /);
-      const event = emitWrapperTelemetry(wrapper, target);
-      expect(isValidTelemetryEvent(event)).toBe(true);
-    }
-  );
-});
-
 // ── E2E telemetry validation ────────────────────────────────────────
 
 describe("e2e telemetry validation", () => {
-  test("full wrapper invocation emits valid telemetry to stderr", () => {
+  test("telemetry emit writes valid events to stderr", () => {
     const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
+    emitWrapperTelemetry("test-wrapper", "calyx test command");
 
     expect(stderrSpy).toHaveBeenCalledTimes(2);
 
     // First call: deprecation warning
     const deprecationCall = stderrSpy.mock.calls[0]?.[0] as string;
     expect(deprecationCall).toContain("[calyx][deprecated]");
-    expect(deprecationCall).toContain("skills-sync-claude");
-    expect(deprecationCall).toContain("calyx skills sync --backend claude");
+    expect(deprecationCall).toContain("test-wrapper");
+    expect(deprecationCall).toContain("calyx test command");
 
     // Second call: telemetry JSON
     const telemetryCall = stderrSpy.mock.calls[1]?.[0] as string;
@@ -262,18 +272,18 @@ describe("e2e telemetry validation", () => {
     const jsonPart = telemetryCall.replace("[calyx][telemetry] ", "");
     const parsed = JSON.parse(jsonPart) as WrapperTelemetryEvent;
     expect(isValidTelemetryEvent(parsed)).toBe(true);
-    expect(parsed.wrapper).toBe("skills-sync-claude");
+    expect(parsed.wrapper).toBe("test-wrapper");
     expect(parsed.pid).toBe(process.pid);
     expect(parsed.deprecation_phase).toBe("warn");
 
     stderrSpy.mockRestore();
   });
 
-  test("full wrapper invocation with domain function produces enriched envelope", async () => {
+  test("telemetry with domain function produces enriched envelope", async () => {
     const root = fixtureRoot();
     const skillsPath = path.join(root, "skills/registry.valid.json");
 
-    const telemetry = emitWrapperTelemetry("skills-sync-claude", "calyx skills sync --backend claude");
+    const telemetry = emitWrapperTelemetry("test-wrapper", "calyx skills sync --backend claude");
     const result = await syncSkillsRegistry(skillsPath, { backend: "claude", apply: false });
     const envelope = { wrapper: telemetry, result };
 
