@@ -495,7 +495,7 @@ export interface KnowledgeValidateResult extends DomainValidationResult {
 
 export type WrapperDeprecationPhase = "active" | "warn" | "error";
 
-export type WrapperStatus = "implemented" | "deferred" | "retired";
+export type WrapperStatus = "implemented" | "deferred" | "deprecated" | "retired";
 
 export interface WrapperDefinition {
   wrapper: string;
@@ -505,6 +505,12 @@ export interface WrapperDefinition {
   notes?: string;
   /** ISO-8601 date when this wrapper was retired. Present only for retired wrappers. */
   retiredAt?: string;
+  /** ISO-8601 date when this wrapper was explicitly deprecated. Present only for deprecated wrappers. */
+  deprecatedAt?: string;
+  /** Explicit rationale for the deprecation decision. */
+  rationale?: string;
+  /** Canonical commands operators should use instead. */
+  alternatives?: string[];
 }
 
 export interface WrapperTelemetryEvent {

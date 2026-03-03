@@ -46,6 +46,7 @@ import {
   verifyInstructionsFromFiles,
   WRAPPER_REGISTRY,
   getDeferredWrapperMessage,
+  getDeprecatedWrapperMessage,
   getRetiredWrapperMessage
 } from "@polli-labs/calyx-core";
 import type {
@@ -1809,6 +1810,17 @@ export function buildProgram(): Command {
       .action(() => {
         const message = getRetiredWrapperMessage(def.wrapper);
         throw createCliError(message, 6);
+      });
+  }
+
+  for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "deprecated")) {
+    program
+      .command(def.wrapper)
+      .description(`[deprecated] Not implementing in v1 — see alternatives`)
+      .allowUnknownOption(true)
+      .action(() => {
+        const message = getDeprecatedWrapperMessage(def.wrapper);
+        throw createCliError(message, 5);
       });
   }
 

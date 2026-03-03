@@ -14,6 +14,7 @@ import {
   checkWrapperGuardrail,
   getWrapperDeprecationPhase,
   getDeferredWrapperMessage,
+  getDeprecatedWrapperMessage,
   getRetiredWrapperMessage
 } from "../wrappers";
 import type { WrapperTelemetryEvent } from "../types";
@@ -121,31 +122,67 @@ describe("wrapper guardrails", () => {
   });
 });
 
-// ── Deferred wrapper messages ───────────────────────────────────────
+// ── Deprecated wrapper messages (POL-680) ───────────────────────────
 
-describe("deferred wrapper tombstones", () => {
-  test("getDeferredWrapperMessage returns clear message for known deferred wrapper", () => {
-    const msg = getDeferredWrapperMessage("agents-fleet");
-    expect(msg).toContain("not yet implemented");
-    expect(msg).toContain("P2-P4");
-    expect(msg).toContain("Split across domain commands");
+describe("deprecated wrapper tombstones (POL-680)", () => {
+  test("getDeprecatedWrapperMessage returns actionable message for agents-fleet", () => {
+    const msg = getDeprecatedWrapperMessage("agents-fleet");
+    expect(msg).toContain("will not be implemented in v1");
+    expect(msg).toContain("deprecated 2026-03-03");
+    expect(msg).toContain("Rationale:");
+    expect(msg).toContain("Use instead:");
+    expect(msg).toContain("calyx skills sync");
+    expect(msg).toContain("calyx verify fleet");
   });
 
-  test("getDeferredWrapperMessage handles unknown wrapper", () => {
-    const msg = getDeferredWrapperMessage("nonexistent-wrapper");
+  test("getDeprecatedWrapperMessage returns actionable message for agents-fleet-apply", () => {
+    const msg = getDeprecatedWrapperMessage("agents-fleet-apply");
+    expect(msg).toContain("will not be implemented in v1");
+    expect(msg).toContain("deprecated 2026-03-03");
+    expect(msg).toContain("Rationale:");
+    expect(msg).toContain("Use instead:");
+    expect(msg).toContain("--apply");
+  });
+
+  test("getDeprecatedWrapperMessage returns actionable message for agents-worktree-init", () => {
+    const msg = getDeprecatedWrapperMessage("agents-worktree-init");
+    expect(msg).toContain("will not be implemented in v1");
+    expect(msg).toContain("deprecated 2026-03-03");
+    expect(msg).toContain("Rationale:");
+    expect(msg).toContain("Use instead:");
+    expect(msg).toContain("shell script");
+  });
+
+  test("getDeprecatedWrapperMessage handles unknown wrapper", () => {
+    const msg = getDeprecatedWrapperMessage("nonexistent-wrapper");
     expect(msg).toContain("Unknown wrapper");
   });
 
-  test("all deferred wrappers produce messages with sunset info", () => {
-    const deferred = WRAPPER_REGISTRY.filter((d) => d.status === "deferred");
-    expect(deferred.length).toBeGreaterThan(0);
-    for (const def of deferred) {
-      const msg = getDeferredWrapperMessage(def.wrapper);
-      expect(msg).toContain("not yet implemented");
-      expect(msg).toContain(def.phase);
-      // All deferred wrappers should have sunset criteria in notes
-      expect(def.notes).toContain("sunset");
+  test("all deprecated wrappers have required metadata", () => {
+    const deprecated = WRAPPER_REGISTRY.filter((d) => d.status === "deprecated");
+    expect(deprecated).toHaveLength(3);
+    for (const def of deprecated) {
+      expect(def.deprecatedAt, `${def.wrapper} missing deprecatedAt`).toBeTruthy();
+      expect(def.rationale, `${def.wrapper} missing rationale`).toBeTruthy();
+      expect(def.alternatives, `${def.wrapper} missing alternatives`).toBeDefined();
+      expect(def.alternatives!.length, `${def.wrapper} has no alternatives`).toBeGreaterThan(0);
+      expect(def.notes, `${def.wrapper} missing notes with sunset info`).toContain("Sunset");
     }
+  });
+
+  test("all deprecated wrappers produce messages with alternatives and sunset info", () => {
+    const deprecated = WRAPPER_REGISTRY.filter((d) => d.status === "deprecated");
+    for (const def of deprecated) {
+      const msg = getDeprecatedWrapperMessage(def.wrapper);
+      expect(msg).toContain("will not be implemented in v1");
+      expect(msg).toContain("Use instead:");
+      expect(msg).toContain("Rationale:");
+    }
+  });
+
+  test("getDeferredWrapperMessage handles unknown wrapper (no deferred wrappers remain)", () => {
+    const msg = getDeferredWrapperMessage("nonexistent-wrapper");
+    expect(msg).toContain("Unknown wrapper");
   });
 });
 
@@ -180,6 +217,7 @@ describe("retired wrapper tombstones", () => {
 
 describe("wrapper registry", () => {
   const retired = WRAPPER_REGISTRY.filter((d) => d.status === "retired");
+  const deprecated = WRAPPER_REGISTRY.filter((d) => d.status === "deprecated");
   const deferred = WRAPPER_REGISTRY.filter((d) => d.status === "deferred");
   const implemented = WRAPPER_REGISTRY.filter((d) => d.status === "implemented");
 
@@ -187,8 +225,12 @@ describe("wrapper registry", () => {
     expect(retired).toHaveLength(7);
   });
 
-  test("registry has 3 deferred wrappers (POL-680 scope)", () => {
-    expect(deferred).toHaveLength(3);
+  test("registry has 3 deprecated wrappers (POL-680 decision)", () => {
+    expect(deprecated).toHaveLength(3);
+  });
+
+  test("registry has 0 deferred wrappers (all resolved by POL-680)", () => {
+    expect(deferred).toHaveLength(0);
   });
 
   test("registry has 9 implemented wrappers (POL-679)", () => {
@@ -239,16 +281,36 @@ describe("wrapper registry", () => {
     }
   });
 
-  test("POL-680 scope remains deferred", () => {
-    const expectedDeferred = [
+  test("POL-680 scope is deprecated (explicit decision)", () => {
+    const expectedDeprecated = [
       "agents-fleet",
       "agents-fleet-apply",
       "agents-worktree-init"
     ];
 
-    for (const name of expectedDeferred) {
-      const def = deferred.find((d) => d.wrapper === name);
-      expect(def, `expected "${name}" to remain deferred`).toBeDefined();
+    for (const name of expectedDeprecated) {
+      const def = deprecated.find((d) => d.wrapper === name);
+      expect(def, `expected "${name}" to be deprecated`).toBeDefined();
+    }
+  });
+
+  test("all deprecated wrappers have deprecatedAt dates", () => {
+    for (const def of deprecated) {
+      expect(def.deprecatedAt).toBeTruthy();
+      expect(new Date(def.deprecatedAt!).toISOString()).toContain("2026");
+    }
+  });
+
+  test("all deprecated wrappers have rationale", () => {
+    for (const def of deprecated) {
+      expect(def.rationale, `${def.wrapper} missing rationale`).toBeTruthy();
+    }
+  });
+
+  test("all deprecated wrappers have alternatives", () => {
+    for (const def of deprecated) {
+      expect(def.alternatives, `${def.wrapper} missing alternatives`).toBeDefined();
+      expect(def.alternatives!.length).toBeGreaterThan(0);
     }
   });
 
@@ -263,7 +325,7 @@ describe("wrapper registry", () => {
     }
   });
 
-  test("total registry size is 19 (7 retired + 9 implemented + 3 deferred)", () => {
+  test("total registry size is 19 (7 retired + 9 implemented + 3 deprecated)", () => {
     expect(WRAPPER_REGISTRY).toHaveLength(19);
   });
 });

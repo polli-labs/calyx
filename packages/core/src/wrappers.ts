@@ -31,10 +31,54 @@ export const WRAPPER_REGISTRY: WrapperDefinition[] = [
   { wrapper: "execplan-new", target: "calyx knowledge execplan new", status: "implemented", phase: "P7A-4" },
   { wrapper: "agents-bootstrap", target: "calyx install bootstrap", status: "implemented", phase: "P7A-4" },
 
-  // Deferred — tombstone commands emit a clear error with sunset info
-  { wrapper: "agents-fleet", target: "calyx (domain commands)", status: "deferred", phase: "P2-P4", notes: "Split across domain commands; sunset: design fleet convergence meta-command by 2026-06-01 or confirm non-goal" },
-  { wrapper: "agents-fleet-apply", target: "calyx (convergent domain applies)", status: "deferred", phase: "P2-P4", notes: "Decompose by subsystem; sunset: design calyx fleet apply by 2026-06-01 or confirm non-goal" },
-  { wrapper: "agents-worktree-init", target: "calyx workspace init", status: "deferred", phase: "post-v1", notes: "Low core leverage; sunset: 2026-08-01 — remove tombstone if no demand" }
+  // Deprecated (POL-680 — explicit decision: not implementing in v1, 2026-03-03)
+  {
+    wrapper: "agents-fleet",
+    target: "calyx skills sync, calyx tools sync, calyx prompts sync, calyx agents sync, calyx verify fleet",
+    status: "deprecated",
+    phase: "P4+",
+    deprecatedAt: "2026-03-03",
+    rationale: "Fleet convergence requires orchestrating 5+ domain commands with ordering, error rollback, and partial-failure semantics — out of v1 scope.",
+    alternatives: [
+      "calyx skills sync --registry <path> --apply",
+      "calyx tools sync --registry <path> --all --apply",
+      "calyx prompts sync --registry <path> --apply",
+      "calyx agents sync --registry <path> --apply",
+      "calyx agents deploy --registry <path> --apply",
+      "calyx verify fleet"
+    ],
+    notes: "Sunset: 2026-06-01 — remove tombstone or promote to calyx fleet converge if operator demand warrants"
+  },
+  {
+    wrapper: "agents-fleet-apply",
+    target: "calyx skills sync --apply, calyx tools sync --apply, calyx prompts sync --apply, calyx agents sync --apply",
+    status: "deprecated",
+    phase: "P4+",
+    deprecatedAt: "2026-03-03",
+    rationale: "Convergent apply requires transaction semantics across domains — same architectural blockers as agents-fleet.",
+    alternatives: [
+      "calyx skills sync --registry <path> --apply",
+      "calyx tools sync --registry <path> --all --apply",
+      "calyx prompts sync --registry <path> --apply",
+      "calyx agents sync --registry <path> --apply",
+      "calyx agents deploy --registry <path> --apply",
+      "calyx verify fleet --strict"
+    ],
+    notes: "Sunset: 2026-06-01 — remove tombstone or promote as --apply mode of calyx fleet converge"
+  },
+  {
+    wrapper: "agents-worktree-init",
+    target: "agents-worktree-init shell script or manual git worktree add",
+    status: "deprecated",
+    phase: "post-v1",
+    deprecatedAt: "2026-03-03",
+    rationale: "No workspace domain exists in calyx; the existing shell script is simple, stable, and sufficient.",
+    alternatives: [
+      "agents-worktree-init (shell script in ~/.agents/run/)",
+      "git worktree add ~/projects/$(date +%Y-W%V)/<lane>/<branch> -b <branch>"
+    ],
+    notes: "Sunset: 2026-08-01 — remove tombstone if no demand; revisit if calyx adds a workspace domain"
+  }
 ];
 
 // ── Guardrail helpers ───────────────────────────────────────────────
@@ -87,6 +131,36 @@ export function getDeferredWrapperMessage(wrapper: string): string {
   }
   const notes = def.notes ? ` (${def.notes})` : "";
   return `[calyx][error] "${wrapper}" is not yet implemented (deferred to ${def.phase})${notes}. Target: ${def.target}`;
+}
+
+/**
+ * Build a clear, actionable error message for a deprecated wrapper (POL-680).
+ *
+ * Deprecated wrappers are those where an explicit decision was made not to
+ * implement them in v1. The message includes rationale, canonical alternatives,
+ * and the defer horizon for revisiting the decision.
+ */
+export function getDeprecatedWrapperMessage(wrapper: string): string {
+  const def = WRAPPER_REGISTRY.find((d) => d.wrapper === wrapper && d.status === "deprecated");
+  if (!def) {
+    return `[calyx][error] Unknown wrapper "${wrapper}".`;
+  }
+  const lines: string[] = [
+    `[calyx][deprecated] "${wrapper}" will not be implemented in v1 (deprecated ${def.deprecatedAt ?? "unknown"}).`
+  ];
+  if (def.rationale) {
+    lines.push(`  Rationale: ${def.rationale}`);
+  }
+  if (def.alternatives && def.alternatives.length > 0) {
+    lines.push("  Use instead:");
+    for (const alt of def.alternatives) {
+      lines.push(`    - ${alt}`);
+    }
+  }
+  if (def.notes) {
+    lines.push(`  ${def.notes}`);
+  }
+  return lines.join("\n");
 }
 
 /**
