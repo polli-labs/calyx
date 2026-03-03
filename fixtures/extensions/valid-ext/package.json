@@ -1,0 +1,10 @@
+{
+  "name": "calyx-ext-valid",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./index.js",
+  "calyx": {
+    "apiVersion": "1",
+    "domains": ["skills"]
+  }
+}

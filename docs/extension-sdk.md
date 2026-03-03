@@ -231,6 +231,99 @@ load → activate → (beforeCommand → command → afterCommand)* → deactiva
 3. **Before/After command**: These hooks bracket every domain command invocation. `beforeCommand` can abort execution by returning `{ ok: false }`.
 4. **Deactivate**: Runs on CLI exit. Use it for cleanup.
 
+## Extension Loader & Runtime
+
+### Discovery
+
+Extensions are discovered from configured search paths. Each search path is scanned for immediate subdirectories containing a `package.json` with a `calyx` key. Configure search paths via:
+
+- `--search-path` CLI flag
+- `CALYX_EXTENSIONS_PATH` environment variable (colon-separated paths)
+
+Discovery is **deterministic**: directories are sorted alphabetically, and later search paths shadow earlier ones (last-write-wins by extension name).
+
+### Loading
+
+Each discovered extension goes through these validation steps:
+
+1. **Manifest validation** — `package.json` must pass `validateManifest()` checks.
+2. **API version compatibility** — `calyx.apiVersion` must match the current SDK version (`"1"`).
+3. **Module import** — The `main` entry point is dynamically imported.
+4. **Export validation** — The default export must be a valid `CalyxExtension` object.
+
+If any step fails, the extension is skipped with operator-readable diagnostics.
+
+### Conflict Detection
+
+When multiple extensions claim the same domain, a **domain conflict** is reported. In strict mode, conflicts are errors; in advisory mode, they are warnings.
+
+### CLI Commands
+
+```bash
+# List discovered extensions
+calyx extensions list --search-path ./extensions
+
+# Validate all extensions (manifests, compatibility, conflicts)
+calyx extensions validate --search-path ./extensions --strict
+
+# Check a single extension package
+calyx extensions check --path ./my-extension
+```
+
+### Diagnostics
+
+The loader produces structured diagnostics with these codes:
+
+| Code | Meaning |
+|------|---------|
+| `MANIFEST_READ_FAILED` | Cannot read `package.json` |
+| `MANIFEST_PARSE_FAILED` | Invalid JSON in `package.json` |
+| `MISSING_NAME` | Missing or empty `name` |
+| `MISSING_VERSION` | Missing or empty `version` |
+| `MISSING_CALYX` | Missing `calyx` object |
+| `MISSING_API_VERSION` | Missing or empty `calyx.apiVersion` |
+| `MISSING_DOMAINS` | Missing or empty `calyx.domains` array |
+| `INVALID_DOMAIN` | Unknown domain in `calyx.domains` |
+| `API_VERSION_MISMATCH` | Extension targets a different API version |
+| `MODULE_IMPORT_FAILED` | Failed to dynamically import the extension |
+| `INVALID_EXPORT` | Default export is not a valid `CalyxExtension` |
+| `SEARCH_PATH_UNREADABLE` | Cannot read a search path directory |
+| `EXTENSION_SHADOWED` | An extension was shadowed by a later search path |
+| `DOMAIN_CONFLICT` | Multiple extensions claim the same domain |
+
+### ExtensionRunner
+
+The `ExtensionRunner` class manages the lifecycle of loaded extensions:
+
+```typescript
+import { ExtensionRunner } from "@polli-labs/calyx-core";
+
+const runner = new ExtensionRunner(extensions, {
+  workspaceRoot: "/path/to/workspace",
+  calyxVersion: "0.1.1",
+});
+
+await runner.activate();
+await runner.beforeCommand("skills", "sync");
+// ... run the command ...
+await runner.afterCommand("skills", "sync", 0);
+await runner.deactivate();
+```
+
+Hooks run in deterministic order (alphabetical by extension name). A failing `beforeCommand` hook aborts the command; all other hook failures are collected as diagnostics.
+
+## First-Party Extensions
+
+### calyx-ext-polli
+
+The `calyx-ext-polli` package is the first-party Polli extension. It provides:
+
+- **Pre-flight checks** on `sync`, `deploy`, and `validate` commands
+- **Environment readiness** diagnostics (checks for expected env vars)
+- **Structured summaries** after command failures
+
+Install: the extension ships in `packages/calyx-ext-polli` within the monorepo.
+
 ## Compatibility
 
 - Extensions target a specific `apiVersion`. The current version is `"1"`.

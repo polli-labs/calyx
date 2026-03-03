@@ -4,6 +4,8 @@ import {
   compileFromFiles,
   compareTomlSemantics,
   deployAgentsRegistry,
+  discoverExtensions,
+  loadExtension,
   getExecLogs,
   getExecReceipt,
   getExecStatus,
@@ -38,6 +40,7 @@ import type {
   AgentDeployBackend,
   DomainSyncAction,
   DomainValidationIssue,
+  ExtensionDiagnostic,
   KnowledgeArtifactKind,
   PromptBackend,
   SourceDomain,
@@ -208,6 +211,20 @@ interface ExecValidateCommandOptions {
 }
 
 interface ConfigShowCommandOptions {
+  json?: boolean;
+}
+
+interface ExtensionsListCommandOptions {
+  searchPath?: string[];
+  json?: boolean;
+}
+
+interface ExtensionsValidateCommandOptions extends ExtensionsListCommandOptions {
+  strict?: boolean;
+}
+
+interface ExtensionsCheckCommandOptions {
+  path: string;
   json?: boolean;
 }
 
@@ -1142,6 +1159,168 @@ export async function runCli(argv = process.argv): Promise<void> {
       });
   }
 
+  // ── Extensions commands ────────────────────────────────────────────
+
+  const extensions = new Command("extensions").description("Extension discovery, loading, and validation commands");
+
+  function printExtensionDiagnostics(diagnostics: ExtensionDiagnostic[]): void {
+    for (const d of diagnostics) {
+      const prefix = d.extensionName ? `[${d.extensionName}]` : "[extensions]";
+      console.error(`${prefix} ${d.severity}: (${d.code}) ${d.message}`);
+    }
+  }
+
+  function resolveExtensionSearchPaths(rawPaths?: string[]): string[] {
+    if (rawPaths && rawPaths.length > 0) {
+      return rawPaths;
+    }
+    const envPaths = process.env["CALYX_EXTENSIONS_PATH"];
+    if (envPaths) {
+      return envPaths.split(":").filter((p) => p.length > 0);
+    }
+    return [];
+  }
+
+  extensions
+    .command("list")
+    .description("Discover and list installed extensions from search paths")
+    .option("--search-path <paths...>", "Directories to search for extensions (or set CALYX_EXTENSIONS_PATH)")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExtensionsListCommandOptions) => {
+      const searchPaths = resolveExtensionSearchPaths(options.searchPath);
+
+      if (searchPaths.length === 0) {
+        if (options.json) {
+          console.log(JSON.stringify({ loaded: [], failed: [], diagnostics: [], conflicts: {} }, null, 2));
+        } else {
+          console.error("No extension search paths configured. Use --search-path or CALYX_EXTENSIONS_PATH.");
+        }
+        return;
+      }
+
+      const result = await discoverExtensions({ searchPaths });
+
+      if (options.json) {
+        console.log(JSON.stringify({
+          loaded: result.loaded.map((r) => ({
+            name: r.manifest?.name,
+            version: r.manifest?.version,
+            domains: r.manifest?.calyx.domains,
+            apiVersion: r.manifest?.calyx.apiVersion,
+            packageDir: r.packageDir,
+          })),
+          failed: result.failed.map((r) => ({
+            name: r.manifest?.name,
+            packageDir: r.packageDir,
+            diagnostics: r.diagnostics,
+          })),
+          diagnostics: result.diagnostics,
+          conflicts: result.conflicts,
+        }, null, 2));
+        return;
+      }
+
+      for (const r of result.loaded) {
+        if (!r.manifest) continue;
+        const domains = r.manifest.calyx.domains.join(", ");
+        console.log(`${r.manifest.name}\tv${r.manifest.version}\tapi=${r.manifest.calyx.apiVersion}\tdomains=[${domains}]`);
+      }
+
+      if (result.failed.length > 0) {
+        console.error(`\n${result.failed.length} extension(s) failed to load:`);
+        for (const r of result.failed) {
+          console.error(`  ${r.packageDir}`);
+        }
+      }
+
+      printExtensionDiagnostics(result.diagnostics);
+      console.error(`\nDiscovered ${result.loaded.length} extension(s) from ${searchPaths.length} search path(s).`);
+    });
+
+  extensions
+    .command("validate")
+    .description("Validate all discoverable extensions (manifests, compatibility, conflicts)")
+    .option("--search-path <paths...>", "Directories to search for extensions (or set CALYX_EXTENSIONS_PATH)")
+    .option("--strict", "Treat warnings as errors")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExtensionsValidateCommandOptions) => {
+      const searchPaths = resolveExtensionSearchPaths(options.searchPath);
+
+      if (searchPaths.length === 0) {
+        if (options.json) {
+          console.log(JSON.stringify({ ok: true, loaded: 0, failed: 0, conflicts: 0, diagnostics: [] }, null, 2));
+        } else {
+          console.error("No extension search paths configured. Use --search-path or CALYX_EXTENSIONS_PATH.");
+        }
+        return;
+      }
+
+      const result = await discoverExtensions({ searchPaths, strict: Boolean(options.strict) });
+
+      const hasErrors = result.diagnostics.some((d) => d.severity === "error");
+      const hasWarnings = result.diagnostics.some((d) => d.severity === "warning");
+      const conflictCount = Object.keys(result.conflicts).length;
+      const ok = !hasErrors && (!options.strict || !hasWarnings);
+
+      if (options.json) {
+        console.log(JSON.stringify({
+          ok,
+          loaded: result.loaded.length,
+          failed: result.failed.length,
+          conflicts: conflictCount,
+          diagnostics: result.diagnostics,
+        }, null, 2));
+      } else {
+        console.error(
+          `Extensions validate ${ok ? "OK" : "FAILED"}: loaded=${result.loaded.length}, failed=${result.failed.length}, conflicts=${conflictCount}.`
+        );
+        printExtensionDiagnostics(result.diagnostics);
+      }
+
+      if (!ok) {
+        throw createCliError(
+          `Extensions validate failed with ${result.failed.length} load failure(s) and ${conflictCount} conflict(s).`,
+          3
+        );
+      }
+    });
+
+  extensions
+    .command("check")
+    .description("Check a single extension package for manifest validity and SDK compatibility")
+    .requiredOption("--path <path>", "Path to the extension package directory")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExtensionsCheckCommandOptions) => {
+      const result = await loadExtension(options.path);
+
+      if (options.json) {
+        console.log(JSON.stringify({
+          ok: result.ok,
+          name: result.manifest?.name,
+          version: result.manifest?.version,
+          apiVersion: result.manifest?.calyx.apiVersion,
+          domains: result.manifest?.calyx.domains,
+          packageDir: result.packageDir,
+          diagnostics: result.diagnostics,
+        }, null, 2));
+        return;
+      }
+
+      if (result.ok && result.manifest) {
+        const domains = result.manifest.calyx.domains.join(", ");
+        console.error(
+          `Extension check OK: ${result.manifest.name} v${result.manifest.version} (api=${result.manifest.calyx.apiVersion}, domains=[${domains}])`
+        );
+      } else {
+        console.error(`Extension check FAILED for ${options.path}:`);
+        printExtensionDiagnostics(result.diagnostics);
+      }
+
+      if (!result.ok) {
+        throw createCliError(`Extension check failed for ${options.path}.`, 3);
+      }
+    });
+
   program.addCommand(config);
   program.addCommand(instructions);
   program.addCommand(skills);
@@ -1150,5 +1329,6 @@ export async function runCli(argv = process.argv): Promise<void> {
   program.addCommand(agents);
   program.addCommand(knowledge);
   program.addCommand(exec);
+  program.addCommand(extensions);
   await program.parseAsync(argv);
 }

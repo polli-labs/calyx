@@ -217,6 +217,31 @@ The following legacy compatibility wrappers were retired and **removed in P9** (
 
 If you encounter scripts or automation still using these commands, update them to the canonical form. See [migration-wrappers.md](migration-wrappers.md) for the full history.
 
+## Extension management
+
+Extensions extend Calyx's domain command lifecycle with custom hooks. Use these commands to manage extensions:
+
+```bash
+# Set search paths (colon-separated)
+export CALYX_EXTENSIONS_PATH="/path/to/extensions:/another/path"
+
+# List installed extensions
+calyx extensions list
+
+# Validate all extensions (recommended before sync/deploy)
+calyx extensions validate --strict
+
+# Check a single extension
+calyx extensions check --path ./packages/calyx-ext-polli
+```
+
+**Troubleshooting:**
+- If `extensions list` shows no extensions, verify `CALYX_EXTENSIONS_PATH` or `--search-path` is set.
+- If an extension fails to load, run `calyx extensions check --path <dir> --json` for diagnostics.
+- Domain conflicts (multiple extensions claiming the same domain) are warnings by default; use `--strict` to treat as errors.
+
+For extension authoring, see [Extension SDK](extension-sdk.md).
+
 ## Related documents
 
 - [CLI Reference](cli-reference.md) — complete command reference

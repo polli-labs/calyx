@@ -592,4 +592,46 @@ declare module "@polli-labs/calyx-core" {
   ): Promise<string>;
 
   export function showConfig(configPathOverride?: string): Promise<ConfigShowResult>;
+
+  // Extension loader/runtime
+
+  export type ExtensionDiagnosticSeverity = "error" | "warning" | "info";
+
+  export interface ExtensionDiagnostic {
+    code: string;
+    message: string;
+    severity: ExtensionDiagnosticSeverity;
+    extensionName?: string;
+  }
+
+  export interface ExtensionLoadResult {
+    ok: boolean;
+    packageDir: string;
+    manifest?: {
+      name: string;
+      version: string;
+      calyx: {
+        apiVersion: string;
+        domains: string[];
+      };
+    };
+    extension?: unknown;
+    diagnostics: ExtensionDiagnostic[];
+  }
+
+  export interface ExtensionDiscoveryOptions {
+    searchPaths: string[];
+    strict?: boolean;
+  }
+
+  export interface ExtensionDiscoveryResult {
+    loaded: ExtensionLoadResult[];
+    failed: ExtensionLoadResult[];
+    diagnostics: ExtensionDiagnostic[];
+    conflicts: Record<string, string[]>;
+  }
+
+  export function discoverExtensions(options: ExtensionDiscoveryOptions): Promise<ExtensionDiscoveryResult>;
+
+  export function loadExtension(packageDir: string): Promise<ExtensionLoadResult>;
 }
