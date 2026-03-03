@@ -11,7 +11,7 @@ The migration strategy followed a phased approach:
 3. **P7A-4 (POL-679, 2026-03-03):** Nine deferred wrappers ported to canonical command surfaces. Legacy wrapper names still work (with deprecation warning + telemetry) but forward to the canonical command.
 4. **P9 (2026-03-02):** Wrapper retirement — all 7 compatibility wrappers removed from the CLI. Invoking them now produces exit code 6 with a clear "removed" message.
 
-Remaining deferred wrappers are registered as **tombstone commands** — they emit a clear "not yet implemented" error with phase information and exit with code 5.
+The 3 remaining post-v1 wrappers received an explicit **deprecated** decision in POL-680 (2026-03-03). They are registered as tombstone commands that emit actionable alternatives and exit with code 5.
 
 ## Retired Wrappers (P9)
 
@@ -58,15 +58,17 @@ These 9 wrappers were ported from deferred tombstones to canonical command surfa
 | `dev/run/execplan-new` | `calyx execplan-new` | `calyx knowledge execplan new` |
 | `dev/run/agents-bootstrap` | `calyx agents-bootstrap` | `calyx install bootstrap` |
 
-## Deferred (P4+ / post-v1)
+## Deprecated (POL-680, 2026-03-03)
 
-Remaining deferred wrappers are registered as tombstone commands. Invoking them produces a clear error message with the target phase and notes. Each deferred wrapper has a **sunset deadline** — if no progress is made by the deadline, the tombstone is removed. See `WRAPPER_REGISTRY` in `packages/core/src/wrappers.ts` for the canonical list.
+These 3 wrappers received an explicit **deprecate-in-place** decision in POL-680. They will not be implemented in v1. Each has a sunset deadline; if no operator demand warrants promotion by the deadline, the tombstone is removed.
 
-| Legacy surface | Target | Phase | Sunset | Notes |
+Invoking a deprecated wrapper produces exit code 5 with an actionable message listing canonical alternatives.
+
+| Legacy surface | Decision | Alternatives | Sunset | Rationale |
 |---|---|---|---|---|
-| `dev/run/agents-fleet` | Split across domain commands | P2-P4 | 2026-06-01 | Design fleet convergence meta-command or confirm non-goal |
-| `dev/run/agents-fleet-apply` | Convergent domain applies | P2-P4 | 2026-06-01 | Design calyx fleet apply or confirm non-goal |
-| `dev/run/agents-worktree-init` | `calyx workspace init` | post-v1 | 2026-08-01 | Remove tombstone if no demand |
+| `dev/run/agents-fleet` | deprecated | `calyx skills sync`, `calyx tools sync`, `calyx prompts sync`, `calyx agents sync`, `calyx verify fleet` | 2026-06-01 | Fleet convergence requires orchestrating 5+ domain commands with ordering and error rollback — out of v1 scope |
+| `dev/run/agents-fleet-apply` | deprecated | Same as above with `--apply` | 2026-06-01 | Convergent apply requires transaction semantics across domains |
+| `dev/run/agents-worktree-init` | deprecated | `agents-worktree-init` shell script, `git worktree add` | 2026-08-01 | No workspace domain in calyx; shell script is sufficient |
 
 ## Exit Codes
 
@@ -75,15 +77,24 @@ Remaining deferred wrappers are registered as tombstone commands. Invoking them 
 | 0 | Success |
 | 2 | Invalid CLI argument (bad backend, bad flag value) |
 | 3 | Domain validation failure (registry/store errors) |
-| 5 | Deferred wrapper invoked (not yet implemented) |
+| 5 | Deprecated or deferred wrapper invoked (not implementing in v1) |
 | 6 | Retired wrapper invoked (removed in P9) |
 
 ## Tombstone Commands
 
-The 3 remaining deferred wrappers are registered as CLI commands. They accept any flags (`--allowUnknownOption`) and always exit with code 5 and a message like:
+The 3 deprecated wrappers are registered as CLI commands. They accept any flags (`--allowUnknownOption`) and always exit with code 5 and a message listing alternatives:
 
 ```
-[calyx][error] "agents-fleet" is not yet implemented (deferred to P2-P4) (Split across domain commands; sunset: design fleet convergence meta-command by 2026-06-01 or confirm non-goal). Target: calyx (domain commands)
+[calyx][deprecated] "agents-fleet" will not be implemented in v1 (deprecated 2026-03-03).
+  Rationale: Fleet convergence requires orchestrating 5+ domain commands with ordering, error rollback, and partial-failure semantics — out of v1 scope.
+  Use instead:
+    - calyx skills sync --registry <path> --apply
+    - calyx tools sync --registry <path> --all --apply
+    - calyx prompts sync --registry <path> --apply
+    - calyx agents sync --registry <path> --apply
+    - calyx agents deploy --registry <path> --apply
+    - calyx verify fleet
+  Sunset: 2026-06-01 — remove tombstone or promote to calyx fleet converge if operator demand warrants
 ```
 
 All 7 retired wrappers are also registered as CLI commands. They accept any flags and exit with code 6:

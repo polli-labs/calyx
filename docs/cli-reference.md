@@ -930,5 +930,5 @@ All calyx commands follow a consistent exit code convention:
 | `1`  | Unhandled runtime error (file not found, parse failure, etc.) |
 | `2`  | Invalid CLI arguments (bad flag values, missing required options) |
 | `3`  | Domain validation failure (registry has structural or lifecycle errors) |
-| `5`  | Deferred wrapper invoked (not yet implemented) |
+| `5`  | Deprecated or deferred wrapper invoked (not implementing in v1) |
 | `6`  | Retired wrapper invoked (removed, use canonical command) |

@@ -100,7 +100,7 @@ describe("migration wrappers doc completeness", () => {
       "## Strategy",
       "## Retired Wrappers",
       "## Ported Without Wrapper",
-      "## Deferred",
+      "## Deprecated",
       "## Telemetry Contract",
       "## Verification"
     ];

@@ -38,6 +38,7 @@ export {
   checkWrapperGuardrail,
   getWrapperDeprecationPhase,
   getDeferredWrapperMessage,
+  getDeprecatedWrapperMessage,
   getRetiredWrapperMessage
 } from "./wrappers";
 export { runDoctor } from "./doctor";
