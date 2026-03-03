@@ -13,6 +13,13 @@ export {
 } from "./knowledge";
 export { launchExecRun, getExecStatus, getExecLogs, getExecReceipt, validateExecStore } from "./exec";
 export {
+  discoverExtensions,
+  loadExtension,
+  readExtensionManifest,
+  checkApiVersionCompatibility,
+  ExtensionRunner
+} from "./extensions";
+export {
   resolveSourcePath,
   requireSourcePath,
   loadCalyxConfig,
@@ -137,3 +144,12 @@ export type {
   ExecValidateOptions,
   ExecValidateResult
 } from "./types";
+export type {
+  ExtensionDiagnostic,
+  ExtensionDiagnosticSeverity,
+  ExtensionLoadResult,
+  ExtensionDiscoveryResult,
+  ExtensionDiscoveryOptions,
+  ExtensionRunnerOptions,
+  ExtensionHookRunResult
+} from "./extensions";

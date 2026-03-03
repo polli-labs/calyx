@@ -610,6 +610,57 @@ Invoking a retired wrapper produces:
 
 ---
 
+## Extensions Commands
+
+Extension discovery, loading, and validation.
+
+### `calyx extensions list`
+
+Discover and list installed extensions from search paths.
+
+```bash
+calyx extensions list --search-path <paths...> [options]
+```
+
+**Options:**
+- `--search-path <paths...>` — Directories to search for extensions (or set `CALYX_EXTENSIONS_PATH`)
+- `--json` — Print machine-readable summary
+
+### `calyx extensions validate`
+
+Validate all discoverable extensions (manifests, compatibility, conflicts).
+
+```bash
+calyx extensions validate --search-path <paths...> [options]
+```
+
+**Options:**
+- `--search-path <paths...>` — Directories to search for extensions (or set `CALYX_EXTENSIONS_PATH`)
+- `--strict` — Treat warnings as errors
+- `--json` — Print machine-readable summary
+
+**Exit codes:**
+- `0` — All extensions valid
+- `3` — Validation failures or conflicts detected
+
+### `calyx extensions check`
+
+Check a single extension package for manifest validity and SDK compatibility.
+
+```bash
+calyx extensions check --path <path> [options]
+```
+
+**Options:**
+- `--path <path>` (required) — Path to the extension package directory
+- `--json` — Print machine-readable summary
+
+**Exit codes:**
+- `0` — Extension is valid
+- `3` — Extension check failed
+
+---
+
 ## Exit Code Convention
 
 All calyx commands follow a consistent exit code convention:

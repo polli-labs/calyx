@@ -1,11 +1,11 @@
 {
-  "name": "@polli-labs/calyx-core",
-  "version": "0.1.1",
-  "description": "Core contracts and config compiler for Calyx.",
+  "name": "calyx-ext-polli",
+  "version": "0.1.0",
+  "description": "First-party Polli extension for Calyx — registry pre-flight checks and fleet diagnostics.",
   "repository": {
     "type": "git",
     "url": "https://github.com/polli-labs/calyx",
-    "directory": "packages/core"
+    "directory": "packages/calyx-ext-polli"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -17,14 +17,19 @@
     }
   },
   "files": ["dist"],
+  "calyx": {
+    "apiVersion": "1",
+    "domains": ["skills", "tools", "agents"]
+  },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "dependencies": {
-    "@iarna/toml": "^2.2.5",
-    "@polli-labs/calyx-sdk": "workspace:*",
-    "yaml": "^2.7.0",
-    "zod": "^3.24.2"
+  "peerDependencies": {
+    "@polli-labs/calyx-sdk": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@polli-labs/calyx-core": "workspace:*",
+    "@polli-labs/calyx-sdk": "workspace:*"
   }
 }

@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@polli-labs/calyx-core": "workspace:*",
+    "@polli-labs/calyx-sdk": "workspace:*",
     "commander": "^13.1.0"
   }
 }
