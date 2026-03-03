@@ -1,1 +1,1 @@
-export { buildProgram, runCli } from "./run-cli";
+export { buildProgram, resolveWrapperDelegation, runCli } from "./run-cli";

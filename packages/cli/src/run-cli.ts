@@ -1826,11 +1826,50 @@ export function buildProgram(): Command {
   return program;
 }
 
+/**
+ * Resolve implemented-wrapper delegation via argv rewriting.
+ *
+ * If `argv[2]` matches an implemented wrapper, emits telemetry +
+ * deprecation warning, checks the guardrail, and returns a rewritten
+ * argv that routes to the canonical command. Returns `null` if no
+ * rewriting is needed (i.e. the command is not an implemented wrapper).
+ *
+ * Throws a CliError if the guardrail blocks the invocation.
+ */
+export function resolveWrapperDelegation(argv: string[]): string[] | null {
+  const invokedCommand = argv[2];
+  const wrapperDef = invokedCommand
+    ? WRAPPER_REGISTRY.find((d) => d.status === "implemented" && d.wrapper === invokedCommand)
+    : undefined;
+
+  if (!wrapperDef) return null;
+
+  emitWrapperTelemetry(wrapperDef.wrapper, wrapperDef.target);
+  const guardrail = checkWrapperGuardrail(wrapperDef.wrapper, wrapperDef.target);
+  if (!guardrail.allowed) {
+    throw createCliError(guardrail.message!, guardrail.phase === "error" ? 6 : 1);
+  }
+  console.error(
+    `[calyx][wrapper] "${wrapperDef.wrapper}" delegates to "${wrapperDef.target}". Please update your workflow.`
+  );
+
+  // Rewrite argv: replace the wrapper name with the canonical target's
+  // subcommand path, preserving all arguments that follow the wrapper name.
+  const targetParts = wrapperDef.target.replace(/^calyx\s+/, "").split(/\s+/);
+  const forwardedArgs = argv.slice(3);
+  return [...argv.slice(0, 2), ...targetParts, ...forwardedArgs];
+}
+
 export async function runCli(argv = process.argv): Promise<void> {
   const program = buildProgram();
 
+  // Implemented wrappers delegate to canonical commands via argv rewriting.
+  // The wrapper's action handler in buildProgram is kept for --help display;
+  // the actual delegation happens here before parseAsync.
+  const resolvedArgv = resolveWrapperDelegation(argv) ?? argv;
+
   try {
-    await program.parseAsync(argv);
+    await program.parseAsync(resolvedArgv);
   } finally {
     if (_extensionRunner) {
       const result = await _extensionRunner.deactivate();
