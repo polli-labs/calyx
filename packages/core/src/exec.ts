@@ -433,3 +433,29 @@ export async function getExecReceipt(
 }
 
 export { VALID_TRANSITIONS, TERMINAL_STATES };
+
+// ── Exec notify ─────────────────────────────────────────────────────
+
+import type { ExecNotifyOptions, ExecNotifyResult } from "./types";
+
+/**
+ * Emit a structured notification event.
+ *
+ * For v1, the notification is delivered to the "stdout" channel
+ * (structured JSON output). Future versions can delegate to ntfy
+ * or agent-mail backends.
+ */
+export async function execNotify(options: ExecNotifyOptions): Promise<ExecNotifyResult> {
+  const level = options.level ?? "info";
+  const channel = options.channel ?? "stdout";
+  const timestamp = new Date().toISOString();
+
+  return {
+    message: options.message,
+    level,
+    channel,
+    ...(options.title ? { title: options.title } : {}),
+    timestamp,
+    delivered: true
+  };
+}

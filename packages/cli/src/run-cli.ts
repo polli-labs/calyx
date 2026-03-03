@@ -1,11 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 import {
+  agentMailAdapter,
+  buildBundle,
+  bumpToolVersion,
   compileFromFiles,
   compareTomlSemantics,
+  createExecPlan,
   deployAgentsRegistry,
   discoverExtensions,
+  docstoreAdapter,
+  emitWrapperTelemetry,
+  checkWrapperGuardrail,
+  execNotify,
   ExtensionRunner,
+  installBootstrap,
   loadExtension,
   getExecLogs,
   getExecReceipt,
@@ -20,6 +29,7 @@ import {
   renderAgentProfiles,
   renderInstructionsFromFiles,
   requireSourcePath,
+  runDoctor,
   searchKnowledgeRegistry,
   showConfig,
   syncAgentsRegistry,
@@ -32,6 +42,7 @@ import {
   validatePromptsRegistry,
   validateSkillsRegistry,
   validateToolsRegistry,
+  verifyFleet,
   verifyInstructionsFromFiles,
   WRAPPER_REGISTRY,
   getDeferredWrapperMessage,
@@ -39,8 +50,11 @@ import {
 } from "@polli-labs/calyx-core";
 import type {
   AgentDeployBackend,
+  AgentMailVerb,
+  DocstoreAdapterVerb,
   DomainSyncAction,
   DomainValidationIssue,
+  ExecNotifyChannel,
   ExtensionDiagnostic,
   KnowledgeArtifactKind,
   PromptBackend,
@@ -229,6 +243,67 @@ interface ExtensionsCheckCommandOptions {
   json?: boolean;
 }
 
+// ── POL-679: new canonical command option interfaces ────────────────
+
+interface DoctorCommandOptions {
+  json?: boolean;
+}
+
+interface VerifyFleetCommandOptions {
+  strict?: boolean;
+  json?: boolean;
+}
+
+interface ToolsVersionsBumpCommandOptions {
+  registry?: string;
+  tool: string;
+  to: string;
+  apply?: boolean;
+  json?: boolean;
+}
+
+interface ExecNotifyCommandOptions {
+  message: string;
+  level?: string;
+  channel?: string;
+  title?: string;
+  json?: boolean;
+}
+
+interface KnowledgeExecPlanNewCommandOptions {
+  title: string;
+  issueId?: string;
+  outPath?: string;
+  apply?: boolean;
+  json?: boolean;
+}
+
+interface KnowledgeDocstoreCommandOptions {
+  query?: string;
+  id?: string;
+  json?: boolean;
+}
+
+interface BundleBuildCommandOptions {
+  path: string;
+  outDir?: string;
+  apply?: boolean;
+  json?: boolean;
+}
+
+interface InstallBootstrapCommandOptions {
+  target?: string;
+  apply?: boolean;
+  json?: boolean;
+}
+
+interface AgentMailCommandOptions {
+  projectKey?: string;
+  threadId?: string;
+  message?: string;
+  json?: boolean;
+}
+
 interface CliError extends Error {
   exitCode?: number;
 }
@@ -282,6 +357,30 @@ function parseLogLevel(rawValue: string): "info" | "warn" | "error" {
   }
 
   throw createCliError(`Invalid --level value: ${rawValue}. Must be one of: info, warn, error.`, 2);
+}
+
+function parseNotifyChannel(rawValue: string): ExecNotifyChannel {
+  const value = rawValue.trim().toLowerCase();
+  if (value === "stdout" || value === "ntfy" || value === "agent-mail") {
+    return value;
+  }
+  throw createCliError(`Invalid --channel value: ${rawValue}. Must be one of: stdout, ntfy, agent-mail.`, 2);
+}
+
+function parseDocstoreVerb(rawValue: string): DocstoreAdapterVerb {
+  const value = rawValue.trim().toLowerCase();
+  if (value === "search" || value === "get" || value === "list") {
+    return value;
+  }
+  throw createCliError(`Invalid docstore verb: ${rawValue}. Must be one of: search, get, list.`, 2);
+}
+
+function parseAgentMailVerb(rawValue: string): AgentMailVerb {
+  const value = rawValue.trim().toLowerCase();
+  if (value === "status" || value === "send" || value === "inbox" || value === "read") {
+    return value;
+  }
+  throw createCliError(`Invalid agent-mail verb: ${rawValue}. Must be one of: status, send, inbox, read.`, 2);
 }
 
 function issueText(issue: DomainValidationIssue): string {
@@ -769,6 +868,41 @@ export function buildProgram(): Command {
       }
     });
 
+  // ── Tools versions subgroup (POL-679) ────────────────────────────
+  const toolsVersions = new Command("versions").description("Tool version management");
+
+  toolsVersions
+    .command("bump")
+    .description("Bump the version of a named tool in the registry (plan/apply)")
+    .option("--registry <path>", "Path to tools registry JSON (or set CALYX_TOOLS_REGISTRY)")
+    .requiredOption("--tool <name>", "Tool name to bump")
+    .requiredOption("--to <version>", "Target version string")
+    .option("--apply", "Apply the bump (write to registry)")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ToolsVersionsBumpCommandOptions) => {
+      const registryPath = await resolve("tools", options.registry);
+      const result = await bumpToolVersion(registryPath, {
+        tool: options.tool,
+        to: options.to,
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      if (result.action === "not-found") {
+        throw createCliError(`Tool "${options.tool}" not found in registry at ${registryPath}.`, 1);
+      }
+
+      console.error(
+        `[tools] ${result.action} ${result.tool}: ${result.from ?? "(new)"} -> ${result.to}`
+      );
+    });
+
+  tools.addCommand(toolsVersions);
+
   const prompts = new Command("prompts").description("Prompts registry index/sync/validate commands");
 
   prompts
@@ -1085,6 +1219,78 @@ export function buildProgram(): Command {
       }
     });
 
+  // ── Knowledge execplan subgroup (POL-679) ─────────────────────────
+  const knowledgeExecplan = new Command("execplan").description("ExecPlan management");
+
+  knowledgeExecplan
+    .command("new")
+    .description("Create a new ExecPlan scaffold (plan/apply)")
+    .requiredOption("--title <title>", "ExecPlan title")
+    .option("--issue-id <id>", "Associated Linear issue ID")
+    .option("--out-path <path>", "Output file path for the scaffold")
+    .option("--apply", "Write scaffold to file")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: KnowledgeExecPlanNewCommandOptions) => {
+      const result = await createExecPlan({
+        title: options.title,
+        ...(options.issueId ? { issueId: options.issueId } : {}),
+        ...(options.outPath ? { outPath: options.outPath } : {}),
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.error(`[knowledge] ${result.action} ${result.id}: "${result.title}"`);
+      if (result.outPath) {
+        console.error(`[knowledge] output: ${result.outPath}`);
+      }
+    });
+
+  knowledge.addCommand(knowledgeExecplan);
+
+  // ── Knowledge docstore subgroup (POL-679) ─────────────────────────
+  const knowledgeDocstore = new Command("docstore").description("Docstore adapter for knowledge artifacts");
+
+  for (const verb of ["search", "get", "list"] as const) {
+    const cmd = knowledgeDocstore.command(verb)
+      .description(`Delegate ${verb} to docstore backend`)
+      .option("--json", "Print machine-readable summary");
+
+    if (verb === "search") {
+      cmd.requiredOption("--query <query>", "Search query");
+    }
+    if (verb === "get") {
+      cmd.requiredOption("--id <id>", "Artifact ID to retrieve");
+    }
+
+    cmd.action(async (options: KnowledgeDocstoreCommandOptions) => {
+      const result = await docstoreAdapter({
+        verb: parseDocstoreVerb(verb),
+        ...(options.query ? { query: options.query } : {}),
+        ...(options.id ? { id: options.id } : {})
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      if (result.delegated) {
+        console.log(result.output);
+      } else {
+        console.error(result.output);
+        if (result.exitCode !== 0) {
+          throw createCliError(result.output, result.exitCode);
+        }
+      }
+    });
+  }
+
+  knowledge.addCommand(knowledgeDocstore);
+
   const exec = new Command("exec").description("Execution lifecycle commands (launch/status/logs/receipt)");
 
   exec
@@ -1222,6 +1428,32 @@ export function buildProgram(): Command {
       if (!result.ok) {
         throw createCliError(`exec validate failed with ${result.errors.length} error(s).`, 3);
       }
+    });
+
+  // ── Exec notify (POL-679) ──────────────────────────────────────────
+  exec
+    .command("notify")
+    .description("Emit a structured notification event")
+    .requiredOption("--message <message>", "Notification message")
+    .option("--level <level>", "Notification level (info|warn|error)", "info")
+    .option("--channel <channel>", "Delivery channel (stdout|ntfy|agent-mail)", "stdout")
+    .option("--title <title>", "Optional notification title")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: ExecNotifyCommandOptions) => {
+      const result = await execNotify({
+        message: options.message,
+        level: parseLogLevel(options.level ?? "info"),
+        channel: parseNotifyChannel(options.channel ?? "stdout"),
+        ...(options.title ? { title: options.title } : {})
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      const prefix = result.title ? `[${result.title}] ` : "";
+      console.error(`[exec][notify] ${prefix}${result.level.toUpperCase()}: ${result.message} (channel=${result.channel})`);
     });
 
   // ── Extensions commands ────────────────────────────────────────────
@@ -1375,6 +1607,154 @@ export function buildProgram(): Command {
       }
     });
 
+  // ── POL-679: new top-level canonical commands ────────────────────
+
+  // calyx doctor — health check across all configured domains
+  const doctor = new Command("doctor")
+    .description("Run a health check across all configured domains")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: DoctorCommandOptions) => {
+      const result = await runDoctor({ json: Boolean(options.json) });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const status of result.domains) {
+        const icon = status.health === "ok" ? "OK" : status.health === "unconfigured" ? "SKIP" : "FAIL";
+        const path = status.path ? ` (${status.path})` : "";
+        const msg = status.message ? ` — ${status.message}` : "";
+        console.error(`[doctor] ${icon} ${status.domain}${path}${msg}`);
+      }
+
+      console.error(`\n[doctor] Overall: ${result.ok ? "HEALTHY" : "ISSUES DETECTED"}`);
+
+      if (!result.ok) {
+        throw createCliError("Doctor found issues. Run with --json for details.", 3);
+      }
+    });
+
+  // calyx verify fleet — fleet-wide validation
+  const verify = new Command("verify").description("Verification commands");
+
+  verify
+    .command("fleet")
+    .description("Run fleet-wide validation across all configured domains")
+    .option("--strict", "Treat warnings as errors")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: VerifyFleetCommandOptions) => {
+      const result = await verifyFleet({ strict: Boolean(options.strict) });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const domain of result.domains) {
+        const icon = domain.ok ? "OK" : "FAIL";
+        const details = domain.message ? ` — ${domain.message}` : ` (errors=${domain.errors}, warnings=${domain.warnings})`;
+        console.error(`[verify] ${icon} ${domain.domain}${details}`);
+      }
+
+      console.error(`\n[verify] Fleet: ${result.ok ? "ALL PASSED" : "FAILURES DETECTED"}`);
+
+      if (!result.ok) {
+        throw createCliError("Fleet verification failed.", 3);
+      }
+    });
+
+  // calyx bundle build — extension bundle build
+  const bundle = new Command("bundle").description("Extension bundle commands");
+
+  bundle
+    .command("build")
+    .description("Build an extension bundle from a package directory (plan/apply)")
+    .requiredOption("--path <path>", "Path to the extension package directory")
+    .option("--out-dir <path>", "Output directory for the bundle")
+    .option("--apply", "Execute the build")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: BundleBuildCommandOptions) => {
+      const result = await buildBundle({
+        path: options.path,
+        ...(options.outDir ? { outDir: options.outDir } : {}),
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.error(`[bundle] ${result.action} ${result.name}@${result.version} -> ${result.outDir}`);
+    });
+
+  // calyx install bootstrap — agent installation bootstrap
+  const install = new Command("install").description("Installation commands");
+
+  install
+    .command("bootstrap")
+    .description("Bootstrap agent installation (ensure directory structure, plan/apply)")
+    .option("--target <path>", "Target directory for agent installation (default: ~/.agents)")
+    .option("--apply", "Execute the bootstrap")
+    .option("--json", "Print machine-readable summary")
+    .action(async (options: InstallBootstrapCommandOptions) => {
+      const result = await installBootstrap({
+        ...(options.target ? { target: options.target } : {}),
+        apply: Boolean(options.apply)
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.error(`[install] ${result.action} target=${result.target}`);
+      for (const step of result.steps) {
+        console.error(`[install]   ${result.apply ? "✓" : "→"} ${step}`);
+      }
+    });
+
+  // ── Extensions agent-mail subcommand (POL-679) ─────────────────────
+  for (const verb of ["status", "send", "inbox", "read"] as const) {
+    const cmd = extensions.command(`agent-mail-${verb}`)
+      .description(`Agent-mail ${verb} via extension adapter`)
+      .option("--json", "Print machine-readable summary");
+
+    if (verb === "send") {
+      cmd.requiredOption("--message <message>", "Message to send");
+      cmd.option("--project-key <key>", "Project key");
+      cmd.option("--thread-id <id>", "Thread ID");
+    }
+    if (verb === "inbox" || verb === "read") {
+      cmd.option("--project-key <key>", "Project key");
+      cmd.option("--thread-id <id>", "Thread ID");
+    }
+
+    cmd.action(async (options: AgentMailCommandOptions) => {
+      const result = await agentMailAdapter({
+        verb: parseAgentMailVerb(verb),
+        ...(options.projectKey ? { projectKey: options.projectKey } : {}),
+        ...(options.threadId ? { threadId: options.threadId } : {}),
+        ...(options.message ? { message: options.message } : {})
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      if (result.delegated) {
+        console.log(result.output);
+      } else {
+        console.error(result.output);
+        if (result.exitCode !== 0) {
+          throw createCliError(result.output, result.exitCode);
+        }
+      }
+    });
+  }
+
   // Wire extension lifecycle hooks into domain commands
   hookDomainCommand(skills, "skills");
   hookDomainCommand(tools, "tools");
@@ -1392,10 +1772,34 @@ export function buildProgram(): Command {
   program.addCommand(knowledge);
   program.addCommand(exec);
   program.addCommand(extensions);
+  program.addCommand(doctor);
+  program.addCommand(verify);
+  program.addCommand(bundle);
+  program.addCommand(install);
 
   // ── Compatibility wrapper tombstones ────────────────────────────────
   // Registered AFTER domain commands so help output shows canonical
   // commands first. Wrappers remain discoverable but appear at the bottom.
+  //
+  // "implemented" wrappers emit telemetry + deprecation warnings, then
+  // print a message directing the user to the canonical command.
+  // "retired" wrappers exit 6 with a "removed" message.
+  // "deferred" wrappers exit 5 with a "not yet implemented" message.
+
+  for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "implemented")) {
+    program
+      .command(def.wrapper)
+      .description(`[wrapper] Delegates to: ${def.target}`)
+      .allowUnknownOption(true)
+      .action(() => {
+        emitWrapperTelemetry(def.wrapper, def.target);
+        const guardrail = checkWrapperGuardrail(def.wrapper, def.target);
+        if (!guardrail.allowed) {
+          throw createCliError(guardrail.message!, guardrail.phase === "error" ? 6 : 1);
+        }
+        console.error(`[calyx][wrapper] "${def.wrapper}" delegates to "${def.target}". Please update your workflow.`);
+      });
+  }
 
   for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "retired")) {
     program
@@ -1422,11 +1826,50 @@ export function buildProgram(): Command {
   return program;
 }
 
+/**
+ * Resolve implemented-wrapper delegation via argv rewriting.
+ *
+ * If `argv[2]` matches an implemented wrapper, emits telemetry +
+ * deprecation warning, checks the guardrail, and returns a rewritten
+ * argv that routes to the canonical command. Returns `null` if no
+ * rewriting is needed (i.e. the command is not an implemented wrapper).
+ *
+ * Throws a CliError if the guardrail blocks the invocation.
+ */
+export function resolveWrapperDelegation(argv: string[]): string[] | null {
+  const invokedCommand = argv[2];
+  const wrapperDef = invokedCommand
+    ? WRAPPER_REGISTRY.find((d) => d.status === "implemented" && d.wrapper === invokedCommand)
+    : undefined;
+
+  if (!wrapperDef) return null;
+
+  emitWrapperTelemetry(wrapperDef.wrapper, wrapperDef.target);
+  const guardrail = checkWrapperGuardrail(wrapperDef.wrapper, wrapperDef.target);
+  if (!guardrail.allowed) {
+    throw createCliError(guardrail.message!, guardrail.phase === "error" ? 6 : 1);
+  }
+  console.error(
+    `[calyx][wrapper] "${wrapperDef.wrapper}" delegates to "${wrapperDef.target}". Please update your workflow.`
+  );
+
+  // Rewrite argv: replace the wrapper name with the canonical target's
+  // subcommand path, preserving all arguments that follow the wrapper name.
+  const targetParts = wrapperDef.target.replace(/^calyx\s+/, "").split(/\s+/);
+  const forwardedArgs = argv.slice(3);
+  return [...argv.slice(0, 2), ...targetParts, ...forwardedArgs];
+}
+
 export async function runCli(argv = process.argv): Promise<void> {
   const program = buildProgram();
 
+  // Implemented wrappers delegate to canonical commands via argv rewriting.
+  // The wrapper's action handler in buildProgram is kept for --help display;
+  // the actual delegation happens here before parseAsync.
+  const resolvedArgv = resolveWrapperDelegation(argv) ?? argv;
+
   try {
-    await program.parseAsync(argv);
+    await program.parseAsync(resolvedArgv);
   } finally {
     if (_extensionRunner) {
       const result = await _extensionRunner.deactivate();

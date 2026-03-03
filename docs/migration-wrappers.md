@@ -8,9 +8,10 @@ The migration strategy followed a phased approach:
 
 1. **P2–P4:** Compatibility wrappers forwarded legacy entrypoints to canonical commands, emitting deprecation warnings and telemetry.
 2. **P7A:** Internal adoption cutover — all new workflows on canonical commands; `CALYX_FAIL_ON_DEPRECATED=1` available for enforcement.
-3. **P9 (2026-03-02):** Wrapper retirement — all 7 compatibility wrappers removed from the CLI. Invoking them now produces exit code 6 with a clear "removed" message.
+3. **P7A-4 (POL-679, 2026-03-03):** Nine deferred wrappers ported to canonical command surfaces. Legacy wrapper names still work (with deprecation warning + telemetry) but forward to the canonical command.
+4. **P9 (2026-03-02):** Wrapper retirement — all 7 compatibility wrappers removed from the CLI. Invoking them now produces exit code 6 with a clear "removed" message.
 
-Deferred wrappers remain registered as **tombstone commands** — they emit a clear "not yet implemented" error with phase information and exit with code 5.
+Remaining deferred wrappers are registered as **tombstone commands** — they emit a clear "not yet implemented" error with phase information and exit with code 5.
 
 ## Retired Wrappers (P9)
 
@@ -41,23 +42,30 @@ These surfaces were ported directly into calyx domain commands and do not need w
 | `dev/run/async-runner` | `calyx exec *` | P3 |
 | `dev/run/execplan-receipt` | `calyx exec receipt` | P3 |
 
+## Implemented (P7A-4 — POL-679, 2026-03-03)
+
+These 9 wrappers were ported from deferred tombstones to canonical command surfaces. The legacy wrapper name still works as a compatibility shim (emits deprecation warning + telemetry, then forwards to the canonical command).
+
+| Legacy surface | Wrapper | Canonical command |
+|---|---|---|
+| `dev/run/agents-toolkit-doctor` | `calyx agents-toolkit-doctor` | `calyx doctor` |
+| `dev/run/agents-tools-bump` | `calyx agents-tools-bump` | `calyx tools versions bump` |
+| `dev/run/agent-notify` | `calyx agent-notify` | `calyx exec notify` |
+| `dev/run/docstore` | `calyx docstore` | `calyx knowledge docstore` |
+| `dev/run/agents-fleet-smoke` | `calyx agents-fleet-smoke` | `calyx verify fleet` |
+| `dev/run/agents-bundle-build` | `calyx agents-bundle-build` | `calyx bundle build` |
+| `dev/run/agent-mail` | `calyx agent-mail` | `calyx extensions agent-mail-status` |
+| `dev/run/execplan-new` | `calyx execplan-new` | `calyx knowledge execplan new` |
+| `dev/run/agents-bootstrap` | `calyx agents-bootstrap` | `calyx install bootstrap` |
+
 ## Deferred (P4+ / post-v1)
 
-Deferred wrappers are registered as tombstone commands. Invoking them produces a clear error message with the target phase and notes. Each deferred wrapper has a **sunset deadline** — if no progress is made by the deadline, the tombstone is removed. See `WRAPPER_REGISTRY` in `packages/core/src/wrappers.ts` for the canonical list.
+Remaining deferred wrappers are registered as tombstone commands. Invoking them produces a clear error message with the target phase and notes. Each deferred wrapper has a **sunset deadline** — if no progress is made by the deadline, the tombstone is removed. See `WRAPPER_REGISTRY` in `packages/core/src/wrappers.ts` for the canonical list.
 
 | Legacy surface | Target | Phase | Sunset | Notes |
 |---|---|---|---|---|
 | `dev/run/agents-fleet` | Split across domain commands | P2-P4 | 2026-06-01 | Design fleet convergence meta-command or confirm non-goal |
 | `dev/run/agents-fleet-apply` | Convergent domain applies | P2-P4 | 2026-06-01 | Design calyx fleet apply or confirm non-goal |
-| `dev/run/agents-fleet-smoke` | `calyx verify fleet` | P4+ | 2026-06-01 | Remove tombstone if no progress |
-| `dev/run/agents-toolkit-doctor` | `calyx doctor` | P3+ | 2026-06-01 | Remove tombstone if no progress |
-| `dev/run/agents-bundle-build` | `calyx bundle build` | P4+ | 2026-07-01 | Depends on extension ecosystem |
-| `dev/run/agents-tools-bump` | `calyx tools versions bump` | P3+ | 2026-06-01 | Remove tombstone if no progress |
-| `dev/run/agent-notify` | `calyx exec notify` | P3+ | 2026-07-01 | Evaluate exec extension model |
-| `dev/run/agent-mail` | `calyx ext agent-mail` | P4+ | 2026-07-01 | Depends on extension registry |
-| `dev/run/docstore` | `calyx knowledge *` + adapter | P3+ | 2026-07-01 | Depends on knowledge domain B2 adapter |
-| `dev/run/execplan-new` | `calyx knowledge execplan new` | P4+ | 2026-07-01 | Remove tombstone if knowledge UX not progressed |
-| `dev/run/agents-bootstrap` | `calyx install bootstrap` | P4+ | 2026-08-01 | Low priority, remove tombstone if no demand |
 | `dev/run/agents-worktree-init` | `calyx workspace init` | post-v1 | 2026-08-01 | Remove tombstone if no demand |
 
 ## Exit Codes
@@ -72,7 +80,7 @@ Deferred wrappers are registered as tombstone commands. Invoking them produces a
 
 ## Tombstone Commands
 
-All 12 deferred wrappers are registered as CLI commands. They accept any flags (`--allowUnknownOption`) and always exit with code 5 and a message like:
+The 3 remaining deferred wrappers are registered as CLI commands. They accept any flags (`--allowUnknownOption`) and always exit with code 5 and a message like:
 
 ```
 [calyx][error] "agents-fleet" is not yet implemented (deferred to P2-P4) (Split across domain commands; sunset: design fleet convergence meta-command by 2026-06-01 or confirm non-goal). Target: calyx (domain commands)

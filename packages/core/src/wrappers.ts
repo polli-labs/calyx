@@ -20,18 +20,20 @@ export const WRAPPER_REGISTRY: WrapperDefinition[] = [
   { wrapper: "agents-render", target: "calyx instructions render", status: "retired", phase: "P9", retiredAt: "2026-03-02" },
   { wrapper: "exec-launch", target: "calyx exec launch", status: "retired", phase: "P9", retiredAt: "2026-03-02" },
 
+  // Implemented (POL-679 — canonical command surfaces, 2026-03-03)
+  { wrapper: "agents-toolkit-doctor", target: "calyx doctor", status: "implemented", phase: "P7A-4" },
+  { wrapper: "agents-tools-bump", target: "calyx tools versions bump", status: "implemented", phase: "P7A-4" },
+  { wrapper: "agent-notify", target: "calyx exec notify", status: "implemented", phase: "P7A-4" },
+  { wrapper: "docstore", target: "calyx knowledge docstore", status: "implemented", phase: "P7A-4" },
+  { wrapper: "agents-fleet-smoke", target: "calyx verify fleet", status: "implemented", phase: "P7A-4" },
+  { wrapper: "agents-bundle-build", target: "calyx bundle build", status: "implemented", phase: "P7A-4" },
+  { wrapper: "agent-mail", target: "calyx extensions agent-mail-status", status: "implemented", phase: "P7A-4" },
+  { wrapper: "execplan-new", target: "calyx knowledge execplan new", status: "implemented", phase: "P7A-4" },
+  { wrapper: "agents-bootstrap", target: "calyx install bootstrap", status: "implemented", phase: "P7A-4" },
+
   // Deferred — tombstone commands emit a clear error with sunset info
   { wrapper: "agents-fleet", target: "calyx (domain commands)", status: "deferred", phase: "P2-P4", notes: "Split across domain commands; sunset: design fleet convergence meta-command by 2026-06-01 or confirm non-goal" },
   { wrapper: "agents-fleet-apply", target: "calyx (convergent domain applies)", status: "deferred", phase: "P2-P4", notes: "Decompose by subsystem; sunset: design calyx fleet apply by 2026-06-01 or confirm non-goal" },
-  { wrapper: "agents-fleet-smoke", target: "calyx verify fleet", status: "deferred", phase: "P4+", notes: "Fold into verification matrix; sunset: 2026-06-01 — remove tombstone if no progress" },
-  { wrapper: "agents-toolkit-doctor", target: "calyx doctor", status: "deferred", phase: "P3+", notes: "Health check surface; sunset: 2026-06-01 — remove tombstone if no progress" },
-  { wrapper: "agents-bundle-build", target: "calyx bundle build", status: "deferred", phase: "P4+", notes: "Bundle schema required; sunset: 2026-07-01 — depends on extension ecosystem" },
-  { wrapper: "agents-tools-bump", target: "calyx tools versions bump", status: "deferred", phase: "P3+", notes: "Atomic version updates; sunset: 2026-06-01 — remove tombstone if no progress" },
-  { wrapper: "agent-notify", target: "calyx exec notify", status: "deferred", phase: "P3+", notes: "Keep Python backend initially; sunset: 2026-07-01 — evaluate exec extension model" },
-  { wrapper: "agent-mail", target: "calyx ext agent-mail", status: "deferred", phase: "P4+", notes: "Extension package, not core; sunset: 2026-07-01 — depends on extension registry" },
-  { wrapper: "docstore", target: "calyx knowledge * + adapter", status: "deferred", phase: "P3+", notes: "Backend retained; sunset: 2026-07-01 — depends on knowledge domain B2 adapter" },
-  { wrapper: "execplan-new", target: "calyx knowledge execplan new", status: "deferred", phase: "P4+", notes: "Depends on knowledge UX; sunset: 2026-07-01 — remove tombstone if knowledge UX not progressed" },
-  { wrapper: "agents-bootstrap", target: "calyx install bootstrap", status: "deferred", phase: "P4+", notes: "After core stabilizes; sunset: 2026-08-01 — low priority, remove tombstone if no demand" },
   { wrapper: "agents-worktree-init", target: "calyx workspace init", status: "deferred", phase: "post-v1", notes: "Low core leverage; sunset: 2026-08-01 — remove tombstone if no demand" }
 ];
 

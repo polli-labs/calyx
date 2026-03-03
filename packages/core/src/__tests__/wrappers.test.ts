@@ -2,6 +2,12 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { syncSkillsRegistry } from "../skills";
 import { syncPromptsRegistry } from "../prompts";
+import { bumpToolVersion } from "../tools";
+import { execNotify } from "../exec";
+import { createExecPlan } from "../knowledge";
+import { runDoctor } from "../doctor";
+import { installBootstrap } from "../install";
+import { buildBundle } from "../bundle";
 import {
   WRAPPER_REGISTRY,
   emitWrapperTelemetry,
@@ -18,9 +24,11 @@ import type { WrapperTelemetryEvent } from "../types";
  * These tests validate the wrapper lifecycle contract:
  * 1. Retired wrappers (P9) produce clear "removed" messages.
  * 2. Deferred wrappers produce clear "not yet implemented" messages.
- * 3. The canonical WRAPPER_REGISTRY is complete and consistent.
- * 4. Telemetry and guardrail helpers remain functional for audit.
- * 5. Domain functions are called with the correct backend routing.
+ * 3. Implemented wrappers (POL-679) have canonical command targets.
+ * 4. The canonical WRAPPER_REGISTRY is complete and consistent.
+ * 5. Telemetry and guardrail helpers remain functional for audit.
+ * 6. Domain functions are called with the correct backend routing.
+ * 7. New canonical command functions return structured results.
  */
 
 function fixtureRoot(): string {
@@ -179,12 +187,12 @@ describe("wrapper registry", () => {
     expect(retired).toHaveLength(7);
   });
 
-  test("registry has 12 deferred wrappers", () => {
-    expect(deferred).toHaveLength(12);
+  test("registry has 3 deferred wrappers (POL-680 scope)", () => {
+    expect(deferred).toHaveLength(3);
   });
 
-  test("registry has 0 implemented wrappers (all migrated)", () => {
-    expect(implemented).toHaveLength(0);
+  test("registry has 9 implemented wrappers (POL-679)", () => {
+    expect(implemented).toHaveLength(9);
   });
 
   test("all retired wrappers have calyx targets", () => {
@@ -200,6 +208,50 @@ describe("wrapper registry", () => {
     }
   });
 
+  test("all implemented wrappers have calyx targets", () => {
+    for (const def of implemented) {
+      expect(def.target).toMatch(/^calyx /);
+    }
+  });
+
+  test("all implemented wrappers have P7A-4 phase", () => {
+    for (const def of implemented) {
+      expect(def.phase).toBe("P7A-4");
+    }
+  });
+
+  test("POL-679 target set is fully implemented", () => {
+    const expectedImplemented = [
+      "agents-toolkit-doctor",
+      "agents-tools-bump",
+      "agent-notify",
+      "docstore",
+      "agents-fleet-smoke",
+      "agents-bundle-build",
+      "agent-mail",
+      "execplan-new",
+      "agents-bootstrap"
+    ];
+
+    for (const name of expectedImplemented) {
+      const def = implemented.find((d) => d.wrapper === name);
+      expect(def, `expected "${name}" to be implemented`).toBeDefined();
+    }
+  });
+
+  test("POL-680 scope remains deferred", () => {
+    const expectedDeferred = [
+      "agents-fleet",
+      "agents-fleet-apply",
+      "agents-worktree-init"
+    ];
+
+    for (const name of expectedDeferred) {
+      const def = deferred.find((d) => d.wrapper === name);
+      expect(def, `expected "${name}" to remain deferred`).toBeDefined();
+    }
+  });
+
   test("no duplicate wrapper names", () => {
     const names = WRAPPER_REGISTRY.map((d) => d.wrapper);
     expect(new Set(names).size).toBe(names.length);
@@ -209,6 +261,105 @@ describe("wrapper registry", () => {
     for (const def of WRAPPER_REGISTRY) {
       expect(def.phase).toBeTruthy();
     }
+  });
+
+  test("total registry size is 19 (7 retired + 9 implemented + 3 deferred)", () => {
+    expect(WRAPPER_REGISTRY).toHaveLength(19);
+  });
+});
+
+// ── Implemented wrapper delegation (POL-679) ────────────────────────
+
+describe("implemented wrapper canonical command functions", () => {
+  test("execNotify returns structured result", async () => {
+    const result = await execNotify({
+      message: "test notification",
+      level: "info",
+      channel: "stdout"
+    });
+    expect(result.message).toBe("test notification");
+    expect(result.level).toBe("info");
+    expect(result.channel).toBe("stdout");
+    expect(result.delivered).toBe(true);
+    expect(result.timestamp).toBeTruthy();
+  });
+
+  test("execNotify defaults level and channel", async () => {
+    const result = await execNotify({ message: "minimal" });
+    expect(result.level).toBe("info");
+    expect(result.channel).toBe("stdout");
+  });
+
+  test("bumpToolVersion returns plan result for known tool", async () => {
+    const registryPath = path.join(fixtureRoot(), "tools/registry.valid.json");
+    const result = await bumpToolVersion(registryPath, {
+      tool: "cass",
+      to: "2.0.0"
+    });
+    expect(result.tool).toBe("cass");
+    expect(result.to).toBe("2.0.0");
+    expect(result.action).toBe("plan-bump");
+    expect(result.apply).toBe(false);
+    expect(result.from).toBeTruthy();
+  });
+
+  test("bumpToolVersion returns not-found for unknown tool", async () => {
+    const registryPath = path.join(fixtureRoot(), "tools/registry.valid.json");
+    const result = await bumpToolVersion(registryPath, {
+      tool: "nonexistent-tool",
+      to: "2.0.0"
+    });
+    expect(result.action).toBe("not-found");
+    expect(result.from).toBeUndefined();
+  });
+
+  test("createExecPlan returns plan result", async () => {
+    const result = await createExecPlan({
+      title: "Test ExecPlan",
+      issueId: "POL-999"
+    });
+    expect(result.id).toContain("execplan-pol-999");
+    expect(result.title).toBe("Test ExecPlan");
+    expect(result.action).toBe("plan-create");
+    expect(result.apply).toBe(false);
+  });
+
+  test("createExecPlan generates id from issueId", async () => {
+    const result = await createExecPlan({
+      title: "Another Plan",
+      issueId: "POL-123"
+    });
+    expect(result.id).toBe("execplan-pol-123");
+  });
+
+  test("runDoctor returns structured health report", async () => {
+    const result = await runDoctor();
+    expect(result.timestamp).toBeTruthy();
+    expect(Array.isArray(result.domains)).toBe(true);
+    expect(result.domains.length).toBeGreaterThan(0);
+    // Without configured paths, all domains should be unconfigured
+    for (const domain of result.domains) {
+      expect(domain.domain).toBeTruthy();
+      expect(["ok", "warning", "error", "unconfigured"]).toContain(domain.health);
+    }
+  });
+
+  test("installBootstrap returns plan result", async () => {
+    const result = await installBootstrap({ target: "/tmp/test-agents" });
+    expect(result.target).toBe("/tmp/test-agents");
+    expect(result.action).toBe("plan-bootstrap");
+    expect(result.apply).toBe(false);
+    expect(result.steps.length).toBeGreaterThan(0);
+  });
+
+  test("buildBundle returns plan result for valid package", async () => {
+    // Use the calyx-ext-hello example as a test target
+    const pkgPath = path.resolve(process.cwd(), "examples/calyx-ext-hello");
+    const result = await buildBundle({ path: pkgPath });
+    expect(result.name).toBeTruthy();
+    expect(result.version).toBeTruthy();
+    expect(result.action).toBe("plan-build");
+    expect(result.apply).toBe(false);
   });
 });
 
