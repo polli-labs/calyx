@@ -1,1 +1,1 @@
-export { runCli } from "./run-cli";
+export { buildProgram, runCli } from "./run-cli";

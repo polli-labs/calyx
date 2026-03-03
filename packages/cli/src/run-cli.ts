@@ -417,7 +417,11 @@ function hookDomainCommand(cmd: Command, domain: string): void {
   });
 }
 
-export async function runCli(argv = process.argv): Promise<void> {
+/**
+ * Build the Commander program with all domain commands and wrapper
+ * tombstones registered. Exported for test access to command ordering.
+ */
+export function buildProgram(): Command {
   const program = new Command();
   program.name("calyx").description("Calyx control plane CLI").version("0.1.0");
 
@@ -1220,37 +1224,6 @@ export async function runCli(argv = process.argv): Promise<void> {
       }
     });
 
-  // ── Retired wrapper tombstones ──────────────────────────────────────
-  // Wrappers retired in P9. Emit a clear "removed" message pointing to
-  // the canonical command, with exit code 6.
-
-  for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "retired")) {
-    program
-      .command(def.wrapper)
-      .description(`[retired] Removed in ${def.phase} — use: ${def.target}`)
-      .allowUnknownOption(true)
-      .action(() => {
-        const message = getRetiredWrapperMessage(def.wrapper);
-        throw createCliError(message, 6);
-      });
-  }
-
-  // ── Deferred wrapper tombstones ───────────────────────────────────
-  // Register placeholder commands for known-deferred wrappers so users
-  // get a clear "not yet implemented" message instead of commander's
-  // default "unknown command" error.
-
-  for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "deferred")) {
-    program
-      .command(def.wrapper)
-      .description(`[deferred] Not yet implemented — target: ${def.target}`)
-      .allowUnknownOption(true)
-      .action(() => {
-        const message = getDeferredWrapperMessage(def.wrapper);
-        throw createCliError(message, 5);
-      });
-  }
-
   // ── Extensions commands ────────────────────────────────────────────
 
   const extensions = new Command("extensions").description("Extension discovery, loading, and validation commands");
@@ -1419,6 +1392,38 @@ export async function runCli(argv = process.argv): Promise<void> {
   program.addCommand(knowledge);
   program.addCommand(exec);
   program.addCommand(extensions);
+
+  // ── Compatibility wrapper tombstones ────────────────────────────────
+  // Registered AFTER domain commands so help output shows canonical
+  // commands first. Wrappers remain discoverable but appear at the bottom.
+
+  for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "retired")) {
+    program
+      .command(def.wrapper)
+      .description(`[retired] Removed in ${def.phase} — use: ${def.target}`)
+      .allowUnknownOption(true)
+      .action(() => {
+        const message = getRetiredWrapperMessage(def.wrapper);
+        throw createCliError(message, 6);
+      });
+  }
+
+  for (const def of WRAPPER_REGISTRY.filter((d) => d.status === "deferred")) {
+    program
+      .command(def.wrapper)
+      .description(`[deferred] Not yet implemented — target: ${def.target}`)
+      .allowUnknownOption(true)
+      .action(() => {
+        const message = getDeferredWrapperMessage(def.wrapper);
+        throw createCliError(message, 5);
+      });
+  }
+
+  return program;
+}
+
+export async function runCli(argv = process.argv): Promise<void> {
+  const program = buildProgram();
 
   try {
     await program.parseAsync(argv);
