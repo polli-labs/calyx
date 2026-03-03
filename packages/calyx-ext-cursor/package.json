@@ -1,0 +1,41 @@
+{
+  "name": "calyx-ext-cursor",
+  "version": "0.1.0",
+  "description": "Harness-target extension for Cursor — environment hints and command diagnostics for Cursor-based agent workflows.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/calyx-ext-cursor"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "calyx": {
+    "apiVersion": "1",
+    "domains": [
+      "config",
+      "instructions",
+      "skills"
+    ]
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@polli-labs/calyx-sdk": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@polli-labs/calyx-core": "workspace:*",
+    "@polli-labs/calyx-sdk": "workspace:*"
+  }
+}

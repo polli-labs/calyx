@@ -336,6 +336,17 @@ The `calyx-ext-linear` package provides Linear issue-tracking context for agents
 
 Targets: `agents`, `exec`. Ships in `packages/calyx-ext-linear` within the monorepo. Non-destructive — never blocks commands.
 
+### calyx-ext-cursor
+
+The `calyx-ext-cursor` package is a harness-target extension for Cursor-based agent workflows. It provides:
+
+- **Environment detection** for Cursor-specific indicators (`CURSOR_SESSION_ID`, `CURSOR_WORKSPACE`)
+- **Command hints** for config, instructions, and skills commands with Cursor-specific guidance
+- **Failure diagnostics** with Cursor-aware troubleshooting suggestions
+- **Rules file awareness** for `.cursor/rules` and `.cursorrules` paths
+
+Targets: `config`, `instructions`, `skills`. Ships in `packages/calyx-ext-cursor` within the monorepo. Non-destructive — never blocks commands.
+
 ## Starter Template
 
 A copy-and-customize starter template is available at [`examples/extensions/starter/`](../examples/extensions/starter/). It includes:
@@ -363,8 +374,118 @@ npm run build
 CALYX_EXTENSIONS_PATH=$(dirname $(pwd)) calyx extensions list
 ```
 
-## Compatibility
+## Compatibility Policy
 
-- Extensions target a specific `apiVersion`. The current version is `"1"`.
-- The SDK follows semver. Non-breaking additions (new optional hook parameters, new domains) are minor bumps.
-- Breaking contract changes (removing hooks, changing required fields) are major bumps and will increment `apiVersion`.
+### API Version Matrix
+
+Extensions declare a `calyx.apiVersion` in their manifest. The loader enforces exact-match compatibility: an extension targeting apiVersion `"1"` will only load on SDK versions that report `CALYX_SDK_API_VERSION === "1"`.
+
+| API Version | SDK Versions | Status | Notes |
+|-------------|-------------|--------|-------|
+| `"1"` | `>=0.1.0` | **Current** | Stable contract. All shipped extensions target this version. |
+
+When a new API version is introduced, the previous version enters a **deprecation window** of at least one minor SDK release. During this window, the loader emits an `API_VERSION_DEPRECATED` warning (advisory) or error (strict mode). After the window closes, the old version produces `API_VERSION_MISMATCH` (always error).
+
+### Semver Expectations
+
+| Component | Versioning | Policy |
+|-----------|-----------|--------|
+| `@polli-labs/calyx-sdk` | Semver | Minor bumps for additive changes (new optional hook params, new domains). Major bumps for breaking changes; `apiVersion` increments. |
+| Extension packages | Semver | Authors should follow semver. SDK peer dep should use range (e.g., `>=0.1.0`). |
+| `calyx.apiVersion` | Integer string | Increments only on breaking SDK contract changes. Matches SDK major version where possible. |
+
+### Extension Package Semver Guidance
+
+- **Peer dependency range**: Use `"@polli-labs/calyx-sdk": ">=0.1.0"` (or the appropriate minimum for your target apiVersion). Avoid pinning to exact versions.
+- **Extension version**: Follow semver for your own package. Bump major when changing hook behavior in breaking ways.
+- **apiVersion in manifest**: Must exactly match the SDK's `CALYX_SDK_API_VERSION`. Do not use ranges.
+
+### Migration Path
+
+When `apiVersion` advances (e.g., `"1"` → `"2"`):
+
+1. The new SDK release supports both old and new apiVersions during the deprecation window.
+2. Extensions targeting the old version see `API_VERSION_DEPRECATED` diagnostics with migration guidance.
+3. Authors update their `calyx.apiVersion` and adapt to any contract changes.
+4. After the deprecation window, the old version is no longer supported (error on load).
+
+### Unsupported / Deprecated Behavior
+
+| Scenario | Diagnostic | Severity |
+|----------|-----------|----------|
+| Extension targets current apiVersion | None | — |
+| Extension targets deprecated apiVersion (within window) | `API_VERSION_DEPRECATED` | warning (advisory) / error (strict) |
+| Extension targets unsupported apiVersion | `API_VERSION_MISMATCH` | error (always) |
+| Extension has no `calyx.apiVersion` | `MISSING_API_VERSION` | error (always) |
+
+## Conflict Governance
+
+### Domain Conflicts
+
+A domain conflict occurs when multiple loaded extensions claim the same domain. The conflict governance mode determines how conflicts are handled:
+
+| Mode | Behavior | How to set |
+|------|----------|-----------|
+| **Advisory** (default) | Conflicts are reported as warnings. All conflicting extensions load and hooks run in alphabetical order. | Default behavior |
+| **Strict** | Conflicts are reported as errors. Extensions still load, but the error-severity diagnostic signals the operator to resolve the conflict before production use. | `--strict` flag or `strict: true` in discovery options |
+
+### Advisory Mode
+
+In advisory mode, domain conflicts produce `DOMAIN_CONFLICT` diagnostics with severity `warning`. All conflicting extensions remain loaded and their hooks execute in deterministic (alphabetical by name) order.
+
+This is appropriate for development environments where multiple extensions may legitimately overlap (e.g., a first-party extension and a user's custom override).
+
+### Strict Mode
+
+In strict mode, domain conflicts produce `DOMAIN_CONFLICT` diagnostics with severity `error`. The operator should resolve the conflict by:
+
+1. **Removing** one of the conflicting extensions from the search path.
+2. **Reconfiguring** extension domains so they don't overlap.
+3. **Using search path shadowing** — placing the preferred extension in a later search path so it shadows the other.
+
+### Conflict Resolution Strategies
+
+| Strategy | When to use |
+|----------|------------|
+| Remove conflicting extension | One extension is unnecessary |
+| Narrow domain list | Extension doesn't need all claimed domains |
+| Shadow via search path ordering | User extension should override a default |
+| Accept advisory warnings | Development/testing environments |
+
+### Deterministic Ordering
+
+All hooks run in **alphabetical order by extension name**, regardless of discovery order or search path order. This ensures reproducible behavior across environments. The only exception is search path shadowing, where later paths replace earlier paths (by directory name, not extension name).
+
+## Harness-Target Extensions
+
+Harness-target extensions adapt Calyx for specific agent harnesses (e.g., Cursor, Aider, Windsurf). They follow the naming pattern `calyx-ext-<harness>` and provide:
+
+- **Environment detection**: Check for harness-specific indicators on activation.
+- **Command hints**: Advisory diagnostics before domain commands with harness-specific guidance.
+- **Failure diagnostics**: Harness-aware troubleshooting suggestions after command failures.
+
+Harness-target extensions must be **non-destructive**: they should never block commands (always return `ok: true`). Their purpose is to augment operator awareness, not to gate execution.
+
+### Shipped Harness-Target Extensions
+
+| Extension | Domains | Harness | Purpose |
+|-----------|---------|---------|---------|
+| `calyx-ext-cursor` | config, instructions, skills | Cursor | Environment hints, rules-format awareness, Cursor-specific troubleshooting |
+
+### Building a Harness-Target Extension
+
+Use the starter template or an existing harness-target extension as a reference:
+
+```bash
+# Copy from starter
+cp -r examples/extensions/starter calyx-ext-myharness
+
+# Or adapt the cursor extension
+cp -r packages/calyx-ext-cursor calyx-ext-myharness
+```
+
+Key design principles:
+1. **Non-destructive**: Always return `ok: true` from all hooks.
+2. **Advisory diagnostics**: Use `messages` to surface hints, not to block.
+3. **Environment detection**: Check for harness-specific env vars or config files on activate.
+4. **Targeted domains**: Only claim domains where the harness has meaningful integration points.

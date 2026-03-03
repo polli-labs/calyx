@@ -146,6 +146,55 @@ describe("discoverExtensions", () => {
     expect(names[0]).toBe("calyx-ext-another");
     expect(names[1]).toBe("calyx-ext-valid");
   });
+
+  test("advisory mode produces warning-severity conflict diagnostics", async () => {
+    const result = await discoverExtensions({
+      searchPaths: [FIXTURES],
+      strict: false,
+    });
+    const conflictDiags = result.diagnostics.filter((d) => d.code === "DOMAIN_CONFLICT");
+    expect(conflictDiags.length).toBeGreaterThanOrEqual(1);
+    for (const d of conflictDiags) {
+      expect(d.severity).toBe("warning");
+      expect(d.message).toContain("advisory");
+      expect(d.message).toContain("--strict");
+    }
+  });
+
+  test("strict mode produces error-severity conflict diagnostics", async () => {
+    const result = await discoverExtensions({
+      searchPaths: [FIXTURES],
+      strict: true,
+    });
+    const conflictDiags = result.diagnostics.filter((d) => d.code === "DOMAIN_CONFLICT");
+    expect(conflictDiags.length).toBeGreaterThanOrEqual(1);
+    for (const d of conflictDiags) {
+      expect(d.severity).toBe("error");
+      expect(d.message).toContain("strict mode");
+      expect(d.message).toContain("Remove or reconfigure");
+    }
+  });
+
+  test("conflict diagnostics list all claiming extension names", async () => {
+    const result = await discoverExtensions({
+      searchPaths: [FIXTURES],
+    });
+    // Both valid-ext and another-valid-ext claim "skills"
+    const skillsConflict = result.diagnostics.find(
+      (d) => d.code === "DOMAIN_CONFLICT" && d.message.includes('"skills"')
+    );
+    expect(skillsConflict).toBeDefined();
+    expect(skillsConflict!.message).toContain("calyx-ext-another");
+    expect(skillsConflict!.message).toContain("calyx-ext-valid");
+  });
+
+  test("no conflicts reported for domains with single owner", async () => {
+    const result = await discoverExtensions({
+      searchPaths: [FIXTURES],
+    });
+    // "tools" is only claimed by another-valid-ext
+    expect(result.conflicts["tools"]).toBeUndefined();
+  });
 });
 
 // ── ExtensionRunner ─────────────────────────────────────────────────
