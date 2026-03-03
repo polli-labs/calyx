@@ -631,6 +631,168 @@ export interface ExecValidateResult extends DomainValidationResult {
   cancelled: number;
 }
 
+// ── Exec notify ─────────────────────────────────────────────────────
+
+export type ExecNotifyChannel = "stdout" | "ntfy" | "agent-mail";
+
+export interface ExecNotifyOptions {
+  message: string;
+  level?: "info" | "warn" | "error";
+  channel?: ExecNotifyChannel;
+  title?: string;
+}
+
+export interface ExecNotifyResult {
+  message: string;
+  level: "info" | "warn" | "error";
+  channel: ExecNotifyChannel;
+  title?: string;
+  timestamp: string;
+  delivered: boolean;
+}
+
+// ── Doctor (health check) ───────────────────────────────────────────
+
+export type DoctorDomainHealth = "ok" | "warning" | "error" | "unconfigured";
+
+export interface DoctorDomainStatus {
+  domain: string;
+  health: DoctorDomainHealth;
+  path?: string;
+  source?: string;
+  message?: string;
+}
+
+export interface DoctorOptions {
+  json?: boolean;
+}
+
+export interface DoctorResult {
+  ok: boolean;
+  timestamp: string;
+  domains: DoctorDomainStatus[];
+}
+
+// ── Verify fleet ────────────────────────────────────────────────────
+
+export interface VerifyFleetOptions {
+  strict?: boolean;
+}
+
+export interface VerifyFleetDomainResult {
+  domain: string;
+  ok: boolean;
+  errors: number;
+  warnings: number;
+  message?: string;
+}
+
+export interface VerifyFleetResult {
+  ok: boolean;
+  timestamp: string;
+  domains: VerifyFleetDomainResult[];
+}
+
+// ── Tools versions bump ─────────────────────────────────────────────
+
+export interface ToolVersionBumpOptions {
+  tool: string;
+  to: string;
+  apply?: boolean;
+}
+
+export interface ToolVersionBumpResult {
+  tool: string;
+  from: string | undefined;
+  to: string;
+  apply: boolean;
+  action: "plan-bump" | "bump" | "not-found";
+}
+
+// ── Bundle build ────────────────────────────────────────────────────
+
+export interface BundleBuildOptions {
+  path: string;
+  outDir?: string;
+  apply?: boolean;
+}
+
+export interface BundleBuildResult {
+  name: string;
+  version: string;
+  path: string;
+  outDir: string;
+  apply: boolean;
+  action: "plan-build" | "build";
+}
+
+// ── Install bootstrap ───────────────────────────────────────────────
+
+export interface InstallBootstrapOptions {
+  target?: string;
+  apply?: boolean;
+}
+
+export interface InstallBootstrapResult {
+  target: string;
+  apply: boolean;
+  action: "plan-bootstrap" | "bootstrap";
+  steps: string[];
+}
+
+// ── Knowledge execplan new ──────────────────────────────────────────
+
+export interface KnowledgeExecPlanNewOptions {
+  title: string;
+  issueId?: string;
+  outPath?: string;
+  apply?: boolean;
+}
+
+export interface KnowledgeExecPlanNewResult {
+  id: string;
+  title: string;
+  issueId?: string;
+  outPath?: string;
+  apply: boolean;
+  action: "plan-create" | "create";
+}
+
+// ── Knowledge docstore adapter ──────────────────────────────────────
+
+export type DocstoreAdapterVerb = "search" | "get" | "list";
+
+export interface DocstoreAdapterOptions {
+  verb: DocstoreAdapterVerb;
+  query?: string;
+  id?: string;
+}
+
+export interface DocstoreAdapterResult {
+  verb: DocstoreAdapterVerb;
+  delegated: boolean;
+  exitCode: number;
+  output: string;
+}
+
+// ── Agent-mail extension adapter ────────────────────────────────────
+
+export type AgentMailVerb = "status" | "send" | "inbox" | "read";
+
+export interface AgentMailAdapterOptions {
+  verb: AgentMailVerb;
+  projectKey?: string;
+  threadId?: string;
+  message?: string;
+}
+
+export interface AgentMailAdapterResult {
+  verb: AgentMailVerb;
+  delegated: boolean;
+  exitCode: number;
+  output: string;
+}
+
 // ── Production wiring: source resolution ────────────────────────────
 
 /** Domains that use a `--registry` path. */

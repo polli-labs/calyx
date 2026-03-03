@@ -2,16 +2,18 @@ export { compileFromFiles, checkSemanticParity, parseTomlToObject } from "./comp
 export { renderInstructionsFromFiles, verifyInstructionsFromFiles } from "./instructions";
 export { compareTomlSemantics } from "./parity";
 export { indexSkillsRegistry, syncSkillsRegistry, validateSkillsRegistry } from "./skills";
-export { indexToolsRegistry, syncToolsRegistry, validateToolsRegistry } from "./tools";
+export { indexToolsRegistry, syncToolsRegistry, validateToolsRegistry, bumpToolVersion } from "./tools";
 export { indexPromptsRegistry, syncPromptsRegistry, validatePromptsRegistry } from "./prompts";
 export { deployAgentsRegistry, indexAgentsRegistry, renderAgentProfiles, syncAgentsRegistry, validateAgentsRegistry } from "./agents";
 export {
   indexKnowledgeRegistry,
   searchKnowledgeRegistry,
   linkKnowledgeArtifact,
-  validateKnowledgeRegistry
+  validateKnowledgeRegistry,
+  createExecPlan,
+  docstoreAdapter
 } from "./knowledge";
-export { launchExecRun, getExecStatus, getExecLogs, getExecReceipt, validateExecStore } from "./exec";
+export { launchExecRun, getExecStatus, getExecLogs, getExecReceipt, validateExecStore, execNotify } from "./exec";
 export {
   discoverExtensions,
   loadExtension,
@@ -38,6 +40,11 @@ export {
   getDeferredWrapperMessage,
   getRetiredWrapperMessage
 } from "./wrappers";
+export { runDoctor } from "./doctor";
+export { verifyFleet } from "./verify-fleet";
+export { buildBundle } from "./bundle";
+export { installBootstrap } from "./install";
+export { agentMailAdapter } from "./agent-mail";
 export type {
   AgentDeployBackend,
   AgentHostBinding,
@@ -55,8 +62,13 @@ export type {
   AgentsSyncResult,
   AgentsValidateOptions,
   AgentsValidateResult,
+  AgentMailAdapterOptions,
+  AgentMailAdapterResult,
+  AgentMailVerb,
   ArrayMergePolicy,
   ArrayPolicyConfig,
+  BundleBuildOptions,
+  BundleBuildResult,
   CalyxConfig,
   CalyxConfigLoadResult,
   CodexInput,
@@ -64,12 +76,24 @@ export type {
   CompileOptions,
   CompileResult,
   ConfigShowResult,
+  DocstoreAdapterOptions,
+  DocstoreAdapterResult,
+  DocstoreAdapterVerb,
+  DoctorDomainHealth,
+  DoctorDomainStatus,
+  DoctorOptions,
+  DoctorResult,
   InstructionContext,
   InstructionContextValue,
   InstructionDrift,
+  ExecNotifyChannel,
+  ExecNotifyOptions,
+  ExecNotifyResult,
   FleetInput,
   HostInstructionRenderResult,
   HostInput,
+  InstallBootstrapOptions,
+  InstallBootstrapResult,
   InstructionsFleetInput,
   InstructionsHostInput,
   InstructionsRenderInputFiles,
@@ -82,6 +106,8 @@ export type {
   DomainValidationResult,
   KnowledgeArtifactEntry,
   KnowledgeArtifactKind,
+  KnowledgeExecPlanNewOptions,
+  KnowledgeExecPlanNewResult,
   KnowledgeIndexOptions,
   KnowledgeIndexResult,
   KnowledgeLinkOptions,
@@ -123,7 +149,12 @@ export type {
   ToolsSyncResult,
   ToolsValidateOptions,
   ToolsValidateResult,
+  ToolVersionBumpOptions,
+  ToolVersionBumpResult,
   ValidationMode,
+  VerifyFleetDomainResult,
+  VerifyFleetOptions,
+  VerifyFleetResult,
   WrapperDefinition,
   WrapperDeprecationPhase,
   WrapperGuardrailResult,

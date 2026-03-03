@@ -2,6 +2,121 @@
 
 Complete command reference for the `calyx` CLI. All commands support `--json` for machine-readable output.
 
+## Doctor
+
+Health check across all configured Calyx domains.
+
+### `calyx doctor`
+
+Check domain health: resolves source paths for all registry and store domains, reporting ok/warning/error/unconfigured status.
+
+```bash
+calyx doctor [--json]
+```
+
+**Options:**
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — All domains healthy
+- `1` — One or more domain errors
+
+**Example:**
+```bash
+calyx doctor
+calyx doctor --json
+```
+
+---
+
+## Verify Commands
+
+Fleet-wide validation across all domains.
+
+### `calyx verify fleet`
+
+Run validators across all 6 domain registries/stores, surfacing errors and warnings per domain.
+
+```bash
+calyx verify fleet [--strict] [--json]
+```
+
+**Options:**
+- `--strict` — Escalate warnings to errors
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — All domains pass
+- `3` — One or more domain validation failures
+
+**Example:**
+```bash
+calyx verify fleet
+calyx verify fleet --strict --json
+```
+
+---
+
+## Bundle Commands
+
+Extension bundle build.
+
+### `calyx bundle build`
+
+Build an extension bundle from a package directory.
+
+```bash
+calyx bundle build --path <path> [--out-dir <dir>] [--apply] [--json]
+```
+
+**Options:**
+- `--path <path>` (required) — Path to extension package directory
+- `--out-dir <dir>` — Output directory for the built bundle (default: `dist`)
+- `--apply` — Execute the build (default: plan-only)
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success (plan or build applied)
+- `1` — Build error (missing package.json, invalid manifest)
+
+**Example:**
+```bash
+calyx bundle build --path packages/calyx-ext-cursor
+calyx bundle build --path packages/calyx-ext-cursor --apply
+```
+
+---
+
+## Install Commands
+
+Agent installation and bootstrapping.
+
+### `calyx install bootstrap`
+
+Bootstrap the `~/.agents` directory structure (run/, skills/, docstore/, logs/).
+
+```bash
+calyx install bootstrap [--target <path>] [--apply] [--json]
+```
+
+**Options:**
+- `--target <path>` — Target directory (default: `~/.agents`)
+- `--apply` — Create directories (default: plan-only)
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success (plan or bootstrap applied)
+- `1` — Filesystem error
+
+**Example:**
+```bash
+calyx install bootstrap
+calyx install bootstrap --apply
+calyx install bootstrap --target /opt/agents --apply
+```
+
+---
+
 ## Config Commands
 
 Fleet/host YAML compilation to Codex TOML.
@@ -245,6 +360,31 @@ calyx tools validate --registry <path> [--strict] [--json]
 - `1` — Registry read/parse error
 - `3` — Validation failed
 
+### `calyx tools versions bump`
+
+Bump the version of a named tool in the tools registry.
+
+```bash
+calyx tools versions bump --registry <path> --tool <name> --to <version> [--apply] [--json]
+```
+
+**Options:**
+- `--registry <path>` (required) — Path to tools registry JSON
+- `--tool <name>` (required) — Tool name to bump
+- `--to <version>` (required) — Target version string
+- `--apply` — Write the bumped version (default: plan-only)
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success (plan-bump, bump, or not-found)
+- `1` — Registry read/parse/validation error
+
+**Example:**
+```bash
+calyx tools versions bump --registry tools.json --tool cass --to v0.2.0
+calyx tools versions bump --registry tools.json --tool cass --to v0.2.0 --apply
+```
+
 ---
 
 ## Prompts Commands
@@ -471,6 +611,58 @@ calyx knowledge link --registry <path> --artifact <id> --issue <id> [--apply] [-
 - `0` — Success (plan-link, link, or already-linked)
 - `1` — Artifact not found or registry error
 
+### `calyx knowledge execplan new`
+
+Scaffold a new ExecPlan markdown document with frontmatter and standard sections.
+
+```bash
+calyx knowledge execplan new --title <title> [--issue <id>] [--out <path>] [--apply] [--json]
+```
+
+**Options:**
+- `--title <title>` (required) — ExecPlan title
+- `--issue <id>` — Linked Linear issue ID
+- `--out <path>` — Output file path (default: derived from title)
+- `--apply` — Write the ExecPlan file (default: plan-only)
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success (plan-create or create)
+- `1` — Filesystem error
+
+**Example:**
+```bash
+calyx knowledge execplan new --title "Port wrapper surfaces"
+calyx knowledge execplan new --title "Port wrapper surfaces" --issue POL-679 --apply
+```
+
+### `calyx knowledge docstore`
+
+Delegate search, get, or list operations to the docstore CLI adapter.
+
+```bash
+calyx knowledge docstore <verb> [--query <query>] [--id <id>] [--json]
+```
+
+**Verbs:** `search`, `get`, `list`
+
+**Options:**
+- `--query <query>` — Search query (for `search` verb)
+- `--id <id>` — Artifact ID (for `get` verb)
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Docstore delegation error
+- `2` — Invalid verb
+
+**Example:**
+```bash
+calyx knowledge docstore search --query "POL-679"
+calyx knowledge docstore get --id ep-2026-0301-wrapper-port
+calyx knowledge docstore list
+```
+
 ### `calyx knowledge validate`
 
 Validate knowledge registry structure and artifact contracts.
@@ -569,6 +761,31 @@ calyx exec receipt --store <path> --run-id <id> [--json]
 - `0` — Success
 - `1` — Store error or run not found
 
+### `calyx exec notify`
+
+Emit a structured notification event to stdout, ntfy, or agent-mail.
+
+```bash
+calyx exec notify --message <message> [--level <level>] [--channel <channel>] [--title <title>] [--json]
+```
+
+**Options:**
+- `--message <message>` (required) — Notification message text
+- `--level <level>` — Severity level: `info`, `warn`, or `error` (default: `info`)
+- `--channel <channel>` — Delivery channel: `stdout`, `ntfy`, or `agent-mail` (default: `stdout`)
+- `--title <title>` — Optional notification title
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Notification delivered
+- `2` — Invalid `--level` or `--channel` value
+
+**Example:**
+```bash
+calyx exec notify --message "Build complete" --level info
+calyx exec notify --message "Tests failed" --level error --channel ntfy --title "CI Alert"
+```
+
 ### `calyx exec validate`
 
 Validate exec run store structure and lifecycle constraints.
@@ -658,6 +875,48 @@ calyx extensions check --path <path> [options]
 **Exit codes:**
 - `0` — Extension is valid
 - `3` — Extension check failed
+
+### `calyx extensions agent-mail-status`
+
+Check agent-mail service status via the agent-mail CLI adapter.
+
+```bash
+calyx extensions agent-mail-status [--project-key <key>] [--json]
+```
+
+### `calyx extensions agent-mail-send`
+
+Send a message via agent-mail.
+
+```bash
+calyx extensions agent-mail-send --message <message> [--project-key <key>] [--thread-id <id>] [--json]
+```
+
+### `calyx extensions agent-mail-inbox`
+
+List inbox messages from agent-mail.
+
+```bash
+calyx extensions agent-mail-inbox [--project-key <key>] [--json]
+```
+
+### `calyx extensions agent-mail-read`
+
+Read a specific agent-mail thread.
+
+```bash
+calyx extensions agent-mail-read --thread-id <id> [--project-key <key>] [--json]
+```
+
+**Common options (all agent-mail commands):**
+- `--project-key <key>` — Agent-mail project key
+- `--thread-id <id>` — Thread ID (for send, read)
+- `--message <message>` — Message body (for send)
+- `--json` — Print machine-readable JSON summary
+
+**Exit codes:**
+- `0` — Success
+- `1` — Agent-mail CLI delegation error
 
 ---
 

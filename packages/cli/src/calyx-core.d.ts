@@ -667,4 +667,177 @@ declare module "@polli-labs/calyx-core" {
     afterCommand(domain: string, command: string, exitCode: number): Promise<ExtensionHookRunResult>;
     deactivate(): Promise<ExtensionHookRunResult>;
   }
+
+  // ── POL-679: new canonical command types and functions ──────────────
+
+  // Exec notify
+  export type ExecNotifyChannel = "stdout" | "ntfy" | "agent-mail";
+
+  export interface ExecNotifyOptions {
+    message: string;
+    level?: "info" | "warn" | "error";
+    channel?: ExecNotifyChannel;
+    title?: string;
+  }
+
+  export interface ExecNotifyResult {
+    message: string;
+    level: "info" | "warn" | "error";
+    channel: ExecNotifyChannel;
+    title?: string;
+    timestamp: string;
+    delivered: boolean;
+  }
+
+  export function execNotify(options: ExecNotifyOptions): Promise<ExecNotifyResult>;
+
+  // Doctor
+  export type DoctorDomainHealth = "ok" | "warning" | "error" | "unconfigured";
+
+  export interface DoctorDomainStatus {
+    domain: string;
+    health: DoctorDomainHealth;
+    path?: string;
+    source?: string;
+    message?: string;
+  }
+
+  export interface DoctorOptions {
+    json?: boolean;
+  }
+
+  export interface DoctorResult {
+    ok: boolean;
+    timestamp: string;
+    domains: DoctorDomainStatus[];
+  }
+
+  export function runDoctor(options?: DoctorOptions): Promise<DoctorResult>;
+
+  // Verify fleet
+  export interface VerifyFleetOptions {
+    strict?: boolean;
+  }
+
+  export interface VerifyFleetDomainResult {
+    domain: string;
+    ok: boolean;
+    errors: number;
+    warnings: number;
+    message?: string;
+  }
+
+  export interface VerifyFleetResult {
+    ok: boolean;
+    timestamp: string;
+    domains: VerifyFleetDomainResult[];
+  }
+
+  export function verifyFleet(options?: VerifyFleetOptions): Promise<VerifyFleetResult>;
+
+  // Tools versions bump
+  export interface ToolVersionBumpOptions {
+    tool: string;
+    to: string;
+    apply?: boolean;
+  }
+
+  export interface ToolVersionBumpResult {
+    tool: string;
+    from: string | undefined;
+    to: string;
+    apply: boolean;
+    action: "plan-bump" | "bump" | "not-found";
+  }
+
+  export function bumpToolVersion(registryPath: string, options: ToolVersionBumpOptions): Promise<ToolVersionBumpResult>;
+
+  // Bundle build
+  export interface BundleBuildOptions {
+    path: string;
+    outDir?: string;
+    apply?: boolean;
+  }
+
+  export interface BundleBuildResult {
+    name: string;
+    version: string;
+    path: string;
+    outDir: string;
+    apply: boolean;
+    action: "plan-build" | "build";
+  }
+
+  export function buildBundle(options: BundleBuildOptions): Promise<BundleBuildResult>;
+
+  // Install bootstrap
+  export interface InstallBootstrapOptions {
+    target?: string;
+    apply?: boolean;
+  }
+
+  export interface InstallBootstrapResult {
+    target: string;
+    apply: boolean;
+    action: "plan-bootstrap" | "bootstrap";
+    steps: string[];
+  }
+
+  export function installBootstrap(options?: InstallBootstrapOptions): Promise<InstallBootstrapResult>;
+
+  // Knowledge execplan new
+  export interface KnowledgeExecPlanNewOptions {
+    title: string;
+    issueId?: string;
+    outPath?: string;
+    apply?: boolean;
+  }
+
+  export interface KnowledgeExecPlanNewResult {
+    id: string;
+    title: string;
+    issueId?: string;
+    outPath?: string;
+    apply: boolean;
+    action: "plan-create" | "create";
+  }
+
+  export function createExecPlan(options: KnowledgeExecPlanNewOptions): Promise<KnowledgeExecPlanNewResult>;
+
+  // Docstore adapter
+  export type DocstoreAdapterVerb = "search" | "get" | "list";
+
+  export interface DocstoreAdapterOptions {
+    verb: DocstoreAdapterVerb;
+    query?: string;
+    id?: string;
+  }
+
+  export interface DocstoreAdapterResult {
+    verb: DocstoreAdapterVerb;
+    delegated: boolean;
+    exitCode: number;
+    output: string;
+  }
+
+  export function docstoreAdapter(options: DocstoreAdapterOptions): Promise<DocstoreAdapterResult>;
+
+  // Agent-mail adapter
+  export type AgentMailVerb = "status" | "send" | "inbox" | "read";
+
+  export interface AgentMailAdapterOptions {
+    verb: AgentMailVerb;
+    projectKey?: string;
+    threadId?: string;
+    message?: string;
+  }
+
+  export interface AgentMailAdapterResult {
+    verb: AgentMailVerb;
+    delegated: boolean;
+    exitCode: number;
+    output: string;
+  }
+
+  export function agentMailAdapter(options: AgentMailAdapterOptions): Promise<AgentMailAdapterResult>;
 }

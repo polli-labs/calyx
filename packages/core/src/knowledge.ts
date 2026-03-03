@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
   DomainValidationIssue,
@@ -10,7 +11,11 @@ import type {
   KnowledgeSearchOptions,
   KnowledgeSearchResult,
   KnowledgeValidateOptions,
-  KnowledgeValidateResult
+  KnowledgeValidateResult,
+  KnowledgeExecPlanNewOptions,
+  KnowledgeExecPlanNewResult,
+  DocstoreAdapterOptions,
+  DocstoreAdapterResult
 } from "./types";
 
 const artifactKindSchema = z.enum(["execplan", "transcript", "report", "runbook", "reference"]);
@@ -238,4 +243,112 @@ export async function linkKnowledgeArtifact(
     apply,
     action: alreadyLinked ? "already-linked" : apply ? "link" : "plan-link"
   };
+}
+
+// ── ExecPlan new ────────────────────────────────────────────────────
+
+/**
+ * Create a new ExecPlan scaffold.
+ *
+ * In plan mode (default), returns the planned artifact without side
+ * effects. In apply mode, writes the scaffold to the output path.
+ */
+export async function createExecPlan(
+  options: KnowledgeExecPlanNewOptions
+): Promise<KnowledgeExecPlanNewResult> {
+  const id = `execplan-${options.issueId?.toLowerCase() ?? randomUUID().slice(0, 8)}`;
+  const apply = Boolean(options.apply);
+
+  if (apply && options.outPath) {
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    await mkdir(dirname(options.outPath), { recursive: true });
+
+    const scaffold = [
+      `# ExecPlan ${id}`,
+      "",
+      `## Title`,
+      options.title,
+      "",
+      `## Goal`,
+      "(describe goal)",
+      "",
+      `## Scope`,
+      "In scope:",
+      "- ",
+      "",
+      "Out of scope:",
+      "- ",
+      "",
+      `## Execution Plan`,
+      "1. ",
+      "",
+      `## Acceptance Criteria`,
+      "- ",
+      "",
+      `## Done / Next / Blocked`,
+      "Done:",
+      "- ",
+      "",
+      "Next:",
+      "- ",
+      "",
+      "Blocked:",
+      "- None",
+      ""
+    ].join("\n");
+    await writeFile(options.outPath, scaffold);
+  }
+
+  return {
+    id,
+    title: options.title,
+    ...(options.issueId ? { issueId: options.issueId } : {}),
+    ...(options.outPath ? { outPath: options.outPath } : {}),
+    apply,
+    action: apply ? "create" : "plan-create"
+  };
+}
+
+// ── Docstore adapter ────────────────────────────────────────────────
+
+/**
+ * Adapter for docstore CLI operations.
+ *
+ * Delegates to the `docstore` CLI via child_process when available,
+ * returning structured results. Falls back to a descriptive error
+ * if the docstore binary is not found.
+ */
+export async function docstoreAdapter(
+  options: DocstoreAdapterOptions
+): Promise<DocstoreAdapterResult> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  const args: string[] = [options.verb];
+  if (options.query) args.push(options.query);
+  if (options.id) args.push(options.id);
+
+  try {
+    const { stdout } = await execFileAsync("docstore", args, {
+      timeout: 30000,
+      maxBuffer: 1024 * 1024
+    });
+    return {
+      verb: options.verb,
+      delegated: true,
+      exitCode: 0,
+      output: stdout.trim()
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const exitCode = (err as { code?: number }).code ?? 1;
+    return {
+      verb: options.verb,
+      delegated: false,
+      exitCode: typeof exitCode === "number" ? exitCode : 1,
+      output: `Docstore delegation failed: ${message}`
+    };
+  }
 }

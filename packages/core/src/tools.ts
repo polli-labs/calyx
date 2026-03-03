@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import type {
   DomainSyncAction,
@@ -9,7 +9,9 @@ import type {
   ToolsSyncOptions,
   ToolsSyncResult,
   ToolsValidateOptions,
-  ToolsValidateResult
+  ToolsValidateResult,
+  ToolVersionBumpOptions,
+  ToolVersionBumpResult
 } from "./types";
 
 const VERSION_PATTERN = /^v?\d+\.\d+\.\d+(?:[-+].+)?$/;
@@ -160,5 +162,52 @@ export async function syncToolsRegistry(registryPath: string, options: ToolsSync
     apply,
     version: indexed.version,
     actions: buildSyncActions(indexed.items, apply, target)
+  };
+}
+
+// ── Tools versions bump ─────────────────────────────────────────────
+
+/**
+ * Bump the version of a named tool in the registry.
+ *
+ * In plan mode (default), returns what would change without modifying
+ * the registry file. In apply mode, writes the updated version back.
+ */
+export async function bumpToolVersion(
+  registryPath: string,
+  options: ToolVersionBumpOptions
+): Promise<ToolVersionBumpResult> {
+  const indexed = await indexToolsRegistry(registryPath);
+  const tool = indexed.items.find((t) => t.name === options.tool);
+
+  if (!tool) {
+    return {
+      tool: options.tool,
+      from: undefined,
+      to: options.to,
+      apply: Boolean(options.apply),
+      action: "not-found"
+    };
+  }
+
+  const apply = Boolean(options.apply);
+  const from = tool.version;
+
+  if (apply) {
+    const raw = await readFile(registryPath, "utf8");
+    const registry = JSON.parse(raw) as ToolsRegistry;
+    const entry = registry.tools.find((t) => t.name === options.tool);
+    if (entry) {
+      entry.version = options.to;
+    }
+    await writeFile(registryPath, JSON.stringify(registry, null, 2) + "\n");
+  }
+
+  return {
+    tool: options.tool,
+    from,
+    to: options.to,
+    apply,
+    action: apply ? "bump" : "plan-bump"
   };
 }
