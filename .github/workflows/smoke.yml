@@ -1,16 +1,14 @@
 name: smoke
 
+# Disabled on public mirror — smoke runs on calyx-dev (private).
+# Re-enable if external contributors start submitting PRs.
+# See: polli-labs/calyx-dev/.github/workflows/smoke.yml
 on:
-  pull_request:
+  workflow_dispatch:  # manual trigger only, for emergencies
 
 jobs:
   smoke:
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,25 +18,4 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-
-      # Top-level help
       - run: node packages/cli/dist/bin.js --help
-
-      # Domain command groups
-      - run: node packages/cli/dist/bin.js config --help
-      - run: node packages/cli/dist/bin.js instructions --help
-      - run: node packages/cli/dist/bin.js skills --help
-      - run: node packages/cli/dist/bin.js tools --help
-      - run: node packages/cli/dist/bin.js prompts --help
-      - run: node packages/cli/dist/bin.js agents --help
-      - run: node packages/cli/dist/bin.js knowledge --help
-      - run: node packages/cli/dist/bin.js exec --help
-
-      # Compatibility wrappers
-      - run: node packages/cli/dist/bin.js skills-sync --help
-      - run: node packages/cli/dist/bin.js skills-sync-claude --help
-      - run: node packages/cli/dist/bin.js skills-sync-codex --help
-      - run: node packages/cli/dist/bin.js prompts-sync-claude --help
-      - run: node packages/cli/dist/bin.js prompts-sync-codex --help
-      - run: node packages/cli/dist/bin.js agents-render --help
-      - run: node packages/cli/dist/bin.js exec-launch --help

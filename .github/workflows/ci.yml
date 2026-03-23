@@ -1,10 +1,10 @@
 name: ci
 
+# Disabled on public mirror — CI runs on calyx-dev (private).
+# Re-enable if external contributors start submitting PRs.
+# See: polli-labs/calyx-dev/.github/workflows/ci.yml
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:  # manual trigger only, for emergencies
 
 jobs:
   verify:
