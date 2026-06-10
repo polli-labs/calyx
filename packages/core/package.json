@@ -24,7 +24,7 @@
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "@polli-labs/calyx-sdk": "workspace:*",
-    "yaml": "^2.7.0",
+    "yaml": "^2.9.0",
     "zod": "^3.24.2"
   }
 }
