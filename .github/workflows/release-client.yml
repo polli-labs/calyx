@@ -51,7 +51,7 @@ jobs:
           test "$(node -p "require('./packages/client/package.json').version")" = "$EXPECTED_VERSION"
           test "$(node -p "require('./packages/client/package.json').repository.url")" = "https://github.com/polli-labs/calyx"
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22.14.0
           registry-url: "https://registry.npmjs.org"
