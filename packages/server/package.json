@@ -1,0 +1,33 @@
+{
+  "name": "@polli-labs/calyx-server",
+  "version": "0.2.0",
+  "description": "Authenticated HTTP server for Calyx run orchestration.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/server"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@polli-labs/calyx-core": "workspace:*",
+    "@polli-labs/calyx-runner": "workspace:*",
+    "@polli-labs/calyx-run-service": "workspace:*",
+    "zod": "^3.24.2",
+    "zod-to-json-schema": "^3.25.2"
+  }
+}

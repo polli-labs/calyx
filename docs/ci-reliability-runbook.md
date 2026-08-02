@@ -10,7 +10,9 @@ All CI verification runs through a single command:
 pnpm verify
 ```
 
-This executes, in order: `lint → typecheck → test → build`. Both `ci.yml` and `release.yml` call `pnpm verify`. The `smoke.yml` workflow is separate and validates CLI surface availability across platforms.
+This executes, in order: `build → lint → typecheck → test → client:package-check → contract:check`, and prints a per-phase wall-time summary. `build` runs first and exactly once so that every later phase reads a workspace closure derived from the pnpm dependency graph rather than residual `dist/`. `ci.yml`, `release.yml`, and `release-client.yml` all call `pnpm verify`; `ci.yml` runs on every pull request and every push to `main`. The `smoke.yml` workflow is separate and validates CLI surface availability across platforms.
+
+`pnpm verify:cold` runs the same gate after deleting every `packages/*/dist`. It must produce the same result as `pnpm verify`.
 
 ## Failure taxonomy
 
@@ -48,6 +50,17 @@ This executes, in order: `lint → typecheck → test → build`. Both `ci.yml` 
 
 **Action:** This is an external dependency. Follow the outage override protocol below.
 
+### 4. Warm-tree divergence
+
+**Definition:** The gate passes locally and fails in CI because the local tree carries build output that a runner checkout does not. This is a *product* failure wearing an infrastructure costume, and it is the only failure class where "passes locally, red in CI" is expected rather than suspicious.
+
+**Detection cues:**
+- CI fails with `Cannot find module '@polli-labs/…'` or unresolved imports of a workspace package's built exports, while the same commit is green in a worktree you have already built in.
+- The failing phase is `typecheck` or `test`, and the named module belongs to a `packages/*` entry that publishes only from `dist/`.
+- `pnpm verify:cold` reproduces the CI failure locally.
+
+**Action:** Fix the build graph, not the phase order of the moment — a package consumed by a later phase must be produced by the single `build` phase that precedes it. Never add a bespoke prerequisite build to the consuming script; that is what re-creates the divergence. Confirm with `pnpm verify:cold`.
+
 ## Operator decision tree
 
 ```
@@ -55,7 +68,9 @@ CI check failed
 │
 ├─ Can you reproduce locally with `pnpm verify`?
 │  ├─ YES → Product failure. Fix the code.
-│  └─ NO  → Infrastructure or billing issue. Continue ↓
+│  └─ NO  → Try `pnpm verify:cold`.
+│           ├─ REPRODUCES → Warm-tree divergence. Fix the build graph.
+│           └─ STILL GREEN → Infrastructure or billing issue. Continue ↓
 │
 ├─ Is GitHub Actions reporting an incident or is this a known billing limit?
 │  ├─ BILLING → Outage override protocol (see below).
@@ -101,7 +116,7 @@ When CI checks cannot run due to billing or org-level infrastructure issues, mer
 | Failure class | Local `pnpm verify` | CI status | Merge allowed? |
 |---|---|---|---|
 | Product | FAIL | RED | No |
-| Product | PASS | RED | No — investigate discrepancy |
+| Product | PASS | RED | No — run `pnpm verify:cold`; a warm-tree divergence is a product failure |
 | Infra/transient | PASS | RED | Re-run; merge after green |
 | Billing/outage | PASS | BLOCKED | Yes, with override protocol |
 | All clear | PASS | GREEN | Yes |
@@ -116,5 +131,5 @@ If a merge under override is later found to have introduced a regression:
 
 ## Related documents
 
-- [RC Checklist](rc-checklist.md) — release candidate process and promotion paths
 - [README](../README.md) — local verification instructions
+- [Contributing](../CONTRIBUTING.md) — repository green gate and review posture

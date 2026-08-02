@@ -1,6 +1,6 @@
 # Getting Started with Calyx
 
-Calyx is a unified, contract-first CLI for managing agent infrastructure — config compilation, instruction rendering, skill/tool/prompt registries, agent deployment, knowledge linking, and execution lifecycle. It replaces fragmented operational scripts with typed domain commands, consistent exit codes, and machine-readable output.
+Calyx is a unified, contract-first CLI for managing agent infrastructure — config compilation, local runtime-config convergence, instruction rendering, skill/tool/prompt registries, agent deployment, knowledge linking, operator-facing run orchestration, and lower-level exec-store utilities. It replaces fragmented operational scripts with typed domain commands, consistent exit codes, and machine-readable output.
 
 This guide walks you through installing Calyx, running your first commands, and finding the right reference docs for your use case.
 
@@ -43,7 +43,7 @@ After any install method, confirm Calyx is callable:
 calyx --help
 ```
 
-Expected: the top-level help listing all 8 domain command groups and global flags. If you see a command-not-found error, ensure `node_modules/.bin` (npx) or your global npm bin directory is on your `PATH`.
+Expected: the top-level help listing the canonical command groups, including `run`, and global flags. If you see a command-not-found error, ensure `node_modules/.bin` (npx) or your global npm bin directory is on your `PATH`.
 
 ## First commands
 
@@ -53,7 +53,10 @@ Calyx commands follow a consistent pattern:
 calyx <domain> <verb> [options]
 ```
 
-The 8 domains are: `config`, `instructions`, `skills`, `tools`, `prompts`, `agents`, `knowledge`, `exec`. Every command supports `--json` for machine-readable output.
+The 8 hookable extension domains are: `config`, `instructions`, `skills`,
+`tools`, `prompts`, `agents`, `knowledge`, `exec`. First-party operator
+surfaces like `run` and `runtime-config` sit above those domain backends.
+Data-bearing commands expose `--json` where their help documents it.
 
 ### Explore a domain
 
@@ -93,7 +96,7 @@ calyx skills index --registry fixtures/domains/skills/registry.valid.json --json
 
 ### Try another domain
 
-All five registry domains (`skills`, `tools`, `prompts`, `agents`, `knowledge`) share the same `index` / `validate` verbs. Try tools:
+Skills, tools, prompts, and knowledge share the same `index` / `validate` verbs. Agents use the POL-1799 definition registry verbs `list` / `show` / `validate`. Try tools:
 
 ```bash
 calyx tools index --registry fixtures/domains/tools/registry.valid.json
@@ -102,25 +105,32 @@ calyx tools validate --registry fixtures/domains/tools/registry.valid.json --str
 
 ## Command surface map
 
-Calyx has 25 canonical subcommands across 8 domains. Here's where to start for common tasks:
+Calyx has canonical command groups for extension domains, run orchestration, and operator utilities. Here's where to start for common tasks:
 
 | I want to… | Domain | Command | Docs |
 |------------|--------|---------|------|
 | Compile fleet config to TOML | `config` | `calyx config compile` | [CLI Reference](cli-reference.md) |
+| Converge local Codex config, Claude settings, and Claude MCP root config from managed truth | `runtime-config` | `calyx runtime-config plan\|apply\|verify` | [CLI Reference](cli-reference.md) |
+| Inspect named instruction surfaces | `instructions` | `calyx instructions list\|show\|targets` | [CLI Reference](cli-reference.md) |
 | Render agent instructions | `instructions` | `calyx instructions render` | [CLI Reference](cli-reference.md) |
 | Verify instruction parity | `instructions` | `calyx instructions verify` | [CLI Reference](cli-reference.md) |
 | List/sync/validate skills | `skills` | `calyx skills index\|sync\|validate` | [CLI Reference](cli-reference.md) |
 | List/sync/validate tools | `tools` | `calyx tools index\|sync\|validate` | [CLI Reference](cli-reference.md) |
-| List/sync/validate prompts | `prompts` | `calyx prompts index\|sync\|validate` | [CLI Reference](cli-reference.md) |
-| Manage agents | `agents` | `calyx agents index\|deploy\|sync\|validate` | [CLI Reference](cli-reference.md) |
+| List/render/sync/validate prompts | `prompts` | `calyx prompts index\|render\|sync\|validate` | [CLI Reference](cli-reference.md) |
+| Manage agents | `agents` | `calyx agents list\|show\|validate` | [CLI Reference](cli-reference.md) |
 | Search/link knowledge | `knowledge` | `calyx knowledge search\|link\|validate` | [CLI Reference](cli-reference.md) |
-| Launch/track executions | `exec` | `calyx exec launch\|status\|logs\|receipt` | [CLI Reference](cli-reference.md) |
+| Launch and track orchestrated runs | `run` | `calyx run launch\|status\|await\|receipt\|logs` | [CLI Reference](cli-reference.md) |
+| Commission reviewer runs | `review` | `calyx review --repo <slug> (--pr <n>\|--branch <ref>)` | [CLI Reference](cli-reference.md) |
+| Inspect low-level exec JSON stores | `exec` | `calyx exec launch\|status\|logs\|receipt` | [CLI Reference](cli-reference.md) |
 
-For the full command reference with all options, exit codes, and examples, see [docs/cli-reference.md](cli-reference.md).
+For the hand-authored detailed reference, see
+[docs/cli-reference.md](cli-reference.md). Runtime help remains authoritative
+for the exact installed command shape.
 
 ## Exit codes
 
-All commands use consistent exit codes:
+These codes are common across the first workflow; command-specific help and
+the interface record define any additional meanings:
 
 | Code | Meaning |
 |------|---------|
@@ -129,13 +139,21 @@ All commands use consistent exit codes:
 | `2` | Invalid CLI arguments |
 | `3` | Domain validation failure |
 
-## Coming from legacy scripts?
+## Retired command names
 
-Legacy `dev/run/*` shell scripts have been fully replaced by canonical `calyx <domain> <verb>` commands. Compatibility wrappers were retired in P9 (2026-03-02). If you encounter scripts still referencing legacy entrypoints, replace them with the canonical Calyx command — see the [Migration Guide](migration-guide.md) for the command mapping.
+Retired wrapper names fail with an actionable canonical replacement. If an old
+automation invokes one, follow that error and update the caller; migration
+history remains available in Git.
 
 ## Building extensions
 
 Calyx has a hook-based extension model. Extensions are npm packages that depend on `@polli-labs/calyx-sdk` and can intercept domain command lifecycle events (activate, beforeCommand, afterCommand, deactivate).
+
+Treat them as optional overlays, not default owners of domain semantics:
+
+- Calyx core owns the canonical lifecycle and command contracts.
+- Extensions are best suited for advisory diagnostics, harness-specific augmentation, or small environment-aware integrations.
+- Shared Polli workflow/source truth still lives outside the extension layer unless a package explicitly implements that behavior.
 
 A minimal extension:
 
@@ -163,7 +181,7 @@ export default extension;
 Key extension concepts:
 
 - **Naming:** `calyx-ext-<name>` (first-party) or `@user/calyx-ext-<name>` (community).
-- **Manifest:** Declared in `package.json` under a `calyx` key with `apiVersion` and target `domains`.
+- **Manifest:** Declared in `package.json` under a `calyx` key with `apiVersion` and target hookable `domains`.
 - **Validation:** Use `validateManifest()` from `@polli-labs/calyx-sdk` to check your manifest.
 
 For the full SDK reference, lifecycle docs, and a working example, see [Extension SDK](extension-sdk.md) and the [`calyx-ext-hello`](../examples/calyx-ext-hello) sample.
@@ -198,7 +216,7 @@ This means the input is structurally valid but fails domain-specific validation 
 
 - `calyx --help` — Top-level command listing
 - `calyx <domain> --help` — Domain-specific help
-- [CLI Reference](cli-reference.md) — Exhaustive command documentation
+- [CLI Reference](cli-reference.md) — Hand-authored detailed command reference
 - [Operator Runbook](operator-runbook.md) — Daily operations guide with verification checklists
 
 ## Documentation index
@@ -206,8 +224,6 @@ This means the input is structurally valid but fails domain-specific validation 
 | Document | Best for |
 |----------|----------|
 | **[This guide](onboarding.md)** | First-time setup and orientation |
-| [CLI Reference](cli-reference.md) | Complete command options and examples |
+| [CLI Reference](cli-reference.md) | Detailed command contracts currently maintained by hand |
 | [Operator Runbook](operator-runbook.md) | Daily operational workflows and verification |
-| [Migration Guide](migration-guide.md) | Transitioning from legacy scripts |
 | [Extension SDK](extension-sdk.md) | Building Calyx extensions |
-| [Skills Subsumption Catalogue](skills-subsumption-catalogue.md) | What Calyx replaces, retains, or defers |

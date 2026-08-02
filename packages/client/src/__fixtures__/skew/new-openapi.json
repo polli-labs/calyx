@@ -1,0 +1,266 @@
+{
+  "openapi": "3.0.3",
+  "x-calyx-bearer-token-contract": {
+    "encoding": "ascii",
+    "max_bytes": 4096,
+    "pattern": "^[\\x21-\\x2B\\x2D-\\x7E]+$"
+  },
+  "x-calyx-request-target-max-bytes": 8000,
+  "info": {
+    "title": "Calyx client skew fixture (new)",
+    "version": "1.0.1"
+  },
+  "paths": {
+    "/v1/fixture": {
+      "get": {
+        "operationId": "fixture.echo",
+        "summary": "Echo the skew fixture.",
+        "tags": [
+          "consumer_v1"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "known",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "shared"
+              ],
+              "x-calyx-enum-mode": "closed",
+              "x-calyx-enum-closure": "wire-shape-discriminator"
+            }
+          },
+          {
+            "name": "new_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "numeric_literal",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "enum": [
+                1
+              ]
+            }
+          },
+          {
+            "name": "boolean_literal",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fixture success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/calyx_fixture_response_v1"
+                }
+              }
+            },
+            "headers": {
+              "X-Calyx-Request-Id": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^[\\x21-\\x2B\\x2D-\\x7E](?:[\\x20-\\x2B\\x2D-\\x7E]*[\\x21-\\x2B\\x2D-\\x7E])?$"
+                }
+              }
+            },
+            "x-calyx-semantics": {
+              "mutation": "read",
+              "async": {
+                "kind": "synchronous",
+                "background": false,
+                "waitable": false,
+                "resumable": false,
+                "cancellable": false
+              },
+              "receipt": "none"
+            },
+            "x-calyx-effects": {
+              "local_files": "none",
+              "local_state": "read",
+              "remote_tracker": "none",
+              "remote_provider": "none",
+              "process_launch": false,
+              "creates_worktree": false,
+              "dispatches_run": false,
+              "dry_run_default": false
+            },
+            "x-calyx-max-bytes": 1048576
+          }
+        },
+        "x-calyx-capability": "fixture.echo",
+        "x-calyx-domain": "fixture",
+        "x-calyx-effects": {
+          "kind": "uniform",
+          "effects": {
+            "local_files": "none",
+            "local_state": "read",
+            "remote_tracker": "none",
+            "remote_provider": "none",
+            "process_launch": false,
+            "creates_worktree": false,
+            "dispatches_run": false,
+            "dry_run_default": false
+          }
+        },
+        "x-calyx-profile": "consumer_v1",
+        "x-calyx-store-regime": "sqlite_authoritative",
+        "x-calyx-client-surfaces": [
+          "consumer",
+          "admin"
+        ],
+        "x-calyx-request-schema": "calyx.fixture-query/v1",
+        "x-calyx-response-schema": "calyx.fixture-response/v1",
+        "x-calyx-request-transport": {
+          "body": "none"
+        },
+        "x-calyx-success-contracts": [
+          {
+            "status": 200,
+            "representation": "json",
+            "schema": "calyx.fixture-response/v1",
+            "media_type": "application/json",
+            "max_bytes": 1048576,
+            "semantics": {
+              "mutation": "read",
+              "async": {
+                "kind": "synchronous",
+                "background": false,
+                "waitable": false,
+                "resumable": false,
+                "cancellable": false
+              },
+              "receipt": "none"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "calyx_fixture_query_v1": {
+        "type": "object",
+        "properties": {
+          "known": {
+            "type": "string",
+            "enum": [
+              "shared"
+            ],
+            "x-calyx-enum-mode": "closed",
+            "x-calyx-enum-closure": "wire-shape-discriminator"
+          },
+          "new_filter": {
+            "type": "string"
+          },
+          "numeric_literal": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "enum": [
+              1
+            ]
+          },
+          "boolean_literal": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "additionalProperties": false,
+        "x-calyx-unknown-field-policy": "ignore",
+        "x-calyx-schema-id": "calyx.fixture-query/v1",
+        "x-calyx-schema-role": "request"
+      },
+      "calyx_fixture_response_v1": {
+        "type": "object",
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "enum": [
+              "calyx.fixture-response/v1"
+            ],
+            "x-calyx-enum-mode": "closed",
+            "x-calyx-enum-closure": "schema-major-discriminator"
+          },
+          "value": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "count": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "paused"
+            ],
+            "x-calyx-enum-mode": "open",
+            "x-calyx-known-values": [
+              "ready",
+              "paused"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "value",
+          "items",
+          "count",
+          "state"
+        ],
+        "additionalProperties": true,
+        "x-calyx-dictionary-mode": "explicit-json-metadata",
+        "x-calyx-dictionary-name": "rolling response extensions",
+        "x-calyx-pagination-contract": {
+          "items_field": "items",
+          "count_field": "count",
+          "count_equals": "items.length"
+        },
+        "x-calyx-schema-id": "calyx.fixture-response/v1",
+        "x-calyx-schema-role": "response"
+      }
+    }
+  }
+}

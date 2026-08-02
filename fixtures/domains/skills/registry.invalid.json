@@ -26,6 +26,15 @@
         "repo": "https://github.com/badlogic/pi-skills",
         "path": "browser-tools/SKILL.md"
       }
+    },
+    {
+      "id": "retired-without-date",
+      "status": "retired",
+      "source": {
+        "type": "external",
+        "repo": "https://github.com/example/retired",
+        "path": "retired/SKILL.md"
+      }
     }
   ]
 }

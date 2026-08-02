@@ -1,0 +1,29 @@
+version: 1
+kind: task
+id: multi-target-task
+name: Multi Target Task
+status: active
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=6;BYMINUTE=0"
+    timezone: America/New_York
+runtime:
+  backend: codex_app
+  agent: codex
+  model: gpt-5.4
+  reasoning_effort: low
+  execution_environment: local
+  workspace:
+    mode: existing
+    cwd: /Users/carbon/dev/calyx/dev
+prompt:
+  body: |
+    Exercise target selection.
+install:
+  targets:
+    - host: carbon
+      backend: codex_app
+      status: active
+    - host: blade
+      backend: codex_app
+      status: paused

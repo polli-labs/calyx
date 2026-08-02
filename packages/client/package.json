@@ -1,0 +1,51 @@
+{
+  "name": "@polli-labs/calyx-client",
+  "version": "0.2.0",
+  "description": "Capability-separated generated client for the Calyx control plane.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/client"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./consumer": {
+      "import": "./dist/consumer.js",
+      "types": "./dist/consumer.d.ts"
+    },
+    "./admin": {
+      "import": "./dist/admin.js",
+      "types": "./dist/admin.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/consumer.ts src/admin.ts --format esm --dts --target node22 --tsconfig tsconfig.json --clean",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "eventsource-parser": "3.1.0"
+  },
+  "calyx": {
+    "release": {
+      "channel": "gated",
+      "workflow": ".github/workflows/release-client.yml",
+      "reason": "Publishing the privileged admin transport is a separately reviewed act, bound to an exact SHA and an exact version through a protected environment. The tag release derives its publish plan from the runtime closure, and this marker is how it knows to route the client to that workflow instead of publishing it."
+    },
+    "testResolution": {
+      "mode": "artifact",
+      "reason": "This is the one package the suite consumes through its built exports: packages/cli imports @polli-labs/calyx-client/admin, and client:package-check validates that exact published artifact. A vitest source alias would make the suite pass against code that never ships, so the gate builds this package before it tests."
+    }
+  }
+}

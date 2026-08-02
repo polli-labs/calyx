@@ -1,0 +1,49 @@
+version: 1
+kind: task
+id: linnaeus-public-parity
+name: Linnaeus Public Parity
+status: paused
+owner: polli-labs
+description: Paused POL-995 private/public parity evidence loop.
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=8;BYMINUTE=40"
+    timezone: America/New_York
+    misfire_policy: run_latest_once
+runtime:
+  backend: codex_app
+  agent: codex
+  model: gpt-5.4
+  reasoning_effort: high
+  execution_environment: local
+  workspace:
+    mode: existing
+    cwds:
+      - /Users/carbon/dev/linnaeus/dev
+      - /Users/carbon/dev/linnaeus/public/linnaeus
+prompt:
+  body: |
+    Own the bounded weekly Linnaeus private/public parity evidence loop.
+  skills:
+    - linnaeus-dev
+    - polli-dev-conventions
+    - linear-ops
+state:
+  control: calyx://tasks/linnaeus-public-parity/state.json
+  outputs:
+    - https://linear.app/polli-labs/issue/POL-995
+safety:
+  max_concurrency: 1
+  timeout_minutes: 45
+  stale_lock_minutes: 180
+  unattended_writes: local-candidate-and-linear-only
+  destructive_actions: forbidden
+  requires_activity_quiet_window: true
+install:
+  targets:
+    - host: carbon
+      backend: codex_app
+      status: paused
+      metadata:
+        issue: POL-995
+      note: Do not install or resume until every declared semantic is enforced.

@@ -1,4 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import type {
   DomainSyncAction,
@@ -13,6 +16,13 @@ import type {
   ToolVersionBumpOptions,
   ToolVersionBumpResult
 } from "./types";
+import {
+  expandHomePath,
+  pathExists,
+  readHostsTruth,
+  resolveAgentsInfraRoot,
+  resolveCurrentHostAlias
+} from "./agents-infra";
 
 const VERSION_PATTERN = /^v?\d+\.\d+\.\d+(?:[-+].+)?$/;
 
@@ -30,6 +40,21 @@ const toolsRegistrySchema = z
     tools: z.array(toolRegistryEntrySchema)
   })
   .passthrough();
+
+interface ResolvedToolTarget {
+  alias: string;
+  configPath: string;
+}
+
+interface PreparedToolConfigMutation {
+  targetPath: string;
+  stagedDir: string;
+  stagedPath: string;
+  backupPath: string;
+  hadExistingTarget: boolean;
+  movedExistingTarget: boolean;
+  wroteNewFile: boolean;
+}
 
 function toIssue(code: string, message: string, path?: string): DomainValidationIssue {
   return {
@@ -136,12 +161,16 @@ export async function indexToolsRegistry(registryPath: string): Promise<ToolsInd
   };
 }
 
-function resolveSyncTarget(options: ToolsSyncOptions): string {
+async function resolveSyncTarget(options: ToolsSyncOptions, agentsInfraRoot?: string): Promise<string> {
   if (options.host) {
     return `host:${options.host}`;
   }
 
-  return options.all ? "all-hosts" : "all-hosts";
+  if (options.all) {
+    return "all-hosts";
+  }
+
+  return `host:${await resolveCurrentHostAlias(undefined, agentsInfraRoot)}`;
 }
 
 function buildSyncActions(tools: ToolRegistryEntry[], apply: boolean, target: string): DomainSyncAction[] {
@@ -152,10 +181,200 @@ function buildSyncActions(tools: ToolRegistryEntry[], apply: boolean, target: st
   }));
 }
 
+function renderAgentToolsConfig(version: string, tools: ToolRegistryEntry[]): string {
+  const renderedTools: Record<string, Record<string, unknown>> = {};
+  for (const tool of tools) {
+    const { name, ...rest } = tool;
+    renderedTools[name] = rest;
+  }
+
+  return `${JSON.stringify({ version, tools: renderedTools }, null, 2)}\n`;
+}
+
+function toolConfigPathForHome(homePath: string): string {
+  return path.join(path.resolve(expandHomePath(homePath)), ".config", "polli", "agent-tools.json");
+}
+
+async function readTextIfExists(filePath: string): Promise<string | undefined> {
+  if (!(await pathExists(filePath))) {
+    return undefined;
+  }
+  return readFile(filePath, "utf8");
+}
+
+async function stageToolConfigWrite(targetPath: string, content: string): Promise<PreparedToolConfigMutation> {
+  const parentDir = path.dirname(targetPath);
+  await mkdir(parentDir, { recursive: true });
+
+  const stagedDir = await mkdtemp(path.join(parentDir, ".calyx-tool-stage-"));
+  const stagedPath = path.join(stagedDir, path.basename(targetPath));
+  try {
+    await writeFile(stagedPath, content, "utf8");
+    return {
+      targetPath,
+      stagedDir,
+      stagedPath,
+      backupPath: path.join(parentDir, `.calyx-tool-backup-${randomUUID()}.json`),
+      hadExistingTarget: await pathExists(targetPath),
+      movedExistingTarget: false,
+      wroteNewFile: false
+    };
+  } catch (error) {
+    if (await pathExists(stagedDir)) {
+      await rm(stagedDir, { recursive: true, force: true });
+    }
+    throw error;
+  }
+}
+
+async function cleanupPreparedToolMutations(preparedMutations: PreparedToolConfigMutation[]): Promise<void> {
+  for (const preparedMutation of preparedMutations) {
+    if (await pathExists(preparedMutation.stagedDir)) {
+      await rm(preparedMutation.stagedDir, { recursive: true, force: true });
+    }
+    if (preparedMutation.movedExistingTarget && (await pathExists(preparedMutation.backupPath))) {
+      await rm(preparedMutation.backupPath, { force: true });
+    }
+  }
+}
+
+async function commitPreparedToolMutations(preparedMutations: PreparedToolConfigMutation[]): Promise<void> {
+  const committedMutations: PreparedToolConfigMutation[] = [];
+
+  try {
+    for (const preparedMutation of preparedMutations) {
+      if (preparedMutation.hadExistingTarget) {
+        await rename(preparedMutation.targetPath, preparedMutation.backupPath);
+        preparedMutation.movedExistingTarget = true;
+      }
+
+      try {
+        await rename(preparedMutation.stagedPath, preparedMutation.targetPath);
+        preparedMutation.wroteNewFile = true;
+        committedMutations.push(preparedMutation);
+      } catch (error) {
+        if (
+          preparedMutation.movedExistingTarget &&
+          !(await pathExists(preparedMutation.targetPath)) &&
+          (await pathExists(preparedMutation.backupPath))
+        ) {
+          await rename(preparedMutation.backupPath, preparedMutation.targetPath).catch(() => undefined);
+          preparedMutation.movedExistingTarget = false;
+        }
+        throw error;
+      }
+    }
+
+    for (const preparedMutation of preparedMutations) {
+      if (preparedMutation.movedExistingTarget && (await pathExists(preparedMutation.backupPath))) {
+        await rm(preparedMutation.backupPath, { force: true });
+        preparedMutation.movedExistingTarget = false;
+      }
+    }
+  } catch (error) {
+    for (const committedMutation of committedMutations.reverse()) {
+      if (committedMutation.wroteNewFile && (await pathExists(committedMutation.targetPath))) {
+        await rm(committedMutation.targetPath, { force: true });
+        committedMutation.wroteNewFile = false;
+      }
+      if (committedMutation.movedExistingTarget && (await pathExists(committedMutation.backupPath))) {
+        await rename(committedMutation.backupPath, committedMutation.targetPath).catch(() => undefined);
+        committedMutation.movedExistingTarget = false;
+      }
+    }
+    throw error;
+  } finally {
+    for (const preparedMutation of preparedMutations) {
+      if (await pathExists(preparedMutation.stagedDir)) {
+        await rm(preparedMutation.stagedDir, { recursive: true, force: true });
+      }
+      if (preparedMutation.movedExistingTarget && (await pathExists(preparedMutation.backupPath))) {
+        await rm(preparedMutation.backupPath, { force: true });
+      }
+    }
+  }
+}
+
+async function resolveToolTargets(
+  options: ToolsSyncOptions,
+  agentsInfraRoot?: string
+): Promise<ResolvedToolTarget[]> {
+  const currentAlias = await resolveCurrentHostAlias(undefined, agentsInfraRoot);
+  const currentHome = path.resolve(homedir());
+
+  const resolveHomeForAlias = async (alias: string): Promise<string> => {
+    const hostsTruth = agentsInfraRoot ? await readHostsTruth(agentsInfraRoot) : {};
+    const configuredHome = hostsTruth.hosts?.[alias]?.home;
+    if (configuredHome && configuredHome.trim().length > 0) {
+      return path.resolve(expandHomePath(configuredHome));
+    }
+    if (alias === currentAlias) {
+      return currentHome;
+    }
+    throw new Error(`Unable to resolve home for tools sync target "${alias}".`);
+  };
+
+  if (options.host) {
+    return [
+      {
+        alias: options.host,
+        configPath: toolConfigPathForHome(await resolveHomeForAlias(options.host))
+      }
+    ];
+  }
+
+  if (options.all) {
+    const hostsTruth = agentsInfraRoot ? await readHostsTruth(agentsInfraRoot) : {};
+    const aliases = Object.keys(hostsTruth.hosts ?? {}).sort();
+    if (aliases.length === 0) {
+      throw new Error("Unable to resolve any hosts for tools sync --all; hosts truth is missing or empty.");
+    }
+
+    const resolvedTargets: ResolvedToolTarget[] = [];
+    for (const alias of aliases) {
+      resolvedTargets.push({
+        alias,
+        configPath: toolConfigPathForHome(await resolveHomeForAlias(alias))
+      });
+    }
+    return resolvedTargets;
+  }
+
+  return [
+    {
+      alias: currentAlias,
+      configPath: toolConfigPathForHome(currentHome)
+    }
+  ];
+}
+
 export async function syncToolsRegistry(registryPath: string, options: ToolsSyncOptions = {}): Promise<ToolsSyncResult> {
   const apply = Boolean(options.apply);
   const indexed = await indexToolsRegistry(registryPath);
-  const target = resolveSyncTarget(options);
+  const agentsInfraRoot = await resolveAgentsInfraRoot({ registryPath });
+  const target = await resolveSyncTarget(options, agentsInfraRoot);
+
+  if (apply) {
+    const desiredContent = renderAgentToolsConfig(indexed.version, indexed.items);
+    const preparedMutations: PreparedToolConfigMutation[] = [];
+    try {
+      for (const resolvedTarget of await resolveToolTargets(options, agentsInfraRoot)) {
+        const existingContent = await readTextIfExists(resolvedTarget.configPath);
+        if (existingContent === desiredContent) {
+          continue;
+        }
+
+        preparedMutations.push(await stageToolConfigWrite(resolvedTarget.configPath, desiredContent));
+      }
+    } catch (error) {
+      await cleanupPreparedToolMutations(preparedMutations);
+      throw error;
+    }
+
+    if (preparedMutations.length > 0) {
+      await commitPreparedToolMutations(preparedMutations);
+    }
+  }
 
   return {
     target,

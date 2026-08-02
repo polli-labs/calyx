@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "state": "succeeded",
+  "run_spec": {
+    "host": "blade",
+    "backend": "claude",
+    "prompt": "Implement the feature.",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {
+      "ref": "origin/main",
+      "steal_lock": false
+    }
+  },
+  "timing": {
+    "created_at": "2026-03-01T10:00:00.000Z",
+    "dispatched_at": "2026-03-01T10:00:01.000Z",
+    "started_at": "2026-03-01T10:00:02.000Z",
+    "completed_at": "2026-03-01T10:05:00.000Z",
+    "duration_ms": 300000,
+    "dispatch_duration_ms": 1000,
+    "backend_duration_ms": 297000
+  },
+  "exit": {
+    "exit_code": 0,
+    "failure_class": "success",
+    "failure_source": "exit_code"
+  },
+  "artifacts": {
+    "run_id": "550e8400-e29b-41d4-a716-446655440000",
+    "finalized_at": "2026-03-01T10:05:00.000Z",
+    "required": [
+      {
+        "name": "receipt.json",
+        "location": "run_dir",
+        "path": "/home/agent/.agents/logs/calyx-runner/550e8400-e29b-41d4-a716-446655440000/receipt.json",
+        "size_bytes": 2048,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "required": true,
+        "detected_at": "2026-03-01T10:04:59.000Z"
+      }
+    ],
+    "discovered": [],
+    "gate_passed": true,
+    "missing": []
+  },
+  "log_summary": {
+    "total": 42,
+    "info": 38,
+    "warn": 3,
+    "error": 1
+  },
+  "environment": {
+    "host": "blade",
+    "backend": "claude",
+    "worktree_path": "/home/agent/projects/2026-W10/calyx/pol-700",
+    "branch": "pol-700-runner-scaffold",
+    "node_version": "22.14.0",
+    "calyx_version": "0.1.1"
+  },
+  "notifications": {
+    "ntfy_sent": true,
+    "agent_mail_sent": false
+  },
+  "summary": "Run completed successfully: 42 log entries, 0 missing artifacts."
+}

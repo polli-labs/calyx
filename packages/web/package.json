@@ -1,6 +1,6 @@
 {
   "name": "@polli-labs/calyx-web",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Web companion surface for Calyx.",
   "repository": {
     "type": "git",
@@ -16,9 +16,20 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@polli-labs/calyx-core": "workspace:*"
+  },
+  "calyx": {
+    "release": {
+      "channel": "tagged",
+      "reason": "An entry point a consumer installs by name. The tag release publishes this package and everything in its runtime closure; nothing else needs to be listed anywhere."
+    }
   }
 }

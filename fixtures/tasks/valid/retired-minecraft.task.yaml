@@ -1,0 +1,27 @@
+version: 1
+kind: task
+id: minecraft-compatibility-watch
+name: Minecraft Compatibility Watch
+status: retired
+description: Historical Codex automation retained as a migration fixture.
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
+    timezone: America/New_York
+runtime:
+  backend: codex_app
+  agent: codex
+  model: gpt-5.4
+  reasoning_effort: medium
+  execution_environment: sandbox
+  workspace:
+    mode: existing
+    cwd: /Users/carbon/dev/minecraft
+prompt:
+  body: |
+    Check mod compatibility status and archive if no longer needed.
+install:
+  targets:
+    - host: mba
+      backend: codex_app
+      status: retired

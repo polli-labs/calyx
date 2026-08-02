@@ -1,0 +1,34 @@
+version: 1
+kind: task
+id: time-after-proof
+name: Time After Proof
+status: active
+description: Predicate-backed proof task for POL-1730 scheduler evaluation.
+triggers:
+  - type: schedule
+    predicate:
+      schema_version: predicate/v1
+      kind: time.after
+      at: "2000-01-01T00:00:00.000Z"
+runtime:
+  backend: codex_app
+  agent: codex
+  model: gpt-5.4
+  reasoning_effort: medium
+  execution_environment: local
+  workspace:
+    mode: existing
+    cwd: /tmp
+prompt:
+  body: |
+    Record that the POL-1730 time.after proof task fired.
+safety:
+  max_concurrency: 1
+  timeout_minutes: 5
+  unattended_writes: advisory-first
+  destructive_actions: forbidden
+install:
+  targets:
+    - host: blade
+      backend: codex_app
+      status: paused

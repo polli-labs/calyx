@@ -1,9 +1,21 @@
 import path from "node:path";
-import { writeFile, mkdir, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
-import { resolveSourcePath, requireSourcePath, loadCalyxConfig, showConfig, ENV_VARS, CONFIG_ENV_VAR } from "../resolve";
+import {
+  resolveSourcePath,
+  requireSourcePath,
+  loadCalyxConfig,
+  showConfig,
+  ENV_VARS,
+  CONFIG_ENV_VAR,
+  SOURCE_MODE_ENV_VAR,
+  POLLI_ROOT_ENV_VAR,
+  DOCSTORE_ROOT_ENV_VAR,
+  ADAPTER_CACHE_ENV_VAR
+} from "../resolve";
+import { AGENTS_INFRA_ROOT_ENV_VAR } from "../agents-infra";
 
 function tempDir(): string {
   return path.join(tmpdir(), `calyx-test-${randomUUID()}`);
@@ -164,6 +176,8 @@ describe("requireSourcePath", () => {
       originals[envVar] = process.env[envVar];
       delete process.env[envVar];
     }
+    const sourceModeOriginal = process.env[SOURCE_MODE_ENV_VAR];
+    process.env[SOURCE_MODE_ENV_VAR] = "explicit";
 
     try {
       await expect(
@@ -177,6 +191,11 @@ describe("requireSourcePath", () => {
           process.env[envVar] = original;
         }
       }
+      if (sourceModeOriginal === undefined) {
+        delete process.env[SOURCE_MODE_ENV_VAR];
+      } else {
+        process.env[SOURCE_MODE_ENV_VAR] = sourceModeOriginal;
+      }
     }
   });
 
@@ -186,6 +205,8 @@ describe("requireSourcePath", () => {
       originals[envVar] = process.env[envVar];
       delete process.env[envVar];
     }
+    const sourceModeOriginal = process.env[SOURCE_MODE_ENV_VAR];
+    process.env[SOURCE_MODE_ENV_VAR] = "explicit";
 
     try {
       await expect(
@@ -199,6 +220,223 @@ describe("requireSourcePath", () => {
           process.env[envVar] = original;
         }
       }
+      if (sourceModeOriginal === undefined) {
+        delete process.env[SOURCE_MODE_ENV_VAR];
+      } else {
+        process.env[SOURCE_MODE_ENV_VAR] = sourceModeOriginal;
+      }
+    }
+  });
+
+  test("adapter mode names the unset variable instead of guessing a Polli root", async () => {
+    // A hardcoded default here is a machine-shaped literal read on whichever
+    // host runs the process: on mac it can never exist, and on the host it was
+    // written for it survived the repo it named. Either way the operator was
+    // told a stranger's file was missing, not that nothing was configured.
+    const originals = {
+      sourceMode: process.env[SOURCE_MODE_ENV_VAR],
+      polliRoot: process.env[POLLI_ROOT_ENV_VAR],
+      skills: process.env[ENV_VARS.skills],
+      configPath: process.env[CONFIG_ENV_VAR]
+    };
+
+    delete process.env[ENV_VARS.skills];
+    delete process.env[CONFIG_ENV_VAR];
+    delete process.env[POLLI_ROOT_ENV_VAR];
+    process.env[SOURCE_MODE_ENV_VAR] = "adapter";
+
+    try {
+      const failure = await requireSourcePath("skills", { configPath: "/nonexistent/config.json" }).catch(
+        (error: unknown) => (error instanceof Error ? error.message : String(error))
+      );
+      expect(failure).toContain(POLLI_ROOT_ENV_VAR);
+      expect(failure).not.toContain("/repo/polli");
+    } finally {
+      if (originals.sourceMode === undefined) delete process.env[SOURCE_MODE_ENV_VAR];
+      else process.env[SOURCE_MODE_ENV_VAR] = originals.sourceMode;
+      if (originals.polliRoot === undefined) delete process.env[POLLI_ROOT_ENV_VAR];
+      else process.env[POLLI_ROOT_ENV_VAR] = originals.polliRoot;
+      if (originals.skills === undefined) delete process.env[ENV_VARS.skills];
+      else process.env[ENV_VARS.skills] = originals.skills;
+      if (originals.configPath === undefined) delete process.env[CONFIG_ENV_VAR];
+      else process.env[CONFIG_ENV_VAR] = originals.configPath;
+    }
+  });
+
+  test("falls back to polli adapter for skills when explicit sources are missing", async () => {
+    const dir = tempDir();
+    const polliRoot = path.join(dir, "polli");
+    const skillsPath = path.join(polliRoot, "docs/org-kb/agents/skills/SOURCES.json");
+
+    await mkdir(path.dirname(skillsPath), { recursive: true });
+    await writeFile(skillsPath, JSON.stringify({ version: "1", skills: [] }));
+
+    const originals = {
+      sourceMode: process.env[SOURCE_MODE_ENV_VAR],
+      polliRoot: process.env[POLLI_ROOT_ENV_VAR],
+      skills: process.env[ENV_VARS.skills],
+      configPath: process.env[CONFIG_ENV_VAR]
+    };
+
+    delete process.env[ENV_VARS.skills];
+    delete process.env[CONFIG_ENV_VAR];
+    process.env[SOURCE_MODE_ENV_VAR] = "adapter";
+    process.env[POLLI_ROOT_ENV_VAR] = polliRoot;
+
+    try {
+      const resolved = await requireSourcePath("skills", { configPath: "/nonexistent/config.json" });
+      expect(resolved).toBe(skillsPath);
+    } finally {
+      if (originals.sourceMode === undefined) delete process.env[SOURCE_MODE_ENV_VAR];
+      else process.env[SOURCE_MODE_ENV_VAR] = originals.sourceMode;
+      if (originals.polliRoot === undefined) delete process.env[POLLI_ROOT_ENV_VAR];
+      else process.env[POLLI_ROOT_ENV_VAR] = originals.polliRoot;
+      if (originals.skills === undefined) delete process.env[ENV_VARS.skills];
+      else process.env[ENV_VARS.skills] = originals.skills;
+      if (originals.configPath === undefined) delete process.env[CONFIG_ENV_VAR];
+      else process.env[CONFIG_ENV_VAR] = originals.configPath;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves agents registry from agents-infra in adapter mode", async () => {
+    const dir = tempDir();
+    const polliRoot = path.join(dir, "polli");
+    const agentsInfraRoot = path.join(dir, "agents-infra");
+    const cacheRoot = path.join(dir, "cache");
+    const agentsRegistryPath = path.join(agentsInfraRoot, "instructions/agents/AGENTS.json");
+
+    await mkdir(path.join(agentsInfraRoot, "instructions/agents"), { recursive: true });
+    await mkdir(path.join(agentsInfraRoot, "instructions/skills"), { recursive: true });
+    await mkdir(path.join(agentsInfraRoot, "instructions/templates"), { recursive: true });
+    await mkdir(path.join(agentsInfraRoot, "fleet/truths"), { recursive: true });
+    await writeFile(path.join(agentsInfraRoot, "instructions/skills/SOURCES.json"), "{}\n", "utf8");
+    await writeFile(path.join(agentsInfraRoot, "instructions/templates/REGISTRY.json"), "{}\n", "utf8");
+    await writeFile(path.join(agentsInfraRoot, "fleet/truths/hosts.yaml"), "hosts: {}\n", "utf8");
+    await writeFile(agentsRegistryPath, JSON.stringify({
+      version: "1",
+      agents: [
+        {
+          id: "fixture-reviewer",
+          path: "fixture-reviewer/agent.yaml",
+          status: "active",
+          description: "Fixture reviewer used by POL-1799 launch tests."
+        }
+      ]
+    }, null, 2), "utf8");
+
+    const originals = {
+      sourceMode: process.env[SOURCE_MODE_ENV_VAR],
+      polliRoot: process.env[POLLI_ROOT_ENV_VAR],
+      agentsInfraRoot: process.env[AGENTS_INFRA_ROOT_ENV_VAR],
+      cacheRoot: process.env[ADAPTER_CACHE_ENV_VAR],
+      agents: process.env[ENV_VARS.agents],
+      configPath: process.env[CONFIG_ENV_VAR]
+    };
+
+    delete process.env[ENV_VARS.agents];
+    delete process.env[CONFIG_ENV_VAR];
+    process.env[SOURCE_MODE_ENV_VAR] = "adapter";
+    process.env[POLLI_ROOT_ENV_VAR] = polliRoot;
+    process.env[AGENTS_INFRA_ROOT_ENV_VAR] = agentsInfraRoot;
+    process.env[ADAPTER_CACHE_ENV_VAR] = cacheRoot;
+
+    try {
+      const resolved = await requireSourcePath("agents");
+      expect(resolved).toBe(agentsRegistryPath);
+
+      const payload = JSON.parse(await readFile(resolved, "utf8")) as { agents: Array<{ id: string }> };
+      expect(payload.agents.map((entry) => entry.id)).toEqual(["fixture-reviewer"]);
+    } finally {
+      if (originals.sourceMode === undefined) delete process.env[SOURCE_MODE_ENV_VAR];
+      else process.env[SOURCE_MODE_ENV_VAR] = originals.sourceMode;
+      if (originals.polliRoot === undefined) delete process.env[POLLI_ROOT_ENV_VAR];
+      else process.env[POLLI_ROOT_ENV_VAR] = originals.polliRoot;
+      if (originals.agentsInfraRoot === undefined) delete process.env[AGENTS_INFRA_ROOT_ENV_VAR];
+      else process.env[AGENTS_INFRA_ROOT_ENV_VAR] = originals.agentsInfraRoot;
+      if (originals.cacheRoot === undefined) delete process.env[ADAPTER_CACHE_ENV_VAR];
+      else process.env[ADAPTER_CACHE_ENV_VAR] = originals.cacheRoot;
+      if (originals.agents === undefined) delete process.env[ENV_VARS.agents];
+      else process.env[ENV_VARS.agents] = originals.agents;
+      if (originals.configPath === undefined) delete process.env[CONFIG_ENV_VAR];
+      else process.env[CONFIG_ENV_VAR] = originals.configPath;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("materializes knowledge registry from docstore execplans in adapter mode", async () => {
+    const dir = tempDir();
+    const polliRoot = path.join(dir, "polli");
+    const docstoreRoot = path.join(dir, "docstore");
+    const execPlanDir = path.join(docstoreRoot, "execplan", "POL-725");
+    const cacheRoot = path.join(dir, "cache");
+
+    await mkdir(path.join(polliRoot, "docs/org-kb/agents/staged/blade"), { recursive: true });
+    await mkdir(execPlanDir, { recursive: true });
+    await writeFile(path.join(execPlanDir, "EXECPLAN.md"), "# Production Wiring Plan\n\nBody\n", "utf8");
+
+    const originals = {
+      sourceMode: process.env[SOURCE_MODE_ENV_VAR],
+      polliRoot: process.env[POLLI_ROOT_ENV_VAR],
+      docstoreRoot: process.env[DOCSTORE_ROOT_ENV_VAR],
+      cacheRoot: process.env[ADAPTER_CACHE_ENV_VAR],
+      knowledge: process.env[ENV_VARS.knowledge],
+      configPath: process.env[CONFIG_ENV_VAR]
+    };
+
+    delete process.env[ENV_VARS.knowledge];
+    delete process.env[CONFIG_ENV_VAR];
+    process.env[SOURCE_MODE_ENV_VAR] = "adapter";
+    process.env[POLLI_ROOT_ENV_VAR] = polliRoot;
+    process.env[DOCSTORE_ROOT_ENV_VAR] = docstoreRoot;
+    process.env[ADAPTER_CACHE_ENV_VAR] = cacheRoot;
+
+    try {
+      const resolved = await requireSourcePath("knowledge");
+      expect(resolved).toBe(path.join(cacheRoot, "knowledge.registry.json"));
+      const payload = JSON.parse(await readFile(resolved, "utf8")) as { artifacts: Array<{ id: string; linked_issues?: string[] }> };
+      expect(payload.artifacts.length).toBe(1);
+      expect(payload.artifacts[0]!.id).toBe("POL-725");
+      expect(payload.artifacts[0]!.linked_issues).toEqual(["POL-725"]);
+    } finally {
+      if (originals.sourceMode === undefined) delete process.env[SOURCE_MODE_ENV_VAR];
+      else process.env[SOURCE_MODE_ENV_VAR] = originals.sourceMode;
+      if (originals.polliRoot === undefined) delete process.env[POLLI_ROOT_ENV_VAR];
+      else process.env[POLLI_ROOT_ENV_VAR] = originals.polliRoot;
+      if (originals.docstoreRoot === undefined) delete process.env[DOCSTORE_ROOT_ENV_VAR];
+      else process.env[DOCSTORE_ROOT_ENV_VAR] = originals.docstoreRoot;
+      if (originals.cacheRoot === undefined) delete process.env[ADAPTER_CACHE_ENV_VAR];
+      else process.env[ADAPTER_CACHE_ENV_VAR] = originals.cacheRoot;
+      if (originals.knowledge === undefined) delete process.env[ENV_VARS.knowledge];
+      else process.env[ENV_VARS.knowledge] = originals.knowledge;
+      if (originals.configPath === undefined) delete process.env[CONFIG_ENV_VAR];
+      else process.env[CONFIG_ENV_VAR] = originals.configPath;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("explicit source mode disables adapter fallback", async () => {
+    const originals = {
+      sourceMode: process.env[SOURCE_MODE_ENV_VAR],
+      skills: process.env[ENV_VARS.skills],
+      configPath: process.env[CONFIG_ENV_VAR]
+    };
+
+    delete process.env[ENV_VARS.skills];
+    delete process.env[CONFIG_ENV_VAR];
+    process.env[SOURCE_MODE_ENV_VAR] = "explicit";
+
+    try {
+      await expect(requireSourcePath("skills", { configPath: "/nonexistent/config.json" })).rejects.toThrow(
+        "No skills source path found"
+      );
+    } finally {
+      if (originals.sourceMode === undefined) delete process.env[SOURCE_MODE_ENV_VAR];
+      else process.env[SOURCE_MODE_ENV_VAR] = originals.sourceMode;
+      if (originals.skills === undefined) delete process.env[ENV_VARS.skills];
+      else process.env[ENV_VARS.skills] = originals.skills;
+      if (originals.configPath === undefined) delete process.env[CONFIG_ENV_VAR];
+      else process.env[CONFIG_ENV_VAR] = originals.configPath;
     }
   });
 });

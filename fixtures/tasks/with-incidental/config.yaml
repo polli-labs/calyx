@@ -1,0 +1,3 @@
+not_a_task: true
+purpose: incidental yaml files should not be loaded as task manifests
+

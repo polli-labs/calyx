@@ -1,7 +1,7 @@
 {
   "name": "calyx-ext-cursor",
-  "version": "0.1.0",
-  "description": "Harness-target extension for Cursor — environment hints and command diagnostics for Cursor-based agent workflows.",
+  "version": "0.2.0",
+  "description": "Harness-target extension for Cursor \u2014 environment hints and command diagnostics for Cursor-based agent workflows.",
   "repository": {
     "type": "git",
     "url": "https://github.com/polli-labs/calyx",

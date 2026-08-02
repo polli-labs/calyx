@@ -1,9 +1,12 @@
 /**
- * calyx-ext-linear — First-party Linear extension for Calyx.
+ * calyx-ext-linear — First-party advisory Linear extension for Calyx.
  *
  * Provides issue-context awareness for agents and exec domain commands.
  * Emits advisory hints when Linear environment variables are missing and
  * surfaces contextual diagnostics after command failures.
+ *
+ * It is intentionally lightweight: higher-order issue-driven workflow
+ * semantics do not currently live in this package.
  *
  * Capabilities:
  * - activate: check for LINEAR_API_KEY / LINEAR_TEAM environment hints
@@ -119,3 +122,4 @@ const extension: CalyxExtension = {
 };
 
 export default extension;
+export * from "./runtime/index.js";

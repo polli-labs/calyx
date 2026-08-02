@@ -1,0 +1,21 @@
+{
+  "version": "1",
+  "agents": [
+    {
+      "id": "fixture-reviewer",
+      "path": "fixture-reviewer/agent.yaml",
+      "status": "active",
+      "description": "Fixture reviewer used by POL-1799 launch tests."
+    },
+    {
+      "id": "fixture-blocked",
+      "path": "fixture-blocked/agent.yaml",
+      "lifecycle": {
+        "status": "blocked",
+        "blocked_reason": "Prerequisite safety receipts are incomplete.",
+        "blocked_by": ["POL-2058", "POL-2060"]
+      },
+      "description": "Fixture blocked definition used by lifecycle tests."
+    }
+  ]
+}

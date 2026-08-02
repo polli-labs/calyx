@@ -1,0 +1,24 @@
+surface_id: sample-global
+status: active
+owner: polli-labs
+description: Sample named instruction surface backed by the existing parity fixtures.
+source_ref:
+  fleet_path: ../inputs/fleet.v1.yaml
+  hosts_dir: ../inputs/hosts
+  template_path: ../templates/AGENTS.sample.md.mustache
+  partials_dir: ../templates/partials
+  expected_dir: ../expected
+target_bindings:
+  - binding_id: expected-preview
+    class: staged_preview
+    path: ../expected
+    selectors:
+      hosts: [blade, worm]
+  - binding_id: dev-directory
+    class: directory_root
+    path: /home/caleb/dev
+    managed_files:
+      - AGENTS.md
+      - CLAUDE.md
+    selectors:
+      hosts: [blade]

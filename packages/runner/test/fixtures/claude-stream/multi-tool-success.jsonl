@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"fixture-session","model":"claude-opus-4-6","claude_code_version":"2.1.212"}
+{"type":"assistant","session_id":"fixture-session","parent_tool_use_id":null,"message":{"content":[{"type":"thinking","thinking":"PRIVATE_FIXTURE_THINKING"},{"type":"text","text":"Inspecting."},{"type":"tool_use","name":"Read","input":{"file_path":"PRIVATE_FIXTURE_TOOL_INPUT"}}]}}
+{"type":"user","session_id":"fixture-session","message":{"content":[{"type":"tool_result","content":"PRIVATE_FIXTURE_TOOL_RESULT"}]}}
+{"type":"assistant","session_id":"fixture-session","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"Fixture assistant final."}]}}
+{"type":"result","subtype":"success","session_id":"fixture-session","result":"Fixture result final.","duration_ms":1500,"duration_api_ms":900,"num_turns":2,"total_cost_usd":0.42,"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":80}}

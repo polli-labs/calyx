@@ -1,4 +1,5 @@
 import { promises as fs, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import type {
@@ -12,8 +13,7 @@ import type {
   InstructionsVerifyOptions,
   InstructionsVerifyResult
 } from "./types";
-
-const UNRESOLVED_TOKEN_PATTERN = /\{\{([A-Za-z0-9_]+)\}\}/g;
+import { renderInstructionTemplateSource } from "./instruction-template-render";
 
 function parseYamlText<T>(yamlText: string, filePath: string): T {
   try {
@@ -51,74 +51,21 @@ function assertInstructionContext(value: unknown, label: string): InstructionCon
   return context;
 }
 
-function replaceInstructionTokens(source: string, replacements: InstructionContext): string {
-  return Object.entries(replacements).reduce((acc, [key, value]) => acc.split(`{{${key}}}`).join(String(value)), source);
-}
-
-function expandPartials(
-  source: string,
-  partialsDir: string,
-  maxDepth: number,
-  missingPartials: Set<string>,
-  depth = 0
-): string {
-  if (depth > maxDepth) {
-    return source;
-  }
-
-  if (!source.includes("{{>")) {
-    return source;
-  }
-
-  const includePattern = /\{\{>\s*([^}\s]+)\s*\}\}/g;
-  return source.replace(includePattern, (_match, rawName: string) => {
-    const partialName = rawName.trim();
-    const partialPath = path.join(partialsDir, `${partialName}.md.mustache`);
-    try {
-      const content = readFileSync(partialPath, "utf8");
-      return content;
-    } catch {
-      missingPartials.add(partialName);
-      return `<!-- Missing partial: ${partialName} -->`;
-    }
-  });
-}
-
-function expandPartialsRecursive(
-  source: string,
-  partialsDir: string,
-  maxDepth: number,
-  missingPartials: Set<string>,
-  depth = 0
-): string {
-  const expanded = expandPartials(source, partialsDir, maxDepth, missingPartials, depth);
-  if (expanded === source || depth > maxDepth) {
-    return expanded;
-  }
-  return expandPartialsRecursive(expanded, partialsDir, maxDepth, missingPartials, depth + 1);
-}
-
-function collectUnresolvedTokens(rendered: string): string[] {
-  const unresolved = new Set<string>();
-  for (const match of rendered.matchAll(UNRESOLVED_TOKEN_PATTERN)) {
-    const token = match[1];
-    if (token) {
-      unresolved.add(token);
-    }
-  }
-  return [...unresolved].sort();
-}
-
 function buildInstructionContext(
   fleetInput: InstructionsFleetInput,
   hostInput: InstructionsHostInput,
-  hostAlias: string
+  hostAlias: string,
+  inputFiles: InstructionsRenderInputFiles,
+  options: InstructionsRenderOptions,
 ): InstructionContext {
   const fleetContext = assertInstructionContext(fleetInput.instructions?.context, "fleet.instructions.context");
   const hostContext = assertInstructionContext(hostInput.instructions?.context, "host.instructions.context");
+  const derivedContext = buildDerivedInstructionContext(inputFiles, hostAlias);
   const context: InstructionContext = {
+    ...derivedContext,
     ...fleetContext,
-    ...hostContext
+    ...hostContext,
+    ...(options.contextOverrides ?? {}),
   };
 
   context.HOST = hostAlias;
@@ -132,6 +79,102 @@ function buildInstructionContext(
   }
 
   return context;
+}
+
+function renderRoutingHints(routes: unknown): string {
+  if (!Array.isArray(routes) || routes.length === 0) {
+    return "";
+  }
+  const lines = [
+    "## Tool Routing Hints",
+    "",
+    "When a task matches one of these patterns, prefer the indicated tool/skill:",
+    "",
+  ];
+  for (const route of routes) {
+    if (typeof route !== "object" || route === null || Array.isArray(route)) {
+      continue;
+    }
+    const record = route as Record<string, unknown>;
+    const routeTo = typeof record.route_to === "string" ? record.route_to : "";
+    const reason = typeof record.reason === "string" ? record.reason : "";
+    const patterns = Array.isArray(record.patterns)
+      ? record.patterns.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    if (!routeTo || !reason) {
+      continue;
+    }
+    lines.push(`- **${routeTo}**: ${reason}`);
+    if (patterns.length > 0) {
+      lines.push(`  - Triggers: ${patterns.map((pattern) => `\`${pattern}\``).join(", ")}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function renderHostContext(hostsInput: unknown, hostAlias: string): string {
+  if (typeof hostsInput !== "object" || hostsInput === null || Array.isArray(hostsInput)) {
+    return "";
+  }
+  const host = (hostsInput as { hosts?: Record<string, unknown> }).hosts?.[hostAlias];
+  if (typeof host !== "object" || host === null || Array.isArray(host)) {
+    return "";
+  }
+  const record = host as Record<string, unknown>;
+  const lines = [`## This Host: \`${hostAlias}\``, ""];
+  const gpus = Array.isArray(record.gpus) ? record.gpus : [];
+  if (gpus.length > 0) {
+    const gpuSummary = gpus
+      .filter((gpu): gpu is Record<string, unknown> => typeof gpu === "object" && gpu !== null && !Array.isArray(gpu))
+      .map((gpu) => {
+        const model = typeof gpu.model === "string" ? gpu.model : "unknown";
+        const vramGb = typeof gpu.vram_gb === "number" || typeof gpu.vram_gb === "string" ? ` (${gpu.vram_gb} GB` : "";
+        const unified = gpu.type === "unified" ? " unified" : "";
+        return vramGb ? `${model}${vramGb}${unified})` : model;
+      })
+      .join(", ");
+    lines.push(`- **GPU**: ${gpuSummary}`);
+  } else {
+    lines.push("- **GPU**: none");
+  }
+  if (typeof record.ram_gb === "number" || typeof record.ram_gb === "string") {
+    lines.push(`- **RAM**: ${record.ram_gb} GB`);
+  }
+  if (Array.isArray(record.roles)) {
+    lines.push(`- **Roles**: ${record.roles.filter((entry) => typeof entry === "string").join(", ")}`);
+  }
+  if (Array.isArray(record.services) && record.services.length > 0) {
+    lines.push(`- **Services**: ${record.services.filter((entry) => typeof entry === "string").join(", ")}`);
+  }
+  if (typeof record.notes === "string" && record.notes.trim().length > 0) {
+    lines.push(`- **Notes**: ${record.notes.trim()}`);
+  }
+  return lines.join("\n");
+}
+
+function loadYamlSafe(filePath: string, fallback: unknown): unknown {
+  try {
+    return YAML.parse(readFileSync(filePath, "utf8")) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildDerivedInstructionContext(
+  inputFiles: InstructionsRenderInputFiles,
+  hostAlias: string,
+): InstructionContext {
+  const fleetDir = path.dirname(path.resolve(inputFiles.fleetPath));
+  const repoRoot = path.resolve(fleetDir, "..", "..");
+  const truthsDir = path.join(repoRoot, "fleet", "truths");
+  const routing = loadYamlSafe(path.join(truthsDir, "routing.yaml"), { routes: [] }) as { routes?: unknown };
+  const hosts = loadYamlSafe(path.join(truthsDir, "hosts.yaml"), { hosts: {} });
+  return {
+    NOW_ISO: new Date().toISOString(),
+    RENDER_HOST: os.hostname(),
+    ROUTING_HINTS: renderRoutingHints(routing.routes),
+    HOST_CONTEXT: renderHostContext(hosts, hostAlias),
+  };
 }
 
 async function resolveHosts(hostsDir: string, options: InstructionsRenderOptions): Promise<string[]> {
@@ -213,23 +256,25 @@ export async function renderInstructionsFromFiles(
     hostAliases.map(async (hostAlias) => {
       const hostPath = path.join(inputFiles.hostsDir, `${hostAlias}.yaml`);
       const hostInput = await parseYamlFile<InstructionsHostInput>(hostPath);
-      const context = buildInstructionContext(fleetInput, hostInput, hostAlias);
-      const missingPartials = new Set<string>();
-      const templateWithPartials = expandPartialsRecursive(templateSource, inputFiles.partialsDir, maxPartialDepth, missingPartials);
-      const output = replaceInstructionTokens(templateWithPartials, context);
-      const unresolvedTokens = collectUnresolvedTokens(output);
+      const context = buildInstructionContext(fleetInput, hostInput, hostAlias, inputFiles, options);
+      const renderedTemplate = await renderInstructionTemplateSource(
+        templateSource,
+        inputFiles.partialsDir,
+        context,
+        { maxPartialDepth },
+      );
       const outputPath = options.outputDir ? outputPathForHost(options.outputDir, hostAlias) : undefined;
 
       if (outputPath) {
         await fs.mkdir(path.dirname(outputPath), { recursive: true });
-        await fs.writeFile(outputPath, output, "utf8");
+        await fs.writeFile(outputPath, renderedTemplate.output, "utf8");
       }
 
       return {
         host: hostAlias,
-        output,
-        missingPartials: [...missingPartials].sort(),
-        unresolvedTokens,
+        output: renderedTemplate.output,
+        missingPartials: renderedTemplate.missingPartials,
+        unresolvedTokens: renderedTemplate.unresolvedTokens,
         ...(outputPath ? { outputPath } : {})
       };
     })

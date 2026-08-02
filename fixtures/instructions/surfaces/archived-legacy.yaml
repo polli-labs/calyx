@@ -1,0 +1,9 @@
+surface_id: archived-legacy
+status: archived
+owner: polli-labs
+description: Archived surface fixture used for list filtering tests.
+source_ref:
+  fleet_path: ../inputs/fleet.v1.yaml
+  hosts_dir: ../inputs/hosts
+  template_path: ../templates/AGENTS.sample.md.mustache
+  partials_dir: ../templates/partials

@@ -1,9 +1,12 @@
 /**
- * calyx-ext-polli — First-party Polli extension for Calyx.
+ * calyx-ext-polli — First-party advisory Polli extension for Calyx.
  *
  * Provides registry pre-flight validation before sync/deploy commands and
  * emits fleet-level diagnostics. This extension targets the skills, tools,
  * and agents domains.
+ *
+ * It is intentionally lightweight: broader Polli workflow semantics and
+ * shared source-truth ownership live outside this package.
  *
  * Capabilities:
  * - beforeCommand: pre-flight checks on validate/sync/deploy commands

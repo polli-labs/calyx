@@ -1,0 +1,16 @@
+version: 1
+kind: task
+id: incidental-check
+name: Incidental Check
+status: active
+triggers:
+  - type: manual
+runtime:
+  backend: codex_app
+  agent: codex
+  workspace:
+    mode: existing
+    cwd: /Users/carbon/dev/calyx/dev
+prompt:
+  body: |
+    Confirm non-task YAML files are ignored.

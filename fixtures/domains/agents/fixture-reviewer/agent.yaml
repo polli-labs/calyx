@@ -1,0 +1,57 @@
+version: 1
+kind: agent
+id: fixture-reviewer
+status: active
+owner: polli-labs
+contract_version: 1
+description: Fixture reviewer used by POL-1799 launch tests.
+
+persona:
+  template: prompt.md
+  skills:
+    - fixture-review-skill
+  curricula:
+    - review-and-merge
+
+inputs:
+  repo:    {type: repo-slug, required: true}
+  scope:   {type: enum, values: [pr, branch], default: branch}
+  pr:      {type: int, required_if: "scope == pr"}
+  branch:  {type: git-ref, required_if: "scope == branch"}
+  base:    {type: git-ref, default: main}
+  issue:   {type: linear-issue, required: false}
+  focus:   {type: text, repeatable: true, required: false}
+
+execution:
+  kernel: agent_runner
+  backend:
+    strategy: prefer_different_from_requester
+    fallback_order: [codex, claude]
+    allowed: [claude, codex]
+  model: {claude: opus, codex: gpt-5.4-codex}
+  reasoning_effort: high
+  safety: {timeout_minutes: 90}
+
+posture:
+  workspace_mutation: forbidden
+  artifact_writes:
+    - {path: findings.md, location: run-artifact}
+    - {path: findings.json, location: run-artifact}
+
+context:
+  type: repo_diff
+  worktree: {mode: managed}
+  target_pinning: required
+
+output:
+  required_artifacts: [findings.md, findings.json]
+
+delivery:
+  handback: {flow: handback, ack_required: true}
+  thread: resumable
+
+surfaces:
+  substrate: {enabled: true, load_phase: dispatch}
+  harness:
+    claude: {enabled: false}
+    codex: {enabled: false}

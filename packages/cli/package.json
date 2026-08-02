@@ -1,6 +1,6 @@
 {
   "name": "@polli-labs/calyx",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Calyx CLI.",
   "repository": {
     "type": "git",
@@ -19,14 +19,32 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json --clean && tsup src/bin.ts --format esm --out-dir dist --target node22 --tsconfig tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@google/genai": "^1.51.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@polli-labs/calyx-client": "workspace:*",
     "@polli-labs/calyx-core": "workspace:*",
+    "@polli-labs/calyx-run-service": "workspace:*",
+    "@polli-labs/calyx-runner": "workspace:*",
     "@polli-labs/calyx-sdk": "workspace:*",
-    "commander": "^13.1.0"
+    "@polli-labs/calyx-server": "workspace:*",
+    "calyx-ext-codex": "workspace:*",
+    "calyx-ext-linear": "workspace:*",
+    "commander": "^13.1.0",
+    "yaml": "^2.9.0",
+    "zod": "^3.24.2"
+  },
+  "calyx": {
+    "release": {
+      "channel": "tagged",
+      "reason": "An entry point a consumer installs by name. The tag release publishes this package and everything in its runtime closure; nothing else needs to be listed anywhere."
+    }
   }
 }

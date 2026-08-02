@@ -1,0 +1,466 @@
+{
+  "version": "v1",
+  "fixtures": [
+    {
+      "id": "CTX-CAP-001",
+      "primitive": "capabilities",
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-CAP-002",
+      "primitive": "capabilities",
+      "input": {
+        "include_undetected": true,
+        "providers": ["claude", "codex", "continue"]
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-CAP-003",
+      "primitive": "capabilities",
+      "input": {
+        "include_undetected": true,
+        "providers": ["Claude Code", "OPENAI_codex"]
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-CAP-004",
+      "primitive": "capabilities",
+      "input": {
+        "providers": ["unsupported-provider-x"]
+      },
+      "expected": {
+        "ok": false,
+        "error_code": "adapter_error",
+        "exit_code": 5
+      },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PLAN-001",
+      "primitive": "plan",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/a.ts": "export const a = 1;\n",
+            "src/b.ts": "export const b = 2;\n",
+            "docs/readme.md": "# fixture\n"
+          }
+        }
+      },
+      "input": {
+        "roots": ["${workspace}"],
+        "include": ["src/**", "docs/**"],
+        "include_sessions": false,
+        "include_git_meta": true
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PLAN-002",
+      "primitive": "plan",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/app.ts": "export const app = true;\n",
+            "src/generated/tmp.ts": "export const generated = true;\n",
+            "docs/guide.md": "# guide\n"
+          }
+        }
+      },
+      "input": {
+        "roots": ["${workspace}"],
+        "include": ["docs/**", "src/**", "src/**"],
+        "exclude": ["build/**", "src/generated/**"]
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PLAN-003",
+      "primitive": "plan",
+      "input": {
+        "roots": ["/tmp/calyx-context-plan-missing-root-fixture"]
+      },
+      "expected": {
+        "ok": false,
+        "error_code": "not_found",
+        "exit_code": 3
+      },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PLAN-004",
+      "primitive": "plan",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/large-a.txt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "src/large-b.txt": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+          }
+        }
+      },
+      "input": {
+        "roots": ["${workspace}"],
+        "include": ["src/**"],
+        "budget": {
+          "max_bytes": 90
+        }
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PLAN-005",
+      "primitive": "plan",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/tokens-a.ts": "export const tokensA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';\n",
+            "src/tokens-b.ts": "export const tokensB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';\n"
+          }
+        }
+      },
+      "input": {
+        "roots": ["${workspace}"],
+        "include": ["src/**"],
+        "budget": {
+          "max_tokens": 15
+        }
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PLAN-006",
+      "primitive": "plan",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/main.ts": "export const main = true;\n",
+            "docs/site.md": "# site\n"
+          }
+        }
+      },
+      "input": {
+        "roots": ["${workspace}"],
+        "include": ["src/**", "docs/**"],
+        "include_sessions": true,
+        "include_git_meta": false
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PACK-001",
+      "primitive": "pack",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/index.ts": "export const fixture = true;\n",
+            "docs/readme.md": "# fixture\n"
+          }
+        }
+      },
+      "input": {
+        "include": ["src/**", "docs/**"],
+        "apply": false,
+        "redaction_mode": "strict"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PACK-002",
+      "primitive": "pack",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/index.ts": "export const apply = true;\n",
+            "docs/readme.md": "# apply\n"
+          }
+        }
+      },
+      "input": {
+        "include": ["src/**", "docs/**"],
+        "apply": true,
+        "out_dir": ".ctxpack-apply-out",
+        "redaction_mode": "strict"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": false
+    },
+    {
+      "id": "CTX-PACK-003",
+      "primitive": "pack",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/credential.txt": "token=ghp_123456789012345678901234567890123456\n",
+            "docs/readme.md": "# credential\n"
+          }
+        }
+      },
+      "input": {
+        "include": ["src/**", "docs/**"],
+        "apply": true,
+        "out_dir": ".ctxpack-redaction-credential",
+        "redaction_mode": "strict"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": false
+    },
+    {
+      "id": "CTX-PACK-004",
+      "primitive": "pack",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/env.txt": "API_KEY=super-secret-value\n",
+            "docs/readme.md": "# assignment\n"
+          }
+        }
+      },
+      "input": {
+        "include": ["src/**", "docs/**"],
+        "apply": true,
+        "out_dir": ".ctxpack-redaction-assignment",
+        "redaction_mode": "strict"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": false
+    },
+    {
+      "id": "CTX-PACK-005",
+      "primitive": "pack",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/index.ts": "export const mismatch = true;\n"
+          }
+        }
+      },
+      "input": {
+        "include": ["src/**"],
+        "plan_hash": "ctxpack.plan.hash.mismatch",
+        "apply": false
+      },
+      "expected": {
+        "ok": false,
+        "error_code": "validation_error",
+        "exit_code": 2
+      },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-PACK-006",
+      "primitive": "pack",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/data-a.txt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "src/data-b.txt": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+            "docs/readme.md": "# truncation counters\n"
+          }
+        }
+      },
+      "input": {
+        "include": ["src/**", "docs/**"],
+        "exclude": ["docs/**"],
+        "apply": false,
+        "redaction_mode": "strict"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-DOCS-001",
+      "primitive": "docs",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/secrets.env": "TOKEN=ghp_123456789012345678901234567890123456\n",
+            "docs/readme.md": "# docs fixture\n"
+          }
+        },
+        "bundle": {
+          "include": ["src/**", "docs/**"],
+          "out_dir": ".ctxpack-docs-bundle",
+          "redaction_mode": "strict"
+        }
+      },
+      "input": {
+        "bundle_path": "${bundle_path}",
+        "format": "markdown"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-DOCS-002",
+      "primitive": "docs",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/plain.txt": "plain text\n",
+            "docs/readme.md": "# docs json fixture\n"
+          }
+        },
+        "bundle": {
+          "include": ["src/**", "docs/**"],
+          "out_dir": ".ctxpack-docs-json-bundle",
+          "redaction_mode": "strict"
+        }
+      },
+      "input": {
+        "bundle_path": "${bundle_path}",
+        "format": "json"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-DOCS-003",
+      "primitive": "docs",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/env.txt": "API_KEY=value-from-fixture\n",
+            "docs/readme.md": "# topic fixture\n"
+          }
+        },
+        "bundle": {
+          "include": ["src/**", "docs/**"],
+          "out_dir": ".ctxpack-docs-topic-bundle",
+          "redaction_mode": "strict"
+        }
+      },
+      "input": {
+        "bundle_path": "${bundle_path}",
+        "format": "json",
+        "topic": "redaction"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-DOCS-004",
+      "primitive": "docs",
+      "input": {
+        "bundle_path": "/tmp/calyx-context-docs-missing-bundle",
+        "format": "json"
+      },
+      "expected": {
+        "ok": false,
+        "error_code": "not_found",
+        "exit_code": 3
+      },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-INTRO-001",
+      "primitive": "introspect",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/env.txt": "TOKEN=ghp_123456789012345678901234567890123456\n",
+            "docs/readme.md": "# introspect disabled\n"
+          }
+        },
+        "bundle": {
+          "include": ["src/**", "docs/**"],
+          "out_dir": ".ctxpack-introspect-disabled",
+          "redaction_mode": "strict"
+        }
+      },
+      "input": {
+        "bundle_path": "${bundle_path}"
+      },
+      "expected": {
+        "ok": false,
+        "error_code": "capability_unavailable",
+        "exit_code": 4
+      },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-INTRO-002",
+      "primitive": "introspect",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/a.ts": "export const a = 1;\n",
+            "src/b.md": "# b\n",
+            "docs/readme.md": "# introspect full\n"
+          }
+        },
+        "bundle": {
+          "include": ["src/**", "docs/**"],
+          "out_dir": ".ctxpack-introspect-full",
+          "redaction_mode": "strict"
+        }
+      },
+      "input": {
+        "bundle_path": "${bundle_path}",
+        "enable_experimental": true
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-INTRO-003",
+      "primitive": "introspect",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/a.ts": "export const a = 1;\n",
+            "src/b.ts": "export const b = 2;\n",
+            "docs/readme.md": "# introspect roots\n"
+          }
+        },
+        "bundle": {
+          "include": ["src/**", "docs/**"],
+          "out_dir": ".ctxpack-introspect-roots",
+          "redaction_mode": "strict"
+        }
+      },
+      "input": {
+        "bundle_path": "${bundle_path}",
+        "enable_experimental": true,
+        "target": "roots"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    },
+    {
+      "id": "CTX-INTRO-004",
+      "primitive": "introspect",
+      "setup": {
+        "workspace": {
+          "files": {
+            "src/a.ts": "export const a = 1;\n",
+            "src/b.md": "# b\n",
+            "docs/readme.md": "# introspect extensions\n"
+          }
+        },
+        "bundle": {
+          "include": ["src/**", "docs/**"],
+          "out_dir": ".ctxpack-introspect-extensions",
+          "redaction_mode": "strict"
+        }
+      },
+      "input": {
+        "bundle_path": "${bundle_path}",
+        "enable_experimental": true,
+        "target": "extensions"
+      },
+      "expected": { "ok": true },
+      "deterministic_replay": true
+    }
+  ]
+}

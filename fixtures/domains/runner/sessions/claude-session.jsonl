@@ -1,0 +1,4 @@
+{"uuid":"msg-001","timestamp":"2026-03-18T10:00:01Z","sessionId":"sess-abc-123","type":"human","message":{"role":"human","content":"Please implement the feature."}}
+{"uuid":"msg-002","timestamp":"2026-03-18T10:00:05Z","sessionId":"sess-abc-123","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll start by reading the relevant files."},{"type":"tool_use","id":"tool-1","name":"Read","input":{"path":"/some/file.ts"}}]}}
+{"uuid":"msg-003","timestamp":"2026-03-18T10:00:10Z","sessionId":"sess-abc-123","type":"tool_result","message":{"role":"tool","content":"file contents here"}}
+{"uuid":"msg-004","timestamp":"2026-03-18T10:00:15Z","sessionId":"sess-abc-123","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I've implemented the feature. Here is a summary of the changes:\n\n1. Added new function `doThing()`\n2. Updated tests\n3. All checks pass."}]}}

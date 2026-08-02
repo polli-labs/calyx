@@ -1,0 +1,16 @@
+version: 1
+kind: task
+id: duplicate-task
+name: Duplicate Task Two
+status: active
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=8;BYMINUTE=30"
+    timezone: America/New_York
+runtime:
+  backend: codex_app
+  workspace:
+    cwd: /Users/carbon/dev/calyx/dev
+prompt:
+  body: |
+    Second duplicate.

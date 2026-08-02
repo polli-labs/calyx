@@ -1,0 +1,25 @@
+version: 1
+kind: task
+id: manual-host-process-proof
+name: Manual Host Process Proof
+status: active
+description: Safe POL-1730 proof task for manual task-run launch wiring.
+triggers:
+  - type: manual
+runtime:
+  backend: calyx
+  argv:
+    - node
+    - -e
+    - "console.log('POL-1730 manual task proof')"
+  workspace:
+    mode: existing
+    cwd: /tmp
+prompt:
+  body: |
+    Prove that a manual task can launch a Calyx host-process run.
+safety:
+  max_concurrency: 1
+  timeout_minutes: 2
+  unattended_writes: advisory-first
+  destructive_actions: forbidden
