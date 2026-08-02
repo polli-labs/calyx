@@ -1,0 +1,34 @@
+{
+  "name": "calyx-ext-codex",
+  "version": "0.2.0",
+  "description": "First-party Codex runtime package for Calyx.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polli-labs/calyx",
+    "directory": "packages/calyx-ext-codex"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime/index.js",
+      "types": "./dist/runtime/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/runtime/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@polli-labs/calyx-core": "workspace:*",
+    "@polli-labs/calyx-runner": "workspace:*"
+  }
+}

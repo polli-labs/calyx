@@ -18,12 +18,11 @@ export const WRAPPER_REGISTRY: WrapperDefinition[] = [
   { wrapper: "prompts-sync-claude", target: "calyx prompts sync --backend claude", status: "retired", phase: "P9", retiredAt: "2026-03-02" },
   { wrapper: "prompts-sync-codex", target: "calyx prompts sync --backend codex", status: "retired", phase: "P9", retiredAt: "2026-03-02" },
   { wrapper: "agents-render", target: "calyx instructions render", status: "retired", phase: "P9", retiredAt: "2026-03-02" },
-  { wrapper: "exec-launch", target: "calyx exec launch", status: "retired", phase: "P9", retiredAt: "2026-03-02" },
+  { wrapper: "exec-launch", target: "calyx run launch", status: "retired", phase: "P9", retiredAt: "2026-03-02" },
 
   // Implemented (POL-679 — canonical command surfaces, 2026-03-03)
   { wrapper: "agents-toolkit-doctor", target: "calyx doctor", status: "implemented", phase: "P7A-4" },
   { wrapper: "agents-tools-bump", target: "calyx tools versions bump", status: "implemented", phase: "P7A-4" },
-  { wrapper: "agent-notify", target: "calyx exec notify", status: "implemented", phase: "P7A-4" },
   { wrapper: "docstore", target: "calyx knowledge docstore", status: "implemented", phase: "P7A-4" },
   { wrapper: "agents-fleet-smoke", target: "calyx verify fleet", status: "implemented", phase: "P7A-4" },
   { wrapper: "agents-bundle-build", target: "calyx bundle build", status: "implemented", phase: "P7A-4" },
@@ -31,10 +30,26 @@ export const WRAPPER_REGISTRY: WrapperDefinition[] = [
   { wrapper: "execplan-new", target: "calyx knowledge execplan new", status: "implemented", phase: "P7A-4" },
   { wrapper: "agents-bootstrap", target: "calyx install bootstrap", status: "implemented", phase: "P7A-4" },
 
-  // Deprecated (POL-680 — explicit decision: not implementing in v1, 2026-03-03)
+  // Deprecated (POL-680 / POL-842 — explicit no-bridge decisions)
+  {
+    wrapper: "agent-notify",
+    target: "calyx run launch --kernel host_process",
+    status: "deprecated",
+    phase: "P7A-5",
+    deprecatedAt: "2026-03-13",
+    rationale: "Durable local long-process orchestration now lives in `calyx run`; keeping `agent-notify` as a delegating wrapper or presenting `calyx exec notify` as the replacement would preserve two operator stories.",
+    alternatives: [
+      "calyx run launch --kernel host_process --host local --cwd <path> --argv <token> ...",
+      "calyx run status <run-id-or-prefix>",
+      "calyx run receipt <run-id-or-prefix>",
+      "calyx run logs <run-id-or-prefix>",
+      "calyx exec notify --message <message>  # low-level notification primitive only"
+    ],
+    notes: "Sunset: 2026-06-15 — remove tombstone after POL-842 cutover is fully deployed, docs no longer reference agent-notify, and wrapper telemetry stays at zero for 30 days"
+  },
   {
     wrapper: "agents-fleet",
-    target: "calyx skills sync, calyx tools sync, calyx prompts sync, calyx agents sync, calyx verify fleet",
+    target: "calyx skills sync, calyx tools sync, calyx prompts sync, calyx agents validate/list/show, calyx verify fleet",
     status: "deprecated",
     phase: "P4+",
     deprecatedAt: "2026-03-03",
@@ -43,15 +58,15 @@ export const WRAPPER_REGISTRY: WrapperDefinition[] = [
       "calyx skills sync --registry <path> --apply",
       "calyx tools sync --registry <path> --all --apply",
       "calyx prompts sync --registry <path> --apply",
-      "calyx agents sync --registry <path> --apply",
-      "calyx agents deploy --registry <path> --apply",
+      "calyx agents validate --registry <path>",
+      "calyx agents list --registry <path>",
       "calyx verify fleet"
     ],
-    notes: "Sunset: 2026-06-01 — remove tombstone or promote to calyx fleet converge if operator demand warrants"
+    notes: "Sunset: 2026-06-01 — remove tombstone or promote to calyx fleet converge if operator demand warrants. Agent harness projection moved behind POL-1800; POL-1799 keeps list/show/validate only."
   },
   {
     wrapper: "agents-fleet-apply",
-    target: "calyx skills sync --apply, calyx tools sync --apply, calyx prompts sync --apply, calyx agents sync --apply",
+    target: "calyx skills sync --apply, calyx tools sync --apply, calyx prompts sync --apply, calyx agents validate",
     status: "deprecated",
     phase: "P4+",
     deprecatedAt: "2026-03-03",
@@ -60,11 +75,10 @@ export const WRAPPER_REGISTRY: WrapperDefinition[] = [
       "calyx skills sync --registry <path> --apply",
       "calyx tools sync --registry <path> --all --apply",
       "calyx prompts sync --registry <path> --apply",
-      "calyx agents sync --registry <path> --apply",
-      "calyx agents deploy --registry <path> --apply",
+      "calyx agents validate --registry <path>",
       "calyx verify fleet --strict"
     ],
-    notes: "Sunset: 2026-06-01 — remove tombstone or promote as --apply mode of calyx fleet converge"
+    notes: "Sunset: 2026-06-01 — remove tombstone or promote as --apply mode of calyx fleet converge. Agent harness projection moved behind POL-1800; POL-1799 keeps list/show/validate only."
   },
   {
     wrapper: "agents-worktree-init",
@@ -75,7 +89,7 @@ export const WRAPPER_REGISTRY: WrapperDefinition[] = [
     rationale: "No workspace domain exists in calyx; the existing shell script is simple, stable, and sufficient.",
     alternatives: [
       "agents-worktree-init (shell script in ~/.agents/run/)",
-      "git worktree add ~/projects/$(date +%Y-W%V)/<lane>/<branch> -b <branch>"
+      "git worktree add ~/dev/<repo>/wt/<branch> -b <branch>  # POL-501 repos like calyx; unmigrated repos may still use ~/projects/..."
     ],
     notes: "Sunset: 2026-08-01 — remove tombstone if no demand; revisit if calyx adds a workspace domain"
   }

@@ -1,7 +1,7 @@
 {
   "name": "calyx-ext-linear",
-  "version": "0.1.0",
-  "description": "First-party Linear extension for Calyx — issue context hints and exec diagnostics.",
+  "version": "0.2.0",
+  "description": "First-party advisory Linear extension for Calyx \u2014 issue context hints and exec diagnostics.",
   "repository": {
     "type": "git",
     "url": "https://github.com/polli-labs/calyx",
@@ -14,16 +14,28 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime/index.js",
+      "types": "./dist/runtime/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "calyx": {
     "apiVersion": "1",
-    "domains": ["agents", "exec"]
+    "domains": [
+      "agents",
+      "exec"
+    ]
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
+    "build": "tsup src/index.ts src/runtime/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@polli-labs/calyx-run-service": "workspace:*"
   },
   "peerDependencies": {
     "@polli-labs/calyx-sdk": ">=0.1.0"

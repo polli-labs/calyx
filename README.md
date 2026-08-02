@@ -1,197 +1,119 @@
 # calyx-dev
 
-Private development monorepo for the **Calyx** agent control plane — a unified, contract-first CLI that replaces fragmented operational scripts with typed domain commands.
+Private development monorepo for the **Calyx control plane**: typed local and
+fleet configuration, agent instructions, knowledge workflows, and durable run
+orchestration behind one CLI and authenticated HTTP service.
+
+## Current program
+
+The active Symphony-ready v2 program lives in the shared Fieldwork vault, not
+in repo documentation:
+
+- [master plan](obsidian://open?vault=fieldwork&file=50-projects%2Fcalyx%2Fworkstreams%2Factive%2Fcalyx-v2-symphony-ready-master-plan)
+- [workstream tracker](obsidian://open?vault=fieldwork&file=50-projects%2Fcalyx%2Fworkstreams%2Factive%2Fagent-growth-substrate)
+
+The master plan and active wave charter add scope-time gates for substrate,
+run, backend-capability, and interface-governance work. Repo docs describe
+current code-adjacent contracts; they are not a program journal.
 
 ## Packages
 
-| Package | npm | Purpose |
-|---------|-----|---------|
-| `@polli-labs/calyx-core` | `packages/core` | Domain contracts, compilers, validators, registry logic |
-| `@polli-labs/calyx` | `packages/cli` | CLI binary (`calyx` command) |
-| `@polli-labs/calyx-sdk` | `packages/sdk` | Extension SDK — contracts, lifecycle hooks, manifest validation |
-| `@polli-labs/calyx-web` | `packages/web` | Web companion surface (placeholder) |
+| Package | Path | Role |
+| --- | --- | --- |
+| `@polli-labs/calyx-sdk` | `packages/sdk` | Public extension contracts and lifecycle hooks |
+| `@polli-labs/calyx-core` | `packages/core` | Domain logic, registries, config, instructions, vault, and interface metadata |
+| `@polli-labs/calyx` | `packages/cli` | CLI and composition root |
+| `@polli-labs/calyx-runner` | `packages/runner` | Backend adapters, worktrees, classification, and receipts |
+| `@polli-labs/calyx-run-service` | `packages/run-service` | Run store, kernels, reconciliation, and daemon loop |
+| `@polli-labs/calyx-server` | `packages/server` | Authenticated HTTP control plane |
+| `@polli-labs/calyx-client` | `packages/client` | Generated consumer and privileged-admin transport |
+| `@polli-labs/calyx-web` | `packages/web` | Knowledge browse/search surface |
+| `calyx-ext-codex` | `packages/calyx-ext-codex` | Codex run adapter package |
+| `calyx-ext-polli` | `packages/calyx-ext-polli` | Polli advisory extension |
+| `calyx-ext-linear` | `packages/calyx-ext-linear` | Linear advisory extension |
+| `calyx-ext-cursor` | `packages/calyx-ext-cursor` | Cursor harness-target extension |
 
-### Extension model
+Extensions depend on `@polli-labs/calyx-sdk` and declare their hookable domains
+in `package.json`. Canonical lifecycle semantics stay in Calyx core; extensions
+are optional adapters or advisory overlays. See
+[docs/extension-sdk.md](docs/extension-sdk.md).
 
-Extensions are npm packages that depend on `@polli-labs/calyx-sdk` and declare a `calyx` key in their `package.json`. They can hook into the CLI lifecycle (activate, beforeCommand, afterCommand, deactivate) and target any of the 8 domains.
+## Start here
 
-Two first-party extensions ship in the monorepo:
-
-| Extension | Domains | Purpose |
-|-----------|---------|---------|
-| [`calyx-ext-polli`](packages/calyx-ext-polli) | skills, tools, agents | Registry pre-flight checks, fleet diagnostics |
-| [`calyx-ext-linear`](packages/calyx-ext-linear) | agents, exec | Linear issue context hints, exec failure diagnostics |
-
-See [docs/extension-sdk.md](docs/extension-sdk.md) for the full SDK reference, [examples/calyx-ext-hello](examples/calyx-ext-hello) for a minimal sample, and [examples/extensions/starter](examples/extensions/starter) for a copy-and-customize starter template.
-
-Extension naming: `calyx-ext-<name>` (first-party), `@user/calyx-ext-<name>` (community).
-
-## Workspace layout
-
-```
-packages/core       @polli-labs/calyx-core     domain contracts + compiler
-packages/cli        @polli-labs/calyx          CLI binary
-packages/sdk        @polli-labs/calyx-sdk      extension SDK
-packages/web        @polli-labs/calyx-web      web companion
-examples/           sample extensions
-fixtures/           test fixture corpus
-docs/               ADRs, CLI reference, SDK docs, migration guides
-```
-
-## Getting started
-
-New to Calyx? Start with the **[Onboarding Guide](docs/onboarding.md)** — install, first commands, surface map, migration pointers, and extension primer.
-
-For daily Calyx operations, see the **[Operator Runbook](docs/operator-runbook.md)** — a condensed reference covering all 8 domain commands, verification checklists, and failure classification.
-
-Quick verification (all domains, fixture-based):
+Requirements: Node 22 and the repository `pnpm` lockfile.
 
 ```bash
-pnpm install
-pnpm verify                          # lint → typecheck → test → build
-node packages/cli/dist/bin.js --help # smoke-test CLI
+pnpm install --frozen-lockfile
+pnpm verify
+node packages/cli/dist/bin.js --help
 ```
 
-For command-by-command reference, see [docs/cli-reference.md](docs/cli-reference.md).
+Use:
 
-## Local verification
+- [`AGENTS.md`](AGENTS.md) for the repo map and contributor routing;
+- [`docs/onboarding.md`](docs/onboarding.md) for installation and a short first
+  workflow;
+- [`docs/architecture/README.md`](docs/architecture/README.md) for the current
+  control-plane model;
+- [`docs/operator-runbook.md`](docs/operator-runbook.md) for standing
+  operational procedures;
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) for the green gate and engineering laws.
+
+## Interface discovery
+
+Runtime command registration currently lives in
+`packages/cli/src/run-cli.ts`.
 
 ```bash
-pnpm install
-pnpm verify   # lint → typecheck → test → build
+calyx --help
+calyx <domain> --help
+calyx agent-context --json
 ```
 
-Individual stages can also be run separately: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+[`docs/cli-reference.md`](docs/cli-reference.md) is still a hand-authored,
+partially drift-checked reference. The interface manifest in
+`packages/core/src/interface-manifest.ts` classifies every visible top-level
+domain and carries full records for a subset of operations; it does not yet
+generate Commander help, the reference, or `agent-context`.
 
-See [CI Reliability Runbook](docs/ci-reliability-runbook.md) for failure classification and CI override policy.
+Data-bearing commands expose `--json` where their help documents it. JSON is
+not a blanket property of every command.
 
-## Production wiring
+## Source and runtime boundaries
 
-Registry and store paths can be resolved automatically via environment variables or a config file, so you don't need to pass `--registry` / `--store` on every command. See [docs/production-wiring.md](docs/production-wiring.md) for the full guide.
+- Work in a worktree, not the clean clone.
+- `packages/cli/src/run-cli.ts` is the composition root.
+- `agents-infra` owns shared instruction, skill, prompt, and fleet-config source
+  truth.
+- Daemons serve immutable installs under `~/.calyx/installs/current`, not a
+  development checkout.
+- Long-running or cross-host mutations belong in daemon-owned resumable state
+  machines with durable receipts.
 
-Quick setup:
-```bash
-export CALYX_SKILLS_REGISTRY=~/.agents/registries/skills.json
-calyx skills index    # resolves automatically
-calyx config show     # see all resolved paths
-```
+Production registry/store resolution and environment precedence are documented
+in [docs/production-wiring.md](docs/production-wiring.md).
 
-## Domain commands
+## Current documentation
 
-The CLI is organized into 8 domain command groups plus compatibility wrappers. See [docs/cli-reference.md](docs/cli-reference.md) for the full reference.
+| Document | Contract |
+| --- | --- |
+| [Architecture](docs/architecture/README.md) | Current substrate, primitives, and placement laws |
+| [Consumer API](docs/architecture/consumer-api.md) | Capability and profile model |
+| [Wire contracts](docs/architecture/wire-contracts.md) | Envelopes, errors, provenance, bounds, and streaming |
+| [Session ingress](docs/architecture/session-ingress.md) | Exact activity binding and wake semantics |
+| [Operator runbook](docs/operator-runbook.md) | Current operational procedures |
+| [Production wiring](docs/production-wiring.md) | Source resolution and environment/config precedence |
+| [Extension SDK](docs/extension-sdk.md) | Public extension contract |
+| [CI reliability](docs/ci-reliability-runbook.md) | CI failure classification and override policy |
+| [ADR-0001](docs/adr/adr-0001-runtime-and-packaging.md) | Runtime and packaging decision |
+| [ADR-0002](docs/adr/adr-0002-repo-structure-and-build.md) | Repository structure and naming |
 
-### Config compile
-
-```bash
-calyx config compile \
-  --fleet fixtures/config-compiler/inputs/fleet.v2.yaml \
-  --hosts-dir fixtures/config-compiler/inputs/hosts \
-  --host blade \
-  --parity fixtures/config-compiler/expected/blade.config.toml
-```
-
-### Instructions render / verify
-
-```bash
-calyx instructions render \
-  --fleet fixtures/instructions/inputs/fleet.v1.yaml \
-  --hosts-dir fixtures/instructions/inputs/hosts \
-  --template fixtures/instructions/templates/AGENTS.sample.md.mustache \
-  --partials-dir fixtures/instructions/templates/partials \
-  --host blade
-
-calyx instructions verify \
-  --fleet fixtures/instructions/inputs/fleet.v1.yaml \
-  --hosts-dir fixtures/instructions/inputs/hosts \
-  --template fixtures/instructions/templates/AGENTS.sample.md.mustache \
-  --partials-dir fixtures/instructions/templates/partials \
-  --all \
-  --expected-dir fixtures/instructions/expected
-```
-
-### Skills index / sync / validate
-
-```bash
-calyx skills index --registry fixtures/domains/skills/registry.valid.json
-calyx skills sync --registry fixtures/domains/skills/registry.valid.json --backend codex
-calyx skills validate --registry fixtures/domains/skills/registry.valid.json --strict
-```
-
-### Tools index / sync / validate
-
-```bash
-calyx tools index --registry fixtures/domains/tools/registry.valid.json
-calyx tools sync --registry fixtures/domains/tools/registry.valid.json --all
-calyx tools validate --registry fixtures/domains/tools/registry.valid.json --strict
-```
-
-### Prompts index / sync / validate
-
-```bash
-calyx prompts index --registry fixtures/domains/prompts/registry.valid.json
-calyx prompts sync --registry fixtures/domains/prompts/registry.valid.json --backend claude
-calyx prompts validate --registry fixtures/domains/prompts/registry.valid.json --strict
-```
-
-### Agents index / render-profiles / deploy / sync / validate
-
-```bash
-calyx agents index --registry fixtures/domains/agents/registry.valid.json
-calyx agents render-profiles --registry fixtures/domains/agents/registry.valid.json --json
-calyx agents deploy --registry fixtures/domains/agents/registry.valid.json --backend claude
-calyx agents validate --registry fixtures/domains/agents/registry.valid.json --strict
-```
-
-### Knowledge index / search / link / validate
-
-```bash
-calyx knowledge index --registry fixtures/domains/knowledge/registry.valid.json
-calyx knowledge search --registry fixtures/domains/knowledge/registry.valid.json --query "exec"
-calyx knowledge link --registry fixtures/domains/knowledge/registry.valid.json \
-  --artifact execplan-unified-agents --issue POL-605
-calyx knowledge validate --registry fixtures/domains/knowledge/registry.valid.json --strict
-```
-
-### Exec launch / status / logs / receipt / validate
-
-```bash
-calyx exec launch --store fixtures/domains/exec/store.valid.json --command "calyx config compile --host blade"
-calyx exec status --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
-calyx exec logs --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
-calyx exec receipt --store fixtures/domains/exec/store.valid.json --run-id run-001-succeeded
-calyx exec validate --store fixtures/domains/exec/store.valid.json --strict
-```
-
-## Migration status
-
-Legacy `dev/run/*` compatibility wrappers were retired in P9 (2026-03-02). All operator workflows now use canonical `calyx <domain> <verb>` commands exclusively. Invoking a retired wrapper name produces a clear error with the canonical replacement.
-
-See [docs/migration-wrappers.md](docs/migration-wrappers.md) for the full history and replacement map, or [docs/migration-guide.md](docs/migration-guide.md) for the migration reference.
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Onboarding Guide](docs/onboarding.md) | First-time setup, quickstart, and surface orientation |
-| [Production Wiring](docs/production-wiring.md) | Environment variables, config file, and source resolution |
-| [CLI Reference](docs/cli-reference.md) | Complete command reference for all 8 domains |
-| [Extension SDK](docs/extension-sdk.md) | SDK contracts, lifecycle hooks, and quick start |
-| [Migration Guide](docs/migration-guide.md) | Step-by-step legacy → calyx transition |
-| [Migration Wrappers](docs/migration-wrappers.md) | Wrapper replacement map and telemetry |
-| [RC Checklist](docs/rc-checklist.md) | Release candidate checklist, promotion paths, and rollback |
-| [Operator Runbook](docs/operator-runbook.md) | Canonical operator reference for daily Calyx-first operations |
-| [CI Reliability Runbook](docs/ci-reliability-runbook.md) | CI failure taxonomy, decision tree, and override policy |
-| [Post-GA Support Playbook](docs/post-ga-support-playbook.md) | Support ownership, intake, severity classification, and first-week cadence |
-| [Post-GA Watchlist](docs/post-ga-watchlist.md) | Telemetry signals, package health checks, and monitoring commands |
-| [Post-GA Incident Checklist](docs/post-ga-incident-checklist.md) | Incident response steps for install, publish, auth, and CI failures |
-| [Skills Subsumption Catalogue](docs/skills-subsumption-catalogue.md) | Authoritative skill-by-skill disposition, retirement sequencing, and migration mapping |
-| [ADR-0002](docs/adr/adr-0002-repo-structure-and-build.md) | Repo structure, build, and naming decisions |
+Historical plans, migration archaeology, rollout receipts, and release-era
+checklists live in Git, Linear, or the vault rather than this current-state
+documentation tree.
 
 ## Release
 
-Tag-triggered publishing via GitHub Actions. See [docs/rc-checklist.md](docs/rc-checklist.md) for the full release process.
-
-```bash
-git tag v0.1.0-rc.1
-git push origin v0.1.0-rc.1
-```
+Publishing is tag-triggered through the repository workflows under
+`.github/workflows/`. Treat the workflow and package manifests as current
+release authority.

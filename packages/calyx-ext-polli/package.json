@@ -1,7 +1,7 @@
 {
   "name": "calyx-ext-polli",
-  "version": "0.1.0",
-  "description": "First-party Polli extension for Calyx — registry pre-flight checks and fleet diagnostics.",
+  "version": "0.2.0",
+  "description": "First-party advisory Polli extension for Calyx \u2014 env pre-flight hints and fleet diagnostics.",
   "repository": {
     "type": "git",
     "url": "https://github.com/polli-labs/calyx",
@@ -16,10 +16,16 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "calyx": {
     "apiVersion": "1",
-    "domains": ["skills", "tools", "agents"]
+    "domains": [
+      "skills",
+      "tools",
+      "agents"
+    ]
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --target node22 --tsconfig tsconfig.json",

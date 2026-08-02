@@ -1,0 +1,62 @@
+[
+  {
+    "_description": "exit code 0 → success",
+    "input": { "exit_code": 0 },
+    "expected": { "class": "success", "source": "exit_code" }
+  },
+  {
+    "_description": "exit code 1 → task_failure",
+    "input": { "exit_code": 1 },
+    "expected": { "class": "task_failure", "source": "exit_code" }
+  },
+  {
+    "_description": "exit code 8 → auth_error",
+    "input": { "exit_code": 8 },
+    "expected": { "class": "auth_error", "source": "exit_code" }
+  },
+  {
+    "_description": "exit code 6 → infra_error",
+    "input": { "exit_code": 6 },
+    "expected": { "class": "infra_error", "source": "exit_code" }
+  },
+  {
+    "_description": "exit code 9 → dispatch_rejected",
+    "input": { "exit_code": 9 },
+    "expected": { "class": "dispatch_rejected", "source": "exit_code" }
+  },
+  {
+    "_description": "stderr 401 → auth_error (pattern match)",
+    "input": { "exit_code": 99, "stderr": "Error: 401 Unauthorized" },
+    "expected": { "class": "auth_error", "source": "stderr_pattern" }
+  },
+  {
+    "_description": "stderr 401 in test context → falls through (negated)",
+    "input": { "exit_code": 99, "stderr": "test: mock 401 Unauthorized response" },
+    "expected": { "class": "task_failure", "source": "exit_code" }
+  },
+  {
+    "_description": "stderr OOM → infra_error",
+    "input": { "exit_code": 137, "stderr": "Out of memory: Killed process" },
+    "expected": { "class": "infra_error", "source": "stderr_pattern" }
+  },
+  {
+    "_description": "completed_dirty: high event count + artifact + non-zero exit",
+    "input": { "exit_code": 1, "event_count": 15, "final_artifact_present": true },
+    "expected": { "class": "completed_dirty", "source": "heuristic" }
+  },
+  {
+    "_description": "below dirty threshold → task_failure",
+    "input": { "exit_code": 1, "event_count": 5, "final_artifact_present": true },
+    "expected": { "class": "task_failure", "source": "exit_code" }
+  },
+  {
+    "_description": "no exit code → infra_error (default)",
+    "input": {},
+    "expected": { "class": "infra_error", "source": "exit_code" }
+  },
+  {
+    "_description": "backend auth_failure event → auth_error",
+    "input": { "exit_code": 99, "backend_events": [{ "event": "auth_failure" }] },
+    "expected": { "class": "auth_error", "source": "backend_event" }
+  }
+]

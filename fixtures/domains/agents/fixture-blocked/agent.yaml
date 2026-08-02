@@ -1,0 +1,16 @@
+version: 1
+kind: agent
+id: fixture-blocked
+status: blocked
+owner: polli-labs
+contract_version: 1
+description: Fixture blocked definition used by lifecycle tests.
+
+persona:
+  template: prompt.md
+
+execution:
+  kernel: agent_runner
+  backend:
+    fallback_order: [codex]
+    allowed: [codex]

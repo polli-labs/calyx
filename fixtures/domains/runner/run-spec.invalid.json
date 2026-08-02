@@ -1,0 +1,75 @@
+[
+  {
+    "_description": "missing required field: host",
+    "backend": "codex",
+    "prompt": "do something",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {}
+  },
+  {
+    "_description": "invalid backend value",
+    "host": "blade",
+    "backend": "gemini",
+    "prompt": "do something",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {}
+  },
+  {
+    "_description": "invalid issue format",
+    "host": "blade",
+    "backend": "claude",
+    "issue": "not-a-valid-issue",
+    "prompt": "do something",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {}
+  },
+  {
+    "_description": "invalid run_id (empty string)",
+    "run_id": "",
+    "host": "blade",
+    "backend": "codex",
+    "prompt": "do something",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {}
+  },
+  {
+    "_description": "max_threads must be positive integer",
+    "host": "blade",
+    "backend": "claude",
+    "prompt": "do something",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {},
+    "backend_options": {
+      "max_threads": -1
+    }
+  },
+  {
+    "_description": "Claude rejects Codex concurrency control",
+    "host": "blade",
+    "backend": "claude",
+    "prompt": "do something",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {},
+    "backend_options": {
+      "max_threads": 4
+    }
+  },
+  {
+    "_description": "Codex rejects Claude turn control",
+    "host": "blade",
+    "backend": "codex",
+    "prompt": "do something",
+    "require_execplan": false,
+    "pull_execplan": false,
+    "worktree": {},
+    "backend_options": {
+      "max_turns": 4
+    }
+  }
+]

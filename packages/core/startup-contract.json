@@ -1,0 +1,11 @@
+{
+  "schema_version": "calyx-startup-contract/v1",
+  "required_env": [
+    "CALYX_HOST_ALIAS",
+    "CALYX_SCOPED_SECRETS_PROJECTOR_CONTRACT"
+  ],
+  "required_env_values": {
+    "CALYX_SCOPED_SECRETS_PROJECTOR_CONTRACT": "with-scoped-polli-secrets/v2"
+  },
+  "consumer_api_secret_policy": "host-scoped/v1"
+}

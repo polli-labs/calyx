@@ -1,0 +1,41 @@
+{
+  "version": "v1",
+  "providers": [
+    {
+      "provider": "gemini",
+      "expected": {
+        "event_count": 2,
+        "started_at": "2026-03-07T21:18:59.486Z",
+        "last_event_at": "2026-03-07T21:19:00.897Z",
+        "entries": [
+          {
+            "role": "user",
+            "content": "Respond with fixture-ok only."
+          },
+          {
+            "role": "assistant",
+            "content": "fixture-ok"
+          }
+        ]
+      }
+    },
+    {
+      "provider": "hermes",
+      "expected": {
+        "event_count": 2,
+        "started_at": "2026-03-07T21:20:42.065Z",
+        "last_event_at": "2026-03-07T21:20:43.390Z",
+        "entries": [
+          {
+            "role": "user",
+            "content": "Respond with fixture-ok only."
+          },
+          {
+            "role": "assistant",
+            "content": "fixture-ok"
+          }
+        ]
+      }
+    }
+  ]
+}

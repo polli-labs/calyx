@@ -41,15 +41,15 @@
     },
     {
       "run_id": "run-003-running",
-      "command": "calyx agents deploy --backend claude --apply",
+      "command": "calyx agents validate --registry instructions/agents/AGENTS.json",
       "state": "running",
       "created_at": "2026-02-28T10:10:00Z",
       "started_at": "2026-02-28T10:10:02Z",
       "metadata": {
-        "backend": "claude"
+        "domain": "agents"
       },
       "logs": [
-        { "timestamp": "2026-02-28T10:10:02Z", "level": "info", "message": "Deploying agents to claude backend" }
+        { "timestamp": "2026-02-28T10:10:02Z", "level": "info", "message": "Validating agent definitions registry" }
       ]
     },
     {

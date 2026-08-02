@@ -1,0 +1,25 @@
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "issue": "POL-700",
+  "host": "blade",
+  "backend": "codex",
+  "prompt": "Implement the feature described in the ExecPlan.",
+  "require_execplan": true,
+  "pull_execplan": false,
+  "execplan_ref": "execplan/POL-700/inputs/plan.md",
+  "worktree": {
+    "ref": "origin/main",
+    "branch": "pol-700-runner-scaffold",
+    "steal_lock": false
+  },
+  "required_artifacts": ["receipt.json"],
+  "backend_options": {
+    "max_threads": 4
+  },
+  "notifications": {
+    "ntfy_topic": "calyx-runs"
+  },
+  "metadata": {
+    "sprint": "2026-W09"
+  }
+}

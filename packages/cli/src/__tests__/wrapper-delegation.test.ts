@@ -24,12 +24,46 @@ describe("resolveWrapperDelegation", () => {
     expect(resolveWrapperDelegation(["node", "calyx", "config", "compile"])).toBeNull();
   });
 
-  test("returns null for retired wrappers (handled by buildProgram)", () => {
-    expect(resolveWrapperDelegation(["node", "calyx", "skills-sync"])).toBeNull();
+  test("retired wrappers throw their tombstone diagnostic before Commander parsing", () => {
+    expect(() => resolveWrapperDelegation(["node", "calyx", "skills-sync"])).toThrow("was removed");
+    try {
+      resolveWrapperDelegation(["node", "calyx", "skills-sync"]);
+      expect.unreachable("retired wrapper should throw");
+    } catch (error: unknown) {
+      expect((error as { exitCode?: number }).exitCode).toBe(6);
+    }
   });
 
-  test("returns null for deferred wrappers (handled by buildProgram)", () => {
-    expect(resolveWrapperDelegation(["node", "calyx", "agents-fleet"])).toBeNull();
+  test("help for retired wrappers throws the same tombstone diagnostic", () => {
+    expect(() => resolveWrapperDelegation(["node", "calyx", "help", "skills-sync"])).toThrow("was removed");
+    try {
+      resolveWrapperDelegation(["node", "calyx", "help", "skills-sync"]);
+      expect.unreachable("retired wrapper help should throw");
+    } catch (error: unknown) {
+      expect((error as { exitCode?: number }).exitCode).toBe(6);
+    }
+  });
+
+  test("deprecated wrappers throw their tombstone diagnostic before Commander parsing", () => {
+    for (const wrapper of ["agent-notify", "agents-fleet"]) {
+      try {
+        resolveWrapperDelegation(["node", "calyx", wrapper]);
+        expect.unreachable(`${wrapper} should throw`);
+      } catch (error: unknown) {
+        expect((error as { message?: string }).message).toContain("will not be implemented in v1");
+        expect((error as { exitCode?: number }).exitCode).toBe(5);
+      }
+    }
+  });
+
+  test("help for deprecated wrappers throws the same tombstone diagnostic", () => {
+    try {
+      resolveWrapperDelegation(["node", "calyx", "help", "agent-notify"]);
+      expect.unreachable("deprecated wrapper help should throw");
+    } catch (error: unknown) {
+      expect((error as { message?: string }).message).toContain("will not be implemented in v1");
+      expect((error as { exitCode?: number }).exitCode).toBe(5);
+    }
   });
 
   test("returns null for empty argv", () => {
@@ -85,6 +119,11 @@ describe("resolveWrapperDelegation", () => {
     ]);
   });
 
+  test("rewrites help for implemented wrappers to canonical command help", () => {
+    const result = resolveWrapperDelegation(["node", "calyx", "help", "agents-toolkit-doctor"]);
+    expect(result).toEqual(["node", "calyx", "help", "doctor"]);
+  });
+
   test("emits telemetry to stderr on delegation", () => {
     const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     resolveWrapperDelegation(["node", "calyx", "agents-toolkit-doctor"]);
@@ -114,7 +153,7 @@ describe("resolveWrapperDelegation", () => {
     const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
-      resolveWrapperDelegation(["node", "calyx", "agent-notify"]);
+      resolveWrapperDelegation(["node", "calyx", "agents-toolkit-doctor"]);
       expect.unreachable("should have thrown");
     } catch (error: unknown) {
       expect((error as { exitCode?: number }).exitCode).toBe(6);
@@ -197,16 +236,14 @@ describe("wrapper delegation integration", () => {
 // ── Regression: wrappers must NOT be no-op success ───────────────────
 
 describe("wrapper delegation prevents no-op regression", () => {
-  test("implemented wrapper action handler is superseded by runCli delegation", () => {
-    // The buildProgram action handler for implemented wrappers is advisory-only.
-    // Real delegation happens in runCli via resolveWrapperDelegation.
-    // This test proves that resolveWrapperDelegation produces a non-null
-    // result for every implemented wrapper — meaning runCli will always
-    // route to the canonical command instead of the advisory action.
+  test("implemented wrappers delegate through preparse rewriting, not Commander registrations", () => {
+    const program = buildProgram();
     const implemented = WRAPPER_REGISTRY.filter((d) => d.status === "implemented");
-    expect(implemented.length).toBe(9);
+    expect(implemented.length).toBe(8);
 
     for (const def of implemented) {
+      expect(program.commands.map((command) => command.name())).not.toContain(def.wrapper);
+
       const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const result = resolveWrapperDelegation(["node", "calyx", def.wrapper, "--json"]);
       stderrSpy.mockRestore();

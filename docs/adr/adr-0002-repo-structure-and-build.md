@@ -29,10 +29,12 @@ This ADR locks the bootstrap baseline for:
   - curated release syncs/tags are promoted to `calyx`
   - mirrors POL-499 private-dev/public pattern
 
-### A2) Core package namespace
+### A2) Core and runtime package namespace
 - `@polli-labs/calyx` (CLI package)
 - `@polli-labs/calyx-core` (domain contracts + core runtime)
 - `@polli-labs/calyx-sdk` (extension SDK)
+- `@polli-labs/calyx-run-service` (run orchestration + dual-layer store)
+- `@polli-labs/calyx-server` (authenticated run control plane)
 - `@polli-labs/calyx-web` (human-facing companion surface)
 
 ### A3) CLI command contract
@@ -68,22 +70,33 @@ calyx/
     release.yml
     smoke.yml
   packages/
-    core/         # @polli-labs/calyx-core
-    cli/          # @polli-labs/calyx
-    sdk/          # @polli-labs/calyx-sdk
-    web/          # @polli-labs/calyx-web
+    sdk/             # @polli-labs/calyx-sdk
+    core/            # @polli-labs/calyx-core
+    cli/             # @polli-labs/calyx
+    runner/          # @polli-labs/calyx-runner
+    run-service/     # @polli-labs/calyx-run-service
+    server/          # @polli-labs/calyx-server
+    client/          # @polli-labs/calyx-client
+    web/             # @polli-labs/calyx-web
+    calyx-ext-codex/
+    calyx-ext-polli/
+    calyx-ext-linear/
+    calyx-ext-cursor/
   fixtures/
     config-compiler/
       inputs/
       expected/
   docs/
     adr/
-    execplans/
+    architecture/
 ```
 
 Notes:
-- `packages/web` may stay minimal in P1 and grow in P3+.
-- `fixtures/config-compiler` is first-class from day one to enforce parity discipline.
+- `packages/runner`, `packages/run-service`, and `packages/server` keep
+  execution, receipts, and authenticated control-plane behavior out of `core`
+  and `web`.
+- `packages/client` is generated from the capability contract.
+- `fixtures/config-compiler` is first-class to enforce parity discipline.
 
 ## Decision D: Build Tooling and Test Stack
 ### D1) Package manager

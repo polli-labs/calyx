@@ -1,0 +1,24 @@
+version: 1
+kind: task
+id: safe-codex-task
+name: Safe Codex Task
+status: active
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=7;BYMINUTE=30"
+runtime:
+  backend: codex_app
+  agent: codex
+  model: gpt-5.4
+  reasoning_effort: high
+  execution_environment: local
+  workspace:
+    cwd: /Users/carbon/dev/calyx/dev
+prompt:
+  body: |
+    Run the exactly representable task.
+install:
+  targets:
+    - host: carbon
+      backend: codex_app
+      status: active

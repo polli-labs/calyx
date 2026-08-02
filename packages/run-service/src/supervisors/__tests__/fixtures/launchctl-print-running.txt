@@ -1,0 +1,84 @@
+gui/501/com.pollilabs.calyx.run-serve = {
+	active count = 1
+	path = /Users/carbon/Library/LaunchAgents/com.pollilabs.calyx.run-serve.plist
+	type = LaunchAgent
+	state = running
+
+	program = /Users/carbon/.config/polli/bin/with-polli-secrets
+	arguments = {
+		/Users/carbon/.config/polli/bin/with-polli-secrets
+		/Users/carbon/.agents/run/calyx
+		run
+		serve
+		--host
+		0.0.0.0
+		--port
+		8740
+		--runs-root
+		/Users/carbon/.calyx/runs
+		--worktree-base
+		/Users/carbon/projects
+	}
+
+	working directory = /Users/carbon
+
+	stdout path = /Users/carbon/.calyx/run-serve.launchd.out.log
+	stderr path = /Users/carbon/.calyx/run-serve.launchd.err.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.sAAcIdHTeq/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		PATH => /Users/carbon/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+		XPC_SERVICE_NAME => com.pollilabs.calyx.run-serve
+	}
+
+	domain = gui/501 [100022]
+	asid = 100022
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 2
+	pid = 75012
+	immediate reason = inefficient
+	forks = 3
+	execs = 5
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	checked allocations = 0 (queried = 1)
+	checked allocations reason = no host
+	checked allocations flags = 0x0
+	last terminating signal = Terminated: 15
+
+	resource coalition = {
+		ID = 1026
+		type = resource
+		state = active
+		active count = 1
+		name = com.pollilabs.calyx.run-serve
+	}
+
+	jetsam coalition = {
+		ID = 1027
+		type = jetsam
+		state = active
+		active count = 1
+		name = com.pollilabs.calyx.run-serve
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+
+	properties = keepalive | runatload | inferred program | managed LWCR
+}

@@ -1,0 +1,27 @@
+version: 1
+kind: task
+id: skills-quality-check
+name: Skills Quality Check
+status: paused
+description: Advisory skill quality scan.
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=8;BYMINUTE=0"
+    timezone: America/New_York
+runtime:
+  backend: codex_app
+  agent: codex
+  model: gpt-5.4
+  reasoning_effort: medium
+  execution_environment: sandbox
+  workspace:
+    mode: existing
+    cwd: /Users/carbon/dev/agents-infra/dev
+prompt:
+  body: |
+    Run an advisory skill quality scan.
+install:
+  targets:
+    - host: carbon
+      backend: codex_app
+      status: paused

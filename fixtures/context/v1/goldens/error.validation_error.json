@@ -1,0 +1,19 @@
+{
+  "version": "v1",
+  "ok": false,
+  "primitive": "pack",
+  "error": {
+    "code": "validation_error",
+    "exit_code": 2,
+    "message": "ctxpack/pack request failed contract v1 validation.",
+    "details": {
+      "issues": [
+        {
+          "code": "too_small",
+          "path": "plan_hash",
+          "message": "String must contain at least 1 character(s)"
+        }
+      ]
+    }
+  }
+}

@@ -6,3 +6,6 @@ coverage/
 *.log
 .tmp/
 *.tsbuildinfo
+outputs/
+.runtime/
+.calyx-runner.lock

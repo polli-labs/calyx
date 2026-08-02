@@ -38,19 +38,24 @@ jobs:
       - run: npm --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - name: Publish @polli-labs/calyx-core
-        run: pnpm --filter @polli-labs/calyx-core publish --no-git-checks --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ""
-      - name: Publish @polli-labs/calyx-sdk
-        run: pnpm --filter @polli-labs/calyx-sdk publish --no-git-checks --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ""
-      - name: Publish @polli-labs/calyx
-        run: pnpm --filter @polli-labs/calyx publish --no-git-checks --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ""
-      - name: Publish @polli-labs/calyx-web
-        run: pnpm --filter @polli-labs/calyx-web publish --no-git-checks --access public --provenance
+      # The publish set is derived from the workspace, not listed here: see
+      # scripts/release-plan.mjs. A hand-kept list here and a `workspace:*`
+      # dependency graph in the manifests cannot be reconciled by anything that
+      # runs before a consumer's failed install.
+      - name: Require gated closure dependencies on the registry
+        run: |
+          set -euo pipefail
+          node scripts/release-plan.mjs --gated-dependencies > gated-dependencies.txt
+          while read -r package_name; do
+            npm view "${package_name}" name --registry https://registry.npmjs.org
+          done < gated-dependencies.txt
+      - name: Publish the tagged release closure
+        run: |
+          set -euo pipefail
+          node scripts/release-plan.mjs > release-plan.txt
+          cat release-plan.txt
+          while read -r package_name; do
+            pnpm --filter "${package_name}" publish --no-git-checks --access public --provenance
+          done < release-plan.txt
         env:
           NODE_AUTH_TOKEN: ""

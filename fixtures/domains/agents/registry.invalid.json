@@ -1,22 +1,15 @@
 {
-  "version": "2026-02-27",
+  "version": "1",
   "agents": [
     {
-      "id": "blade-runner",
-      "name": "Blade Runner",
-      "hosts": [
-        { "host": "blade", "role": "primary" }
-      ]
+      "id": "fixture-reviewer",
+      "path": "fixture-reviewer/agent.yaml",
+      "status": "active"
     },
     {
-      "id": "blade-runner",
-      "name": "Duplicate Agent",
-      "status": "deprecated"
-    },
-    {
-      "id": "retired-agent",
-      "name": "Retired Agent",
-      "status": "archived"
+      "id": "fixture-reviewer",
+      "path": "missing/agent.yaml",
+      "status": "active"
     }
   ]
 }

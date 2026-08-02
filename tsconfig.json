@@ -1,12 +1,17 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/cli" },
-    { "path": "./packages/sdk" },
-    { "path": "./packages/web" },
-    { "path": "./packages/calyx-ext-polli" },
+    { "path": "./packages/calyx-ext-codex" },
+    { "path": "./packages/calyx-ext-cursor" },
     { "path": "./packages/calyx-ext-linear" },
-    { "path": "./packages/calyx-ext-cursor" }
+    { "path": "./packages/calyx-ext-polli" },
+    { "path": "./packages/cli" },
+    { "path": "./packages/client" },
+    { "path": "./packages/core" },
+    { "path": "./packages/run-service" },
+    { "path": "./packages/runner" },
+    { "path": "./packages/sdk" },
+    { "path": "./packages/server" },
+    { "path": "./packages/web" }
   ]
 }

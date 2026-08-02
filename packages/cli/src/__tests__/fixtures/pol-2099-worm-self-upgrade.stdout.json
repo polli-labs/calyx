@@ -1,0 +1,389 @@
+{
+  "status": "succeeded",
+  "plan": {
+    "host": "worm",
+    "repo_root": "/home/caleb/dev/calyx/dev",
+    "current_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+    "target_ref": "origin/main",
+    "target_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+    "target_evidence": {
+      "original_ref": "origin/main",
+      "target_sha": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "fetch_remote": "origin",
+      "fetch_ref": "main"
+    },
+    "dirty": false,
+    "dirty_paths": [],
+    "missing_build_artifacts": [],
+    "daemons": [
+      {
+        "daemon_id": "run-serve",
+        "pid": 660994,
+        "runs_root": "/home/caleb/.calyx/runs",
+        "health_url": "http://worm:8740",
+        "restart_order": 10,
+        "supervisor": {
+          "kind": "systemd",
+          "unit_name": "calyx-run-serve.service"
+        },
+        "build": {
+          "git_head": "bb7b85125fb4c0aa237b76e1c172609ec363795b",
+          "built_at": "2026-07-28T06:24:22.969Z",
+          "package_version": "0.2.0"
+        },
+        "maintenance_mode": false
+      }
+    ],
+    "active_runs_post_reconcile": [],
+    "startup_contract": {
+      "status": "compatible",
+      "mutation_disposition": "allow",
+      "blocking_reasons": [],
+      "contract_schema_version": "calyx-startup-contract/v1",
+      "required_env": [
+        "CALYX_HOST_ALIAS",
+        "CALYX_SCOPED_SECRETS_PROJECTOR_CONTRACT"
+      ],
+      "contract_digest": "1887417a06cdbf012095b54daa13a0cf81859177c2c96dba57ed075133d7b6c3",
+      "contract_source": "worktree:399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "per_daemon": [
+        {
+          "daemon_id": "run-serve",
+          "supervisor_kind": "systemd",
+          "status": "compatible",
+          "provided_env": [
+            "CALYX_CONSUMER_API_DAEMON_BLADE_V1_VERIFIER_SHA256",
+            "CALYX_CONSUMER_API_DAEMON_CARBON_V1_VERIFIER_SHA256",
+            "CALYX_CONSUMER_API_DAEMON_MBA_V1_VERIFIER_SHA256",
+            "CALYX_CONSUMER_API_DAEMON_WORM_V1_TOKEN",
+            "CALYX_CONSUMER_API_DAEMON_WORM_V1_VERIFIER_SHA256",
+            "CALYX_CONSUMER_API_OPERATOR_CLI_V1_VERIFIER_SHA256",
+            "CALYX_CONSUMER_API_SWITCHBOARD_V1_VERIFIER_SHA256",
+            "CALYX_HOST_ALIAS",
+            "CALYX_RUN_SERVER_TOKEN",
+            "CALYX_SCOPED_SECRETS_PROJECTOR_CONTRACT",
+            "CALYX_SYSTEMD_UNIT",
+            "HOME",
+            "LINEAR_API_KEY",
+            "LOGNAME",
+            "PATH",
+            "USER",
+            "VAULT_PATH",
+            "XDG_CONFIG_HOME"
+          ],
+          "source": "systemctl --user cat calyx-run-serve.service"
+        }
+      ]
+    },
+    "blockers": [],
+    "warnings": [],
+    "diagnostics": [],
+    "promoted_build": {
+      "git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "install_path": "/home/caleb/.calyx/installs/399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "current_link": "/home/caleb/.calyx/installs/current"
+    }
+  },
+  "operation_id": "self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd",
+  "receipt_path": "/home/caleb/.calyx/self-upgrade-receipts/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd.json",
+  "receipt": {
+    "schema_version": "self-upgrade-receipt/v1",
+    "operation_id": "self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd",
+    "fleet_operation_id": "fleet-2026-07-28T07-13-35-412Z-5a0225cd-dcc3-4402-ae10-ddcf2a44b63b",
+    "host": "worm",
+    "target_ref": "origin/main",
+    "target_evidence": {
+      "original_ref": "origin/main",
+      "target_sha": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "fetch_remote": "origin",
+      "fetch_ref": "main"
+    },
+    "status": "succeeded",
+    "started_at": "2026-07-28T07:14:53.816Z",
+    "completed_at": "2026-07-28T07:16:53.016Z",
+    "repo_root": "/home/caleb/dev/calyx/dev",
+    "before_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+    "after_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+    "commit_list": [],
+    "before_builds": [
+      {
+        "daemon_id": "run-serve",
+        "pid": 660994,
+        "build": {
+          "git_head": "bb7b85125fb4c0aa237b76e1c172609ec363795b",
+          "built_at": "2026-07-28T06:24:22.969Z",
+          "package_version": "0.2.0"
+        }
+      }
+    ],
+    "after_builds": [
+      {
+        "daemon_id": "run-serve",
+        "pid": 664707,
+        "build": {
+          "git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+          "built_at": "2026-07-28T07:14:47.705Z",
+          "package_version": "0.2.0"
+        }
+      }
+    ],
+    "active_run_classification": [],
+    "drain_mode": "drain",
+    "readopted_run_ids": [],
+    "drain_duration_ms": 21598,
+    "daemons_restarted": [
+      {
+        "daemon_id": "run-serve",
+        "supervisor": "systemd",
+        "stopped": "systemd-stop",
+        "started": "calyx-run-serve.service"
+      }
+    ],
+    "explicit_target_adoption": {
+      "mode": "ff-only",
+      "target_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "fetch_head": "399d5a11dd330dd85ef49ecaff543964676e1c08"
+    },
+    "install": {
+      "install_path": "/home/caleb/.calyx/installs/399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "current_link": "/home/caleb/.calyx/installs/current",
+      "previous_current_install_path": "/home/caleb/.calyx/installs/bb7b85125fb4c0aa237b76e1c172609ec363795b",
+      "build_info_path": "/home/caleb/.calyx/installs/399d5a11dd330dd85ef49ecaff543964676e1c08/.build-info.json",
+      "bin_path": "/home/caleb/.calyx/installs/399d5a11dd330dd85ef49ecaff543964676e1c08/node_modules/@polli-labs/calyx/dist/bin.js",
+      "git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "verified_version": "0.2.0",
+      "artifact_manifest_sha256": "fe8d0d7dab9b9cd91b24a2d79cddb9daffaf5375c5662ba46ba4f365b939fb4c",
+      "artifact_manifest_packages": [
+        "@polli-labs/calyx",
+        "@polli-labs/calyx-client",
+        "@polli-labs/calyx-core",
+        "@polli-labs/calyx-run-service",
+        "@polli-labs/calyx-runner",
+        "@polli-labs/calyx-sdk",
+        "@polli-labs/calyx-server",
+        "calyx-ext-codex",
+        "calyx-ext-linear"
+      ],
+      "pruned": [
+        "/home/caleb/.calyx/installs/4ffc6f1d9f68979e010f1296efce30b252947d1d"
+      ],
+      "materialized": false,
+      "promoted": true,
+      "mechanism": "pack-install",
+      "rollback_command": "ln -sfn <previous-install-dirname> /home/caleb/.calyx/installs/current",
+      "swept_stale_temps": []
+    },
+    "target_acceptance": {
+      "schema_version": "self-upgrade-target-acceptance/v1",
+      "status": "accepted",
+      "operation_id": "self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd",
+      "executor_realpath": "/home/caleb/.calyx/installs/399d5a11dd330dd85ef49ecaff543964676e1c08/node_modules/.pnpm/@polli-labs+calyx@file+tarballs+polli-labs-calyx-0.2.0.tgz/node_modules/@polli-labs/calyx/dist/bin.js",
+      "node_realpath": "/home/caleb/.nvm/versions/node/v22.22.1/bin/node",
+      "node_version": "v22.22.1",
+      "target_git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "target_build_info_sha256": "2a68521f7d7cf92ac6c3432f0616468038d5610af85d4b85828b69edfa95e9f5",
+      "target_artifact_manifest_sha256": "fe8d0d7dab9b9cd91b24a2d79cddb9daffaf5375c5662ba46ba4f365b939fb4c",
+      "target_artifact_manifest_packages": [
+        "@polli-labs/calyx",
+        "@polli-labs/calyx-client",
+        "@polli-labs/calyx-core",
+        "@polli-labs/calyx-run-service",
+        "@polli-labs/calyx-runner",
+        "@polli-labs/calyx-sdk",
+        "@polli-labs/calyx-server",
+        "calyx-ext-codex",
+        "calyx-ext-linear"
+      ],
+      "handoff_interface": "self-upgrade-target-handoff/v1",
+      "planning_interface": "self-upgrade-target-planning/v1",
+      "startup_contract_interface": "calyx-startup-contract/v1",
+      "accepted_at": "2026-07-28T07:14:53.846Z"
+    },
+    "target_state_readiness": {
+      "schema_version": "self-upgrade-target-state-readiness/v1",
+      "status": "ready",
+      "target_git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "driver": "node:sqlite",
+      "current": "0034",
+      "target": "0034",
+      "ledger_exists": true,
+      "applied_migrations": [
+        "0001",
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006",
+        "0007",
+        "0008",
+        "0009",
+        "0010",
+        "0011",
+        "0012",
+        "0013",
+        "0014",
+        "0015",
+        "0016",
+        "0017",
+        "0018",
+        "0019",
+        "0020",
+        "0021",
+        "0022",
+        "0023",
+        "0024",
+        "0025",
+        "0026",
+        "0027",
+        "0028",
+        "0029",
+        "0030",
+        "0031",
+        "0032",
+        "0033",
+        "0034"
+      ],
+      "pending_migrations": [],
+      "pending_migration_growth_bounds": []
+    },
+    "target_state_migrated": {
+      "schema_version": "self-upgrade-target-state-migrated/v1",
+      "status": "migrated",
+      "target_git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "driver": "node:sqlite",
+      "current": "0034",
+      "target": "0034",
+      "applied_migrations": [],
+      "migration_growth_bound_bytes": 0,
+      "observed_state_growth_bytes": 0
+    },
+    "target_state_applied": {
+      "schema_version": "self-upgrade-target-state-applied/v1",
+      "status": "applied",
+      "target_git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "driver": "node:sqlite",
+      "current": "0034",
+      "target": "0034",
+      "applied_migrations": [
+        "0001",
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006",
+        "0007",
+        "0008",
+        "0009",
+        "0010",
+        "0011",
+        "0012",
+        "0013",
+        "0014",
+        "0015",
+        "0016",
+        "0017",
+        "0018",
+        "0019",
+        "0020",
+        "0021",
+        "0022",
+        "0023",
+        "0024",
+        "0025",
+        "0026",
+        "0027",
+        "0028",
+        "0029",
+        "0030",
+        "0031",
+        "0032",
+        "0033",
+        "0034"
+      ],
+      "pending_migrations": []
+    },
+    "state_snapshot": {
+      "schema_version": "self-upgrade-state-snapshot/v1",
+      "status": "snapshotted",
+      "database_path": "/home/caleb/.calyx/state/calyx.db",
+      "backup_path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd/calyx.db",
+      "database_sha256": "a4c712d72400db191f714c45f59b918d82057893c5b03405e503523c2c0150ff",
+      "size_bytes": 227356672,
+      "wal_checkpoint": "truncate",
+      "quick_check": "ok",
+      "restore_strategy": "precreated-same-filesystem-hardlink-rename",
+      "database_parent_identity": {
+        "path": "/home/caleb/.calyx/state",
+        "real_path": "/home/caleb/.calyx/state",
+        "kind": "directory",
+        "device": 66306,
+        "inode": 173422166
+      },
+      "backup_identity": {
+        "path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd/calyx.db",
+        "real_path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd/calyx.db",
+        "kind": "file",
+        "device": 66306,
+        "inode": 174857476
+      },
+      "backup_parent_identity": {
+        "path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd",
+        "real_path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd",
+        "kind": "directory",
+        "device": 66306,
+        "inode": 174857472
+      },
+      "rollback_candidate_path": "/home/caleb/.calyx/state/.calyx.db.self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd.rollback",
+      "rollback_candidate_identity": {
+        "path": "/home/caleb/.calyx/state/.calyx.db.self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd.rollback",
+        "real_path": "/home/caleb/.calyx/state/.calyx.db.self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd.rollback",
+        "kind": "file",
+        "device": 66306,
+        "inode": 174857476
+      },
+      "rollback_reserve_path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd/rollback-reserve.bin",
+      "rollback_reserve_identity": {
+        "path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd/rollback-reserve.bin",
+        "real_path": "/home/caleb/.calyx/state/.self-upgrade-backups/self-upgrade-2026-07-28T07-14-01-184Z-58d6146a-10bc-425a-87e6-86b285fb83dd/rollback-reserve.bin",
+        "kind": "file",
+        "device": 66306,
+        "inode": 174857478
+      },
+      "rollback_reserve_allocated_bytes": 16777216,
+      "capacity_preflight": {
+        "available_bytes": 1596542574592,
+        "required_bytes": 311181312,
+        "same_device": true,
+        "snapshot_bytes": 227295232,
+        "migration_growth_reserve_bytes": 67108864,
+        "target_declared_migration_growth_bytes": 0,
+        "rollback_allocation_bytes": 16777216
+      }
+    },
+    "supervisor_readiness": {
+      "schema_version": "self-upgrade-supervisor-readiness/v1",
+      "status": "unchanged",
+      "target_git_head": "399d5a11dd330dd85ef49ecaff543964676e1c08",
+      "source": "live-supervisor",
+      "supervisor_kinds": [
+        "systemd"
+      ]
+    },
+    "supervisor_install": {
+      "schema_version": "self-upgrade-supervisor-install/v1",
+      "status": "unchanged",
+      "reload": "none"
+    },
+    "maintenance_disposition": {
+      "status": "released",
+      "reason": "target health, migration convergence, and effective supervisor state verified after durable commit; prior maintenance state restored"
+    },
+    "artifact_cleanup": {
+      "state_backup": "cleaned",
+      "supervisor_backup": "not_created",
+      "retained_paths": [],
+      "errors": []
+    },
+    "warnings": []
+  }
+}

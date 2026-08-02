@@ -1,0 +1,16 @@
+{
+  "id": "context-plan-contract-v1",
+  "primitive": "plan",
+  "input": {
+    "version": "v1",
+    "roots": ["packages/core/src/context", "./packages/core/src/context"],
+    "include_sessions": false,
+    "include_git_meta": true,
+    "include": ["**/*.ts", "**/*.ts"],
+    "exclude": ["*.test.ts", ".git/**"],
+    "budget": {
+      "max_bytes": 90000,
+      "max_tokens": 30000
+    }
+  }
+}

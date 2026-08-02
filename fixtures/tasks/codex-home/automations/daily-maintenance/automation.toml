@@ -1,0 +1,13 @@
+version = 1
+id = "daily-maintenance"
+kind = "cron"
+name = "Daily Maintenance"
+prompt = "Run the daily maintenance procedure."
+status = "ACTIVE"
+rrule = "RRULE:FREQ=DAILY;BYHOUR=7;BYMINUTE=30"
+model = "gpt-5.4"
+reasoning_effort = "high"
+execution_environment = "local"
+cwds = ["/Users/carbon/dev/calyx/dev"]
+created_at = 1775093733222
+updated_at = 1775093733222

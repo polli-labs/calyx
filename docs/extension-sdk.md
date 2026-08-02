@@ -6,18 +6,20 @@ The `@polli-labs/calyx-sdk` package provides contracts and helpers for building 
 
 ### Package boundaries
 
-Calyx ships as four npm packages:
+Calyx ships as six npm packages:
 
 | Package | Purpose |
 |---------|---------|
 | `@polli-labs/calyx` | CLI binary (`calyx` command) |
 | `@polli-labs/calyx-core` | Domain contracts, compilers, validators |
 | `@polli-labs/calyx-sdk` | Extension SDK (this package) |
+| `@polli-labs/calyx-run-service` | Run orchestration, dual-layer store, reconciliation |
+| `@polli-labs/calyx-server` | Authenticated HTTP control plane over `run-service` |
 | `@polli-labs/calyx-web` | Web companion surface |
 
 Extensions depend on `@polli-labs/calyx-sdk` as a peer dependency. They do **not** need to depend on `calyx-core` or the CLI directly.
 
-### Domains
+### Hookable domains
 
 Calyx is organized into 8 domains:
 
@@ -32,7 +34,20 @@ Calyx is organized into 8 domains:
 | `knowledge` | Knowledge artifact indexing, search, linking |
 | `exec` | Execution lifecycle (launch, status, logs, receipt) |
 
-Extensions declare which domains they target in their manifest.
+Extensions declare which domains they target in their manifest. Declaring a domain means the extension hooks can observe or advise on commands in that domain. It does not, by itself, make the extension the owner of that domain's lifecycle semantics.
+
+The `run-service` and `server` packages are first-party runtime packages, not extension domains. Extension manifests still target the same 8 hookable domains.
+
+### Ownership boundaries
+
+Keep the ownership split explicit when deciding whether behavior belongs in an extension:
+
+- **Calyx core** owns canonical lifecycle semantics, typed contracts, and operator-facing command surfaces.
+- **Shared source repos** such as `agents-infra` own rendered-source truth, source-local tooling, and migration-era authoring flows outside the CLI.
+- **Repo-local wrappers/services** may add domain-specific orchestration on top of Calyx where that orchestration is not intended to be generic product behavior.
+- **Extensions** are optional hook packages. They should only claim semantics they actually implement.
+
+Shipped first-party extensions in this repo are currently advisory/reference packages, not broad workflow owners.
 
 ### Naming convention
 
@@ -318,7 +333,7 @@ Hooks run in deterministic order (alphabetical by extension name). A failing `be
 
 ### calyx-ext-polli
 
-The `calyx-ext-polli` package is the first-party Polli extension. It provides:
+The `calyx-ext-polli` package is the first-party Polli advisory extension. It provides:
 
 - **Pre-flight checks** on `sync`, `deploy`, and `validate` commands
 - **Environment readiness** diagnostics (checks for expected env vars)
@@ -326,15 +341,19 @@ The `calyx-ext-polli` package is the first-party Polli extension. It provides:
 
 Targets: `skills`, `tools`, `agents`. Ships in `packages/calyx-ext-polli` within the monorepo.
 
+It does **not** currently own broader Polli workflow semantics, source-truth management, or repo-specific orchestration. Treat it as an optional diagnostic overlay.
+
 ### calyx-ext-linear
 
-The `calyx-ext-linear` package provides Linear issue-tracking context for agents and execution workflows. It provides:
+The `calyx-ext-linear` package is the first-party Linear advisory extension. It provides:
 
 - **Environment hints** for `LINEAR_API_KEY` and `LINEAR_TEAM` on activation
 - **Issue context checks** before `launch`, `deploy`, `sync`, and `status` commands
 - **Failure diagnostics** with Linear-friendly suggestions (structured receipts for issue comments)
 
 Targets: `agents`, `exec`. Ships in `packages/calyx-ext-linear` within the monorepo. Non-destructive — never blocks commands.
+
+It does **not** currently own higher-order Linear workflow semantics such as issue-driven artifact authoring or stateful coordination flows. Treat it as an optional context/diagnostic overlay.
 
 ### calyx-ext-cursor
 

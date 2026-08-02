@@ -1,0 +1,18 @@
+version: 1
+kind: task
+id: no-timezone-task
+name: No Timezone Task
+status: active
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=8;BYMINUTE=0"
+runtime:
+  backend: codex_app
+  agent: codex
+  workspace:
+    mode: existing
+    cwd: /Users/carbon/dev/calyx/dev
+prompt:
+  body: |
+    Exercise advisory validation behavior.
+

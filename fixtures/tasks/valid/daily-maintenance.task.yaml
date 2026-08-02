@@ -1,0 +1,36 @@
+version: 1
+kind: task
+id: daily-maintenance
+name: Daily Maintenance
+status: active
+description: Daily fleet hygiene pass.
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=7;BYMINUTE=30"
+    timezone: America/New_York
+runtime:
+  backend: codex_app
+  agent: codex
+  model: gpt-5.4
+  reasoning_effort: high
+  execution_environment: local
+  workspace:
+    mode: existing
+    cwd: /Users/carbon/dev/calyx/dev
+prompt:
+  body: |
+    Run the daily maintenance procedure.
+  skills:
+    - calyx-fleet-ops
+state:
+  memory: vault://fieldwork/40-context/automations/daily-maintenance-memory.md
+safety:
+  max_concurrency: 1
+  timeout_minutes: 60
+  unattended_writes: advisory-first
+  destructive_actions: forbidden
+install:
+  targets:
+    - host: carbon
+      backend: codex_app
+      status: active

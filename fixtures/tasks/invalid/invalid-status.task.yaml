@@ -1,0 +1,14 @@
+version: 1
+kind: task
+id: invalid-status
+name: Invalid Status
+status: running
+triggers:
+  - type: schedule
+    rrule: "RRULE:FREQ=DAILY;BYHOUR=7;BYMINUTE=30"
+    timezone: America/New_York
+runtime:
+  backend: codex_app
+prompt:
+  body: |
+    This fixture should fail status validation.

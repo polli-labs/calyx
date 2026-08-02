@@ -1,6 +1,14 @@
 {
-  "version": "2026-02-27",
-  "generated_at": "2026-02-27T00:00:00Z",
+  "version": "2026-04-13",
+  "generated_at": "2026-04-13T00:00:00Z",
+  "schema_notes": {
+    "statuses": {
+      "active": "In use; included in sync by default",
+      "deprecated": "Superseded by another skill; must set deprecated_by; content retained for migration period",
+      "retired": "No longer in use; no successor required; retained for operational flexibility; should set retired_at",
+      "archived": "Frozen and preserved for history only; should set archived_at"
+    }
+  },
   "skills": [
     {
       "id": "agents-fleet",
@@ -30,6 +38,17 @@
         "type": "external",
         "repo": "https://github.com/badlogic/pi-skills",
         "path": "browser-tools/SKILL.md"
+      }
+    },
+    {
+      "id": "mcp-builder-legacy",
+      "status": "retired",
+      "retired_at": "2026-04-02",
+      "local_archive_path": "instructions/skills/_deprecated/mcp-builder/SKILL.md",
+      "source": {
+        "type": "external",
+        "repo": "https://github.com/anthropics/skills",
+        "path": "instructions/skills/_deprecated/mcp-builder/SKILL.md"
       }
     }
   ]
