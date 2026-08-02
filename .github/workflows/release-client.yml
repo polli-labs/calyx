@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 30
     environment: npm-client-release
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Verify repository, branch, source mapping, and package identity
         env:
           EXPECTED_PUBLIC_SHA: ${{ inputs.expected_public_sha }}
