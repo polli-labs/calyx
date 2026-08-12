@@ -115,6 +115,9 @@ describe("executeRun typed terminal output capture", () => {
       },
       output_capture: capture,
       backend_options: { sandbox: "read-only" },
+      metadata: {
+        agent_definition: { workspace_mutation: "forbidden" },
+      },
     };
   }
 
@@ -136,6 +139,7 @@ describe("executeRun typed terminal output capture", () => {
     expect(adapterOptions?.output_capture).toEqual(outputCapture());
     expect(adapterOptions?.cwd).toBe(worktree);
     expect(adapterOptions?.backend_options?.env).toBeUndefined();
+    expect(adapterOptions?.workspace_mutation).toBe("forbidden");
     expect(result.receipt.state).toBe("succeeded");
     expect(result.receipt.exit.failure_class).toBe("success");
     expect(result.receipt.artifacts.gate_passed).toBe(true);

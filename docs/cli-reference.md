@@ -177,13 +177,14 @@ calyx verify fleet --strict --json
 
 ## Fleet Commands
 
-Read persisted fleet convergence state from the local SQLite state store.
+Read persisted fleet convergence state through the enrolled-host topology
+snapshot. The state store supplies observations; it never supplies membership.
 
 ### `calyx fleet status`
 
-Answer whether hosts are converged per persisted leg without probing the fleet.
-Rows are written by observation commands such as `calyx self freshness` and
-partial-failure handling in `calyx self upgrade --fleet`.
+Answer whether desired-active hosts are converged per persisted leg without
+probing the fleet. Rows are written by observation commands such as `calyx self
+freshness` and partial-failure handling in `calyx self upgrade --fleet`.
 
 ```bash
 calyx fleet status [--host <host>] [--json]
@@ -191,14 +192,24 @@ calyx fleet status [--host <host>] [--json]
 
 **Options:**
 - `--host <host>` — Filter to one host alias
-- `--json` — Print a `fleet-convergence-status/v1` payload
+- `--json` — Print a `fleet-convergence-status/v2` payload
 
 **Behavior:**
-- Reads the local `fleet_convergence` SQLite table only.
-- Rolls leg rows up per host. Host verdict precedence is
+- Resolves one read-only `fleet-topology-snapshot/v1`, names its source commit
+  and projection digest, then reads the local `fleet_convergence` SQLite table.
+- Projects rows over `desired_active`, even when a host has no persisted row.
+  Rolls leg rows up per host. Host verdict precedence is
   `structural` > `pending` > `fresh`; a requested host with no rows reports
-  `missing`.
+  `missing` with effective state `unavailable` and fails the aggregate.
+- Reports `withdrawn` hosts under `excluded_withdrawn`; they are never counted
+  in `desired_active_total` or the green verdict denominator.
+- A non-authoritative topology snapshot remains inspectable but cannot emit a
+  green verdict.
 - Does not apply, reconcile, poke, escalate, or contact remote hosts.
+
+**Exit codes:**
+- `0` — Every desired-active host is fresh and the topology snapshot is authoritative
+- `6` — A desired-active host is pending, structural, missing/unavailable, or the topology snapshot cannot emit green
 
 **Examples:**
 ```bash
@@ -299,8 +310,8 @@ Daemon drift inspection against the local Calyx source checkout.
 
 ### `calyx self drift`
 
-Compare one daemon, or the full truth-store fleet, against a target git ref from
-the local Calyx clone.
+Compare one daemon, or the desired-active topology set, against a target git
+ref from the local Calyx clone.
 
 ```bash
 calyx self drift [--host <h>] [--fleet] [--against <ref>] [--json]
@@ -308,15 +319,22 @@ calyx self drift [--host <h>] [--fleet] [--against <ref>] [--json]
 
 **Options:**
 - `--host <h>` — Single host to inspect (default: `local`)
-- `--fleet` — Iterate all hosts declared in `fleet/truths/hosts.yaml`
+- `--fleet` — Inspect the `desired_active` set from one fleet topology snapshot
 - `--against <ref>` — Target ref resolved through the conductor's validated Calyx compare checkout (default: `origin/main`)
-- `--json` — Print a machine-readable per-host result array
+- `--json` — Print a machine-readable per-host result array, or a
+  `self-drift-fleet/v1` topology-bound envelope in fleet mode
 
 **Behavior:**
 - Reads each target daemon's authenticated `GET /v1/admin/health` endpoint and inspects `build.git_head`.
 - Local-host checks use `http://127.0.0.1:8740/v1/admin/health`; remote hosts default to `http://<host>:8740/v1/admin/health`.
 - Authentication resolves the target host's named `operator_cli` outbound credential; this command does not expose an inline `--auth-token` flag.
-- `--fleet` enumerates hosts from `fleet/truths/hosts.yaml` via the resolved agents-infra root.
+- `--fleet` resolves membership once through the topology resolver. Every
+  desired-active host remains in the result even when unreachable; its
+  effective state is `unavailable`, and it fails the aggregate.
+- Fleet output names `topology_snapshot.source.commit` and
+  `topology_snapshot.projection_sha256`. Withdrawn hosts appear under
+  `excluded_withdrawn`, outside the active denominator, and non-authoritative
+  topology cannot emit green.
 - Drift is classified as `current`, `minor`, `major`, `critical`, `needs_fetch`, or `broken`.
 - A `schema` column and a `schema` JSON object report each host's state-store
   migration head, measured against the migration source of the calyx build
@@ -347,7 +365,7 @@ calyx self drift [--host <h>] [--fleet] [--against <ref>] [--json]
   `git -C ... fetch` action from the Calyx package install path.
 
 **Exit codes:**
-- `0` — All inspected hosts are `current`
+- `0` — All desired-active hosts are `current` and the topology snapshot is authoritative
 - `1` — One or more hosts are not `current`, including local compare repair
   states such as `needs_fetch`
 - `2` — Usage error or missing target-host `operator_cli` outbound credential
@@ -361,7 +379,7 @@ calyx self drift --fleet --json
 
 ### `calyx self freshness`
 
-Summarize whether one host, or the configured fleet, is ready to take work.
+Summarize whether one host, or the desired-active topology set, is ready to take work.
 Freshness composes daemon reachability, git drift, advertised daemon feature
 support, maintenance mode, and active-run count into one verdict plus a compact
 next action.
@@ -372,7 +390,7 @@ calyx self freshness [--host <h>] [--fleet] [--against <ref>] [--json]
 
 **Options:**
 - `--host <h>` — Single host to inspect (default: `local`)
-- `--fleet` — Iterate all hosts declared in `fleet/truths/hosts.yaml`
+- `--fleet` — Inspect the `desired_active` set from one fleet topology snapshot
 - `--against <ref>` — Target ref for drift comparison (default: `origin/main`)
 - `--json` — Print a `self-freshness/v1` payload
 
@@ -381,6 +399,13 @@ calyx self freshness [--host <h>] [--fleet] [--against <ref>] [--json]
   `calyx self drift`. Health, install, capability, and daemon-drift facts for
   each host derive from one admin-health observation so a restart cannot
   produce a mixed-generation freshness row.
+- Fleet mode binds health and drift to the same topology snapshot, includes its
+  source commit and projection digest, and reports withdrawn hosts separately
+  under `excluded_withdrawn`.
+- An unreachable desired-active host has effective state `unavailable`, remains
+  in `desired_active_total`, and makes `fleet_summary.green` false. Withdrawn
+  hosts never enter that denominator. A non-authoritative snapshot cannot emit
+  green even if every observed host is fresh.
 - Separately reports running daemon build (`/v1/admin/health` `build.git_head`),
   promoted build (`~/.calyx/installs/current/.build-info.json`), and clone HEAD
   (`git rev-parse HEAD`) so operators can distinguish built-but-not-promoted
@@ -442,7 +467,7 @@ calyx self nudge [--fleet] [--project <slug>] [--dry-run] [--json]
 ```
 
 **Options:**
-- `--fleet` — Iterate all hosts declared in `fleet/truths/hosts.yaml`; omit to check only the local host
+- `--fleet` — Inspect the desired-active topology set; omit to check only the local host
 - `--project <slug>` — Linear project slug or name; defaults to `CALYX_LINEAR_PROJECT`, then `LINEAR_PROJECT`, then the repo convention `Agents Tooling (Ongoing)`
 - `--dry-run` — Print the intended Linear mutations without creating labels, issues, comments, or state changes
 - `--json` — Print the full machine-readable filing/reconciliation result
@@ -571,7 +596,7 @@ Daemon health inspection and guarded upgrade operations.
 ### `calyx self health`
 
 Probe authenticated run-server health for the local host, one named host, or
-the configured fleet.
+the desired-active topology set.
 
 ```bash
 calyx self health [options]
@@ -579,13 +604,22 @@ calyx self health [options]
 
 **Options:**
 - `--host <h>` — Probe one host alias from `fleet/truths/hosts.yaml`
-- `--fleet` — Probe every host with `run_serve_url` configured in `fleet/truths/hosts.yaml`
-- `--json` — Print an array of per-host success/error payloads
+- `--fleet` — Probe the `desired_active` set from one fleet topology snapshot
+- `--json` — Print an array for single-host mode, or a
+  `self-health-fleet/v1` topology-bound envelope for fleet mode
 
 **Behavior:**
 - No flag defaults to the current host and falls back to loopback `http://127.0.0.1:8740` when no `run_serve_url` is configured in truth.
 - `--host <h>` uses that host's configured `run_serve_url` when present; otherwise it falls back to `http://<host>:8740`.
-- `--fleet` skips hosts without `run_serve_url` instead of treating them as errors.
+- `--fleet` uses topology membership, not the presence of `run_serve_url`, as
+  its enumeration authority. B2 validation requires usable routing for active
+  members; a route can never promote a non-member into the fleet.
+- Desired-active hosts are never skipped because they are offline. Connection
+  failures become effective state `unavailable`, remain in the active
+  denominator, and make the aggregate non-green.
+- Withdrawn hosts are emitted under `excluded_withdrawn` and are never probed
+  or counted in the active denominator. The envelope names the topology source
+  commit and projection digest; a non-authoritative snapshot cannot emit green.
 - Auth resolves the target host's named `operator_cli` outbound credential from `consumer_api_credentials`; `--auth-token` is an explicit override only.
 - Responses without `schema_version` (for example surface-only pre-PR1 `/health` payloads) are reported as `legacy_daemon`.
 - Connection refusal, DNS/request failure, and timeout are `unreachable`.
@@ -612,31 +646,43 @@ calyx self health [options]
   A host's schema only advances when something runs there, so fleet-wide drift
   is the default state; this line is how it becomes visible before an upgrade
   fails on it.
-- Human output is a compact one-line-per-host table. JSON mode prints:
+- Human fleet output starts with `topology commit=<sha> digest=<sha256>
+  authority=<status>`, followed by a compact one-line-per-host table, an
+  `excluded_withdrawn` section, and a strict summary. Fleet JSON mode prints:
 
 ```json
-[
-  {
+{
+  "schema_version": "self-health-fleet/v1",
+  "topology_snapshot": {
+    "source": { "commit": "14f1ce31..." },
+    "projection_sha256": "9ad0..."
+  },
+  "hosts": [
+    {
     "host": "blade",
     "ok": true,
+    "desired_membership": "active",
+    "effective_state": "active",
     "health": {
       "schema_version": "daemon-health/v1",
       "advertised_host": "blade"
     }
-  },
-  {
-    "host": "worm",
-    "ok": false,
-    "error": {
-      "kind": "legacy_daemon",
-      "message": "pre-PR1 daemon; upgrade required"
     }
+  ],
+  "excluded_withdrawn": [],
+  "summary": {
+    "desired_active_total": 1,
+    "withdrawn_total": 0,
+    "active": 1,
+    "repair": 0,
+    "unavailable": 0,
+    "green": true
   }
-]
+}
 ```
 
 **Exit codes:**
-- `0` — Every probed host returned rich daemon health
+- `0` — Every desired-active host returned rich daemon health and the topology snapshot is authoritative
 - `2` — Usage error
 - `6` — One or more hosts were unreachable, returned an HTTP/protocol error, or reported a legacy daemon
 - `8` — Authentication failure talking to one or more target servers
@@ -650,8 +696,8 @@ calyx self health --fleet
 
 ### `calyx self upgrade`
 
-Upgrade one daemon host, or the configured run-service fleet, to a target Calyx
-ref.
+Upgrade one daemon host, or the desired-active run-service topology set, to a
+target Calyx ref.
 
 ```bash
 calyx self upgrade --host <host> [options]
@@ -662,10 +708,10 @@ calyx self upgrade --fleet [options]
 - `--host <host>` — Upgrade one host alias. If the alias is the current host,
   Calyx runs the local guarded upgrade path. If it is a remote host, Calyx
   dispatches a one-host fleet upgrade over SSH.
-- `--fleet` — Upgrade every host with `run_serve_url` configured in
-  `fleet/truths/hosts.yaml`.
+- `--fleet` — Upgrade every desired-active host from one authoritative topology
+  snapshot. Mutation refuses non-authoritative topology.
 - `--hosts <csv>` — With `--fleet`, limit the fleet run to a comma-separated
-  subset.
+  subset of desired-active hosts. Withdrawn hosts cannot be selected.
 - `--to <ref>` — Git ref to converge to (default: `origin/main`).
 - `--target-sha <sha>` — Full 40-character SHA to converge to, bypassing
   per-host ref resolution. Use the `plan.target_head` from a standalone dry-run
@@ -703,6 +749,53 @@ calyx self upgrade --fleet [options]
   availability discriminator.
 
 **Behavior:**
+- Fleet planning resolves topology exactly once before dispatch. The aggregate
+  plan and durable receipt name the source commit, projection digest, authority,
+  desired-active count, and `excluded_withdrawn` records. The same frozen target
+  set is used through scheduling and final receipt construction; neither URL
+  presence nor a stale convergence row can add or remove a host.
+- The durable `self-upgrade-operation/v1` record also carries
+  `topology_snapshot.source.commit` and `topology_snapshot.projection_sha256`,
+  so status/watch can identify the exact topology used before a final receipt
+  exists.
+- **Bootstrap toolchain attestation (POL-2140) is a planner-local mutation
+  gate.** Once the target planner enters `executeSelfUpgradePipeline`, Calyx
+  observes the real child-spawn context for that planner's upgrade: the running
+  Node process, `pnpm --version` self-dispatch, `pnpm exec node`, pnpm's
+  intrinsic executable identity, and a nested lifecycle pnpm. A pass requires a
+  resolved target SHA, a valid declared `engines.node` range, the exact declared
+  `packageManager` pnpm pin, the exact child-spawn contract, and current
+  host/target/timestamp binding. Probe children have a finite 30-second
+  deadline. On POSIX Calyx does not treat either an ordinary child exit or a
+  timeout as terminal until its whole process group is proven gone: a surviving
+  ordinary descendant is reaped and returns a typed terminality failure, while
+  a timeout uses `SIGTERM` then `SIGKILL`; only `ESRCH` proves the group is
+  gone. A timeout, incomplete capture, version mismatch, process-group
+  terminality failure, or contract mismatch is a typed `blocked/toolchain`
+  plan, never a mutation. The planner's attestation, source build, and
+  versioned-install `pnpm pack`/`pnpm install` children share one immutable
+  bootstrap-child environment: `PATH` plus locale/timezone selectors may be
+  inherited, while `HOME`, `XDG_CONFIG_HOME`, and all temporary-directory
+  selectors are unique, operation-owned private roots. The source dependency
+  install is `pnpm install --frozen-lockfile --ignore-scripts`; versioned pack
+  and install commands also use `--ignore-scripts`, so the explicit workspace
+  build is the only intended source-script authority. Build and package-manager
+  stdout/stderr are drained and discarded rather than logged or copied into
+  errors, receipts, events, or operation projections; failures retain only
+  their structured phase/command identity, exit status, and timeout status.
+  Each invocation makes one bounded best-effort cleanup attempt for its exact
+  private workspace root, repairing inaccessible child directories and retrying
+  once if necessary. Root absence is clean only after an `ENOENT` probe; residue
+  or another post-removal probe failure becomes a bounded, non-authoritative
+  direct-result / outer drift-freshness diagnostic and never changes the
+  toolchain or drift verdict. It creates no durable recovery authority,
+  receipt/event/operation/fleet field, workspace locator, reference, stale
+  sweep, tombstone, or deletion-completeness claim. Attestation persists only schema-parsed
+  Node/pnpm identity fields and stable failure categories. Fleet dispatch first uses
+  `scripts/calyx-upgrade-agent.mjs` to build that target planner; this
+  pre-planner bootstrap currently inherits its ambient environment and relays
+  raw child output to conductor stderr, so it is explicitly outside this
+  guarantee and tracked by [POL-2147](https://linear.app/polli-labs/issue/POL-2147/convergence-c1b-isolate-target-planner-bootstrap-and-suppress-raw).
 - Current-host `--host` performs the guarded local sequence: inspect daemon
   descriptors, reconcile active runs, refuse dirty trees unless forced, fetch
   the target ref, prove the planned SHA is reachable, adopt that exact SHA,
@@ -824,6 +917,11 @@ calyx self upgrade --fleet [options]
   `freshness_exit_code`, and compact per-host next actions. The original target
   spelling remains provenance only. Dry-runs omit `postflight`; there is no placeholder or
   `pending_s1` state in the durable receipt.
+- A stale same-target blocked toolchain row in `fleet_convergence` remains a
+  normal `self drift`/`self freshness` safety signal until it is superseded by
+  the later host's **verified** canonical passing receipt and a `fresh`
+  postflight for that exact target. An SSH/receipt outage or an `unverified`
+  success cannot erase that durable block.
 - Every upgraded host gets a first postflight probe. A daemon restarted by its
   own upgrade can still be rebinding the health plane when that probe lands,
   which wrote `blocked` (health unreachable plus a full missing-feature list)
@@ -938,6 +1036,12 @@ calyx self upgrade --fleet [options]
   Per-host receipt locators are portable control-plane-admin routes of the form
   `<host>:/v1/admin/self-upgrade-receipts/<operation-id>`; host-local absolute
   receipt paths are never persisted in the cross-host locator field.
+  If a remote reports a blocked bootstrap-toolchain result but that canonical
+  route cannot be reread, the aggregate and operation record retain only the
+  explicitly non-authoritative `projected_receipt_path` and
+  `projected_toolchain_check` with `receipt_verification.status=unavailable`.
+  They deliberately omit `receipt_locator`, `receipt`, and `plan`; projected
+  stdout cannot become receipt authority.
   When the complete aggregate would exceed its hard byte limit, the durable
   receipt is explicitly marked `bounded.reason=size_limit`; optional nested
   plans, host receipts, relay frames, postflight detail, and artifact captures

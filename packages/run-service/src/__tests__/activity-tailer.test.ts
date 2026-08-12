@@ -27,7 +27,7 @@ import {
   inspectActivityMessages,
   inspectActivityTurns,
 } from "../activity-messages.js";
-import { RunService } from "../service.js";
+import { RunService } from "./support/test-run-service.js";
 
 const SESSION_ID = "019dcafe-1111-7222-8333-abcabcabcabc";
 const ACTIVITY_ID = `interactive:codex:${SESSION_ID}`;

@@ -53,6 +53,7 @@ import type {
   CalyxDaemonSupervisorAdapter,
   HostsTruthFile,
   InstallBootstrapResult,
+  FleetConvergenceToolchainCheck,
   SelfUpgradeOperationRecord,
   SelfUpgradeOperationTransition,
   SelfUpgradeOperationWriter,
@@ -109,6 +110,18 @@ import {
   defaultSelfUpgradeReceiptRoot,
   writeSelfUpgradeReceiptDurable,
 } from "../self-upgrade-receipt-store.js";
+import {
+  attestSelfUpgradeToolchain,
+  cleanupSelfUpgradeBootstrapSandbox,
+  createSelfUpgradeBootstrapSandbox,
+  initializeSelfUpgradeBootstrapSandbox,
+  runSelfUpgradeBuild,
+  SELF_UPGRADE_BUILD_TIMEOUT_MS,
+  spawnSelfUpgradeChild,
+  type AttestSelfUpgradeToolchainOptions,
+  type SelfUpgradeBuildResult,
+  type SelfUpgradeChildSpawn,
+} from "../self-upgrade-toolchain.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -122,7 +135,6 @@ const DEFAULT_DRAIN_DEADLINE_MS = 10 * 60 * 1_000;
 const DEFAULT_VERIFY_TIMEOUT_MS = 10 * 60 * 1_000;
 const DRAIN_POLL_INTERVAL_MS = 1_000;
 const VERIFY_POLL_INTERVAL_MS = 500;
-const BUILD_LOG_TAIL_LINES = 40;
 const STALE_INSTALL_RESIDUE_AGE_MS = 24 * 60 * 60 * 1_000;
 const STAGING_MINIMUM_RELEASE_AGE_MINUTES = 10_080;
 const EXPLICIT_TARGET_BACKUP_REF_PREFIX = "backup/self-upgrade/";
@@ -183,6 +195,27 @@ type CommandResult = {
   stderr: string;
 };
 
+/**
+ * The C1 pipeline never retains package-manager output. Its runner is a
+ * process-tree-supervised alternative to the diagnostic `runCommand` seam that
+ * remains available to generic versioned-install callers.
+ */
+export interface VersionedInstallPackageManagerCommandResult {
+  code: number;
+  timed_out?: boolean;
+}
+
+/**
+ * The C1 planner reduces executable-version output to this bounded typed
+ * observation before it can join an install receipt. Generic callers retain
+ * their legacy direct executable check below.
+ */
+export interface VersionedInstallVerificationCommandResult {
+  code: number;
+  timed_out?: boolean;
+  version?: string;
+}
+
 export interface VersionedInstallWorkspacePackage {
   name: string;
   relativePath: string;
@@ -205,6 +238,18 @@ export interface VersionedInstallPrepareOptions {
   entryPackageName?: string;
   env?: NodeJS.ProcessEnv;
   runCommand?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<CommandResult>;
+  runPackageManagerCommand?: (
+    command: "pnpm",
+    args: readonly string[],
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ) => Promise<VersionedInstallPackageManagerCommandResult>;
+  runVerificationCommand?: (
+    command: string,
+    args: readonly string[],
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ) => Promise<VersionedInstallVerificationCommandResult>;
 }
 
 export interface VersionedInstallPruneOptions {
@@ -569,6 +614,8 @@ export interface SelfUpgradePlan {
   daemons: SelfUpgradePlanDaemon[];
   active_runs_post_reconcile: SelfUpgradeActiveRun[];
   preservation: SelfUpgradePreservationPlan;
+  /** C1 bootstrap evidence collected through the install/build child-spawn path. */
+  toolchain_check?: FleetConvergenceToolchainCheck;
   /**
    * POL-2045: per-host startup-contract preflight. Compares the target binary's
    * versioned startup-environment requirements (env NAMES only) against the live
@@ -601,6 +648,7 @@ export interface SelfUpgradeReceipt {
   host: string;
   target_ref: string;
   target_evidence: SelfUpgradeTargetEvidence;
+  toolchain_check?: FleetConvergenceToolchainCheck;
   status: "succeeded" | "failed";
   started_at: string;
   completed_at: string;
@@ -670,12 +718,21 @@ export function serializeSelfUpgradeReceipt(receipt: SelfUpgradeReceipt): string
 }
 
 /** Typed non-authoritative evidence about terminal/relay observability loss. */
-export interface SelfUpgradeProjectionIssue {
-  scope: "status_stderr" | "remote_phase_stderr" | "operation_state" | "lock_cleanup";
-  code: "projection_unavailable" | "cleanup_unavailable";
-  observed_at: string;
-  message: string;
-}
+export type SelfUpgradeProjectionIssue =
+  | {
+      scope: "status_stderr" | "remote_phase_stderr" | "operation_state" | "lock_cleanup";
+      code: "projection_unavailable" | "cleanup_unavailable";
+      observed_at: string;
+      message: string;
+    }
+  | {
+      /** Local-only cleanup observation; it is not receipt or mutation authority. */
+      scope: "operation_cleanup";
+      code: "best_effort_cleanup";
+      detail: "residue" | "inspection_unavailable";
+      observed_at: string;
+      message: string;
+    };
 
 export interface SelfUpgradeResult {
   status: "dry-run" | "succeeded";
@@ -769,7 +826,19 @@ export interface SelfUpgradeDependencies {
   /** Canonical receipt writer seam for crash/durability boundary tests. */
   writeReceipt?: typeof writeSelfUpgradeReceiptDurable;
   execGit?: (args: string[], cwd: string) => Promise<CommandResult>;
-  runBuild?: (repoRoot: string, logPath: string) => Promise<CommandResult>;
+  runBuild?: (repoRoot: string) => Promise<SelfUpgradeBuildResult>;
+  /**
+   * Source only for the explicitly inherited bootstrap PATH/locale/TZ names.
+   * HOME, XDG configuration, temp locations, and every unlisted value are
+   * deliberately excluded from the child projection.
+   */
+  bootstrapEnv?: NodeJS.ProcessEnv;
+  spawnBootstrapChild?: SelfUpgradeChildSpawn;
+  /** Test seam for best-effort exact bootstrap-workspace cleanup. */
+  cleanupBootstrapSandbox?: typeof cleanupSelfUpgradeBootstrapSandbox;
+  attestToolchain?: (
+    options: AttestSelfUpgradeToolchainOptions,
+  ) => Promise<FleetConvergenceToolchainCheck>;
   prepareInstall?: (options: VersionedInstallPrepareOptions) => Promise<VersionedInstallReceipt>;
   promoteInstall?: (
     receipt: VersionedInstallReceipt,
@@ -1226,61 +1295,6 @@ async function defaultExecGit(args: string[], cwd: string): Promise<CommandResul
   }
 }
 
-async function appendBuildLog(logPath: string, chunk: string): Promise<void> {
-  if (!chunk) {
-    return;
-  }
-  await writeFile(logPath, chunk, {
-    encoding: "utf8",
-    flag: "a",
-  });
-}
-
-async function runCommandStreaming(
-  command: string,
-  args: string[],
-  cwd: string,
-  logPath: string,
-): Promise<CommandResult> {
-  await mkdir(path.dirname(logPath), { recursive: true });
-  return await new Promise<CommandResult>((resolve, reject) => {
-    const child = spawnChild(command, args, {
-      cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-      stdout += text;
-      void appendBuildLog(logPath, text);
-    });
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-      stderr += text;
-      void appendBuildLog(logPath, text);
-    });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      resolve({
-        code: code ?? 1,
-        stdout,
-        stderr,
-      });
-    });
-  });
-}
-
-async function defaultRunBuild(repoRoot: string, logPath: string): Promise<CommandResult> {
-  const install = await runCommandStreaming("pnpm", ["install", "--frozen-lockfile"], repoRoot, logPath);
-  if (install.code !== 0) {
-    return install;
-  }
-  return runCommandStreaming("pnpm", ["-w", "build"], repoRoot, logPath);
-}
-
 async function defaultRunCommand(
   command: string,
   args: string[],
@@ -1550,18 +1564,35 @@ async function packWorkspacePackage(args: {
   tarballsDir: string;
   env: NodeJS.ProcessEnv;
   runCommand: NonNullable<VersionedInstallPrepareOptions["runCommand"]>;
+  runPackageManagerCommand?: VersionedInstallPrepareOptions["runPackageManagerCommand"];
 }): Promise<string> {
   const before = new Set((await readdir(args.tarballsDir).catch(() => [])).filter((entry) => entry.endsWith(".tgz")));
-  const result = await args.runCommand(
-    "pnpm",
-    ["--filter", args.packageName, "pack", "--pack-destination", args.tarballsDir],
-    args.repoRoot,
-    args.env,
-  );
-  if (result.code !== 0) {
-    throw new Error(
-      `pnpm pack failed for ${args.packageName}: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`}`,
+  if (args.runPackageManagerCommand) {
+    // The C1 planner does not need a package lifecycle hook to create an
+    // already-built tarball. Keep generic callers behavior-compatible while
+    // preventing a target package's pre/post-pack hook from escaping the
+    // frozen child boundary through another executable.
+    const packArgs = ["--filter", args.packageName, "pack", "--ignore-scripts", "--pack-destination", args.tarballsDir] as const;
+    const result = await args.runPackageManagerCommand("pnpm", packArgs, args.repoRoot, args.env);
+    if (result.code !== 0) {
+      throw new Error(
+        result.timed_out
+          ? `pnpm pack timed out for ${args.packageName}.`
+          : `pnpm pack failed for ${args.packageName} (exit ${result.code}).`,
+      );
+    }
+  } else {
+    const result = await args.runCommand(
+      "pnpm",
+      ["--filter", args.packageName, "pack", "--pack-destination", args.tarballsDir],
+      args.repoRoot,
+      args.env,
     );
+    if (result.code !== 0) {
+      throw new Error(
+        `pnpm pack failed for ${args.packageName}: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`}`,
+      );
+    }
   }
   const after = (await readdir(args.tarballsDir)).filter((entry) => entry.endsWith(".tgz"));
   const created = after.filter((entry) => !before.has(entry)).sort();
@@ -1583,8 +1614,49 @@ async function readInstallBuildInfo(installPath: string): Promise<CalyxBuildInfo
   }
 }
 
-async function verifyInstallExecutable(installPath: string): Promise<{ binPath: string; version: string }> {
+function normalizeStructuredInstallVersion(value: string | undefined): string | undefined {
+  const version = value?.trim();
+  // `calyx --version` is deliberately a single SemVer-shaped token. Do not
+  // turn an arbitrary child stdout line into durable receipt text.
+  if (!version || !/^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(version)) {
+    return undefined;
+  }
+  return version;
+}
+
+type VerifyInstallExecutableOptions = Pick<
+  VersionedInstallPrepareOptions,
+  "env" | "runVerificationCommand"
+>;
+
+async function verifyInstallExecutable(
+  installPath: string,
+  options: VerifyInstallExecutableOptions = {},
+): Promise<{ binPath: string; version: string }> {
   const binPath = resolveCalyxInstallBinPath(installPath);
+  if (options.runVerificationCommand) {
+    if (!options.env) {
+      throw new Error("Structured install verification requires an explicit child environment.");
+    }
+    const result = await options.runVerificationCommand(
+      process.execPath,
+      [binPath, "--version"],
+      path.parse(installPath).root,
+      options.env,
+    );
+    if (result.code !== 0) {
+      throw new Error(
+        result.timed_out
+          ? `Installed Calyx executable verification timed out at ${binPath}.`
+          : `Installed Calyx executable verification failed at ${binPath} (exit ${result.code}).`,
+      );
+    }
+    const version = normalizeStructuredInstallVersion(result.version);
+    if (!version) {
+      throw new Error(`Installed Calyx executable at ${binPath} did not return a valid version.`);
+    }
+    return { binPath, version };
+  }
   const result = await execFile(process.execPath, [binPath, "--version"], {
     cwd: path.parse(installPath).root,
     env: process.env,
@@ -1647,6 +1719,8 @@ export interface AtomicPromoteOptions {
   operationId?: string;
   expectedCurrentInstallPaths?: readonly string[];
   allowCurrentAbsent?: boolean;
+  env?: NodeJS.ProcessEnv;
+  runVerificationCommand?: VersionedInstallPrepareOptions["runVerificationCommand"];
 }
 
 async function readCurrentInstallLinkSnapshot(
@@ -2133,6 +2207,8 @@ export async function prepareVersionedInstall(
   const workspacePackages = options.workspacePackages
     ?? await resolveVersionedInstallWorkspacePackages({ repoRoot, entryPackageName });
   const runCommand = options.runCommand ?? defaultRunCommand;
+  const runPackageManagerCommand = options.runPackageManagerCommand;
+  const runVerificationCommand = options.runVerificationCommand;
   const env = options.env ?? process.env;
   const finalInstallPath = path.join(installsRoot, gitHead);
   await mkdir(installsRoot, { recursive: true });
@@ -2143,7 +2219,10 @@ export async function prepareVersionedInstall(
     if (existingBuild.git_head !== gitHead) {
       throw new Error(`Existing install ${finalInstallPath} has git_head ${existingBuild.git_head}, expected ${gitHead}.`);
     }
-    const verified = await verifyInstallExecutable(finalInstallPath);
+    const verified = await verifyInstallExecutable(finalInstallPath, {
+      env,
+      ...(runVerificationCommand ? { runVerificationCommand } : {}),
+    });
     await assertNoCloneReferences(finalInstallPath, repoRoot);
     const artifactManifestSha256 = await computeCalyxOwnedArtifactManifest(
       finalInstallPath,
@@ -2184,6 +2263,7 @@ export async function prepareVersionedInstall(
         tarballsDir: path.join(stagingPath, "tarballs"),
         env,
         runCommand,
+        ...(runPackageManagerCommand ? { runPackageManagerCommand } : {}),
       });
       tarballsByPackage.set(workspacePackage.name, tarball);
     }
@@ -2215,16 +2295,23 @@ export async function prepareVersionedInstall(
     await writeFile(path.join(stagingPath, "pnpm-workspace.yaml"), YAML.stringify(generatedWorkspaceConfig), "utf8");
     await writeFile(path.join(stagingPath, ".npmrc"), `minimum-release-age=${STAGING_MINIMUM_RELEASE_AGE_MINUTES}\n`, "utf8");
 
-    const installResult = await runCommand(
-      "pnpm",
-      ["install", "--prod", "--ignore-scripts", "--prefer-offline"],
-      stagingPath,
-      env,
-    );
-    if (installResult.code !== 0) {
-      throw new Error(
-        formatCommandFailure("pnpm install failed for versioned install", installResult),
-      );
+    const installArgs = ["install", "--prod", "--ignore-scripts", "--prefer-offline"] as const;
+    if (runPackageManagerCommand) {
+      const installResult = await runPackageManagerCommand("pnpm", installArgs, stagingPath, env);
+      if (installResult.code !== 0) {
+        throw new Error(
+          installResult.timed_out
+            ? "pnpm install timed out for versioned install."
+            : `pnpm install failed for versioned install (exit ${installResult.code}).`,
+        );
+      }
+    } else {
+      const installResult = await runCommand("pnpm", [...installArgs], stagingPath, env);
+      if (installResult.code !== 0) {
+        throw new Error(
+          formatCommandFailure("pnpm install failed for versioned install", installResult),
+        );
+      }
     }
 
     const repoBuildInfoPath = path.join(repoRoot, "packages", "cli", "dist", CALYX_INSTALL_BUILD_INFO_FILENAME);
@@ -2237,7 +2324,10 @@ export async function prepareVersionedInstall(
       throw new Error(`Installed CLI build metadata git_head ${packageBuildInfo.git_head} does not match target ${gitHead}.`);
     }
     await copyFile(repoBuildInfoPath, resolveCalyxInstallBuildInfoPath(stagingPath));
-    const verified = await verifyInstallExecutable(stagingPath);
+    const verified = await verifyInstallExecutable(stagingPath, {
+      env,
+      ...(runVerificationCommand ? { runVerificationCommand } : {}),
+    });
     await assertNoCloneReferences(stagingPath, repoRoot);
     const artifactManifestSha256 = await computeCalyxOwnedArtifactManifest(
       stagingPath,
@@ -2286,7 +2376,10 @@ export async function promoteVersionedInstall(
       `Prepared install ${receipt.install_path} has git_head ${build.git_head}, expected ${receipt.git_head}.`,
     );
   }
-  const verified = await verifyInstallExecutable(receipt.install_path);
+  const verified = await verifyInstallExecutable(receipt.install_path, {
+    ...(options.env ? { env: options.env } : {}),
+    ...(options.runVerificationCommand ? { runVerificationCommand: options.runVerificationCommand } : {}),
+  });
   if (verified.binPath !== receipt.bin_path || verified.version !== receipt.verified_version) {
     throw new Error(`Prepared install ${receipt.install_path} changed after verification.`);
   }
@@ -2320,14 +2413,6 @@ export async function promoteVersionedInstall(
     current_link: currentLink,
     promoted: true,
   };
-}
-
-async function tailLog(logPath: string, lines = BUILD_LOG_TAIL_LINES): Promise<string> {
-  const text = await readFile(logPath, "utf8").catch(() => "");
-  if (!text.trim()) {
-    return "";
-  }
-  return text.trimEnd().split("\n").slice(-lines).join("\n");
 }
 
 async function fetchDaemonHealthFromBaseUrl(
@@ -2598,7 +2683,7 @@ function buildOutOfRegistrationDiagnostic(args: {
     actions: [
       `Inspect the supervisor: systemctl --user status calyx-run-serve.service`,
       `Inspect active work before mutating: calyx run ps --host ${args.host} --json`,
-      `Manual build path: cd ${args.repoRoot} && git pull --ff-only ${pullTarget.remote} ${pullTarget.ref} && pnpm install --frozen-lockfile && pnpm -w build`,
+      `Manual build path: cd ${args.repoRoot} && git pull --ff-only ${pullTarget.remote} ${pullTarget.ref} && pnpm install --frozen-lockfile --ignore-scripts && pnpm -w build`,
       "Wait for active_runs=0 or explicitly stop/abort active runs before restarting the service.",
       "Restart after the manual build: systemctl --user restart calyx-run-serve.service",
       `Verify convergence: calyx self health --host ${args.host} --json`,
@@ -2927,6 +3012,17 @@ async function buildPlan(
       6,
     );
   }
+  // POL-2140: this must precede any ordinary drift/repair classification. The
+  // exact spawn helper and environment below also execute pnpm install/build;
+  // an interactive-shell probe is not evidence for the bootstrap path.
+  const toolchainCheck = await deps.attestToolchain({
+    host: requestedHost,
+    repoRoot,
+    targetSha: targetHead,
+    checkedAt: deps.now(),
+    env: deps.bootstrapEnv,
+    childSpawn: deps.spawnBootstrapChild,
+  });
   const dirtyPaths = await readDirtyPaths(repoRoot, deps.execGit);
 
   const missingBuildArtifacts: string[] = [];
@@ -3032,6 +3128,11 @@ async function buildPlan(
   for (const reason of startupContract.blocking_reasons) {
     blockers.push(reason.message);
   }
+  if (toolchainCheck.status !== "pass") {
+    blockers.push(
+      `blocked/toolchain: ${toolchainCheck.failures.map((failure) => failure.message).join(" ") || "bootstrap toolchain was not proven"}`,
+    );
+  }
 
   return {
     host: requestedHost,
@@ -3046,6 +3147,7 @@ async function buildPlan(
     daemons: descriptors,
     active_runs_post_reconcile: activeRuns,
     preservation,
+    toolchain_check: toolchainCheck,
     startup_contract: startupContract,
     blockers,
     warnings,
@@ -7368,6 +7470,32 @@ export function formatSelfUpgradePlan(plan: SelfUpgradePlan): string {
       lines.push(`    - ${reason}`);
     }
   }
+  lines.push("toolchain_check:");
+  if (!plan.toolchain_check) {
+    lines.push("  status: unavailable (pre-C1 plan)");
+  } else {
+    const toolchain = plan.toolchain_check;
+    lines.push(`  schema_version: ${toolchain.schema_version}`);
+    lines.push(`  surface: ${toolchain.surface}`);
+    lines.push(`  status: ${toolchain.status}`);
+    lines.push(`  bootstrap_cwd: ${toolchain.observed.bootstrap_cwd}`);
+    lines.push(`  spawn_contract: ${toolchain.observed.spawn_contract}`);
+    lines.push(
+      `  process_node: ${toolchain.observed.process_node_version ?? "unavailable"} @ ${toolchain.observed.process_exec_path_realpath ?? "unavailable"}`,
+    );
+    lines.push(
+      `  child_node: ${toolchain.observed.child_node.version ?? "unavailable"} @ ${toolchain.observed.child_node.executable_realpath ?? "unavailable"}`,
+    );
+    lines.push(
+      `  child_pnpm: self=${toolchain.observed.child_pnpm.self_dispatched.version ?? "unavailable"} intrinsic=${toolchain.observed.child_pnpm.intrinsic.version ?? "unavailable"} nested=${toolchain.observed.child_pnpm.nested.version ?? "unavailable"} @ ${toolchain.observed.child_pnpm.executable_realpath ?? "unavailable"}`,
+    );
+    for (const failure of toolchain.failures) {
+      lines.push(`  failure: code=${failure.code} message=${failure.message}`);
+    }
+    if (toolchain.next_action) {
+      lines.push(`  next_action: ${toolchain.next_action.description}`);
+    }
+  }
   lines.push("startup_contract:");
   if (!plan.startup_contract) {
     lines.push("  - not evaluated");
@@ -7649,6 +7777,17 @@ async function executeSelfUpgradePipeline(
       createSupervisorAdapter: createSupervisorAdapterDependency,
       inspectSupervisorEffectiveState: inspectSupervisorEffectiveStateDependency,
     }));
+  // Construct the one frozen child projection before target acceptance can
+  // project credentials into this planner process. Every bootstrap child below
+  // — attestation, build, package-manager work, and executable verification —
+  // receives this exact object.
+  const bootstrapSandbox = createSelfUpgradeBootstrapSandbox({
+    homeDirectory: homeDir(),
+    sourceEnv: dependencies.bootstrapEnv ?? process.env,
+  });
+  const bootstrapEnvDependency = bootstrapSandbox.env;
+  const spawnBootstrapChildDependency =
+    dependencies.spawnBootstrapChild ?? spawnSelfUpgradeChild;
   const deps: Required<SelfUpgradeDependencies> = {
     now: dependencies.now ?? (() => new Date().toISOString()),
     sleep: dependencies.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
@@ -7689,7 +7828,18 @@ async function executeSelfUpgradePipeline(
     onPhase: dependencies.onPhase ?? (() => {}),
     writeReceipt: dependencies.writeReceipt ?? writeSelfUpgradeReceiptDurable,
     execGit: dependencies.execGit ?? defaultExecGit,
-    runBuild: dependencies.runBuild ?? defaultRunBuild,
+    bootstrapEnv: bootstrapEnvDependency,
+    spawnBootstrapChild: spawnBootstrapChildDependency,
+    cleanupBootstrapSandbox:
+      dependencies.cleanupBootstrapSandbox ?? cleanupSelfUpgradeBootstrapSandbox,
+    attestToolchain: dependencies.attestToolchain ?? attestSelfUpgradeToolchain,
+    runBuild:
+      dependencies.runBuild
+      ?? ((repoRoot) => runSelfUpgradeBuild(
+        repoRoot,
+        spawnBootstrapChildDependency,
+        bootstrapEnvDependency,
+      )),
     prepareInstall: dependencies.prepareInstall ?? prepareVersionedInstall,
     promoteInstall: dependencies.promoteInstall ?? promoteVersionedInstall,
     prepareSupervisorCutover: prepareSupervisorCutoverDependency,
@@ -7704,6 +7854,26 @@ async function executeSelfUpgradePipeline(
     inspectSupervisorEffectiveState: inspectSupervisorEffectiveStateDependency,
     prepareStateCutover: dependencies.prepareStateCutover ?? prepareStateCutoverSnapshot,
     installBootstrap: dependencies.installBootstrap ?? installBootstrap,
+  };
+  const runBootstrapVerificationCommand: NonNullable<
+    VersionedInstallPrepareOptions["runVerificationCommand"]
+  > = async (command, args, cwd, env) => {
+    if (env !== deps.bootstrapEnv) {
+      throw new Error("Self-upgrade executable verifier received an unexpected environment projection.");
+    }
+    const result = await deps.spawnBootstrapChild(command, args, {
+      cwd,
+      env,
+      timeoutMs: SELF_UPGRADE_BUILD_TIMEOUT_MS,
+      captureOutput: true,
+      maxCaptureBytes: 512,
+    });
+    const version = normalizeStructuredInstallVersion(result.stdout.split(/\r?\n/u, 1)[0]);
+    return {
+      code: result.code,
+      ...(result.timed_out ? { timed_out: true } : {}),
+      ...(version ? { version } : {}),
+    };
   };
   const supervisorCutoverAvailable =
     dependencies.prepareSupervisorCutover !== undefined
@@ -7759,7 +7929,6 @@ async function executeSelfUpgradePipeline(
     },
   });
   const receiptRoot = defaultSelfUpgradeReceiptRoot(deps.homeDir());
-  const buildLogRoot = path.join(deps.homeDir(), ".calyx", "self-upgrade-logs");
   const drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
   let authToken = "";
   let restoreTargetCredentialEnvironment: (() => void) | undefined;
@@ -7836,13 +8005,57 @@ async function executeSelfUpgradePipeline(
   const projectionIssueKeys = new Set<string>();
   let terminalResult: SelfUpgradeResult | undefined;
   let terminalError: SelfUpgradeExecutionError | undefined;
-  const recordProjectionIssue = (issue: SelfUpgradeProjectionIssue): void => {
-    const key = `${issue.scope}\0${issue.code}\0${issue.message}`;
+
+  const projectionIssueKey = (issue: SelfUpgradeProjectionIssue): string =>
+    `${issue.scope}\0${issue.code}\0${issue.message}`;
+  const appendProjectionIssue = (issue: SelfUpgradeProjectionIssue): void => {
+    // Each operation workspace has its own terminal cleanup attempt. Preserve
+    // every local cleanup warning when a source planner returns a target-owned
+    // result, even if two attempts have the same bounded public wording.
+    if (issue.scope === "operation_cleanup") {
+      projectionIssues.push(issue);
+      return;
+    }
+    const key = projectionIssueKey(issue);
     if (projectionIssueKeys.has(key)) return;
     projectionIssueKeys.add(key);
     projectionIssues.push(issue);
+  };
+  const absorbProjectionIssues = (
+    inherited: readonly SelfUpgradeProjectionIssue[] | undefined,
+  ): void => {
+    // A locally-created terminal result may already reference this exact array.
+    // Do not re-iterate it while appending to it.
+    if (!inherited || inherited === projectionIssues) return;
+    // A source planner is only a projection wrapper around a prepared target
+    // result. Keep every target-owned issue verbatim and ahead of the source
+    // planner's own local diagnostics; a later cleanup observation is then an
+    // additive local warning, never a replacement for target evidence.
+    projectionIssues.unshift(...inherited);
+    for (const issue of inherited) {
+      if (issue.scope !== "operation_cleanup") {
+        projectionIssueKeys.add(projectionIssueKey(issue));
+      }
+    }
+  };
+  const synchronizeTerminalProjectionIssues = (): void => {
+    if (projectionIssues.length === 0) return;
     if (terminalResult) terminalResult.projection_issues = projectionIssues;
     if (terminalError) terminalError.projection_issues = projectionIssues;
+  };
+  const setTerminalResult = (result: SelfUpgradeResult): void => {
+    absorbProjectionIssues(result.projection_issues);
+    terminalResult = result;
+    synchronizeTerminalProjectionIssues();
+  };
+  const setTerminalError = (error: SelfUpgradeExecutionError): void => {
+    absorbProjectionIssues(error.projection_issues);
+    terminalError = error;
+    synchronizeTerminalProjectionIssues();
+  };
+  const recordProjectionIssue = (issue: SelfUpgradeProjectionIssue): void => {
+    appendProjectionIssue(issue);
+    synchronizeTerminalProjectionIssues();
   };
   /** Set to the first projection failure detail; latches the projection down. */
   let eventProjectionUnavailableDetail: string | undefined;
@@ -7892,6 +8105,7 @@ async function executeSelfUpgradePipeline(
   };
 
   try {
+    await initializeSelfUpgradeBootstrapSandbox(bootstrapSandbox);
     if (targetHandoff) {
       // The first target-owned act is acceptance of the exact prepared image.
       // Only the accepted image may open canonical custody and install the
@@ -7950,17 +8164,14 @@ async function executeSelfUpgradePipeline(
     }
     plan = await buildPlan(options, deps);
     if (options.dryRun) {
-      terminalResult = {
+      const result: SelfUpgradeResult = {
         status: "dry-run",
         plan,
       };
-      if (projectionIssues.length > 0) {
-        terminalResult.projection_issues = projectionIssues;
-      }
-      return terminalResult;
+      setTerminalResult(result);
+      return result;
     }
 
-    ensurePlanReadyForMutation(plan, supervisorCutoverAvailable);
     fullDescriptors = (await deps.listDescriptors({ root: defaultDaemonsRoot() }))
       .sort((left, right) => left.restart_order - right.restart_order || left.daemon_id.localeCompare(right.daemon_id));
     const daemonIds = uniqueDaemonIds(plan.daemons);
@@ -8002,6 +8213,10 @@ async function executeSelfUpgradePipeline(
         dispatch: "local",
       });
     }
+    // Establish the durable operation/receipt identity before enforcing the
+    // pre-mutation plan gate. A toolchain refusal occurs before fetch/build,
+    // but it must not disappear merely because it refused early.
+    ensurePlanReadyForMutation(plan, supervisorCutoverAvailable);
     // Announce on stderr so `--json` stdout stays pure (the fleet conductor
     // parses each per-host upgrade's stdout as JSON, and a single-host
     // `--json` consumer expects exactly one object). Gives an interactive
@@ -8171,6 +8386,24 @@ async function executeSelfUpgradePipeline(
       }
     }
 
+    // Re-attest from the adopted target immediately before the real build. It
+    // uses the identical spawn function, cwd, environment object, and command
+    // lookup as runBuild, closing the point-of-use gap after target adoption.
+    plan.toolchain_check = await deps.attestToolchain({
+      host: plan.host,
+      repoRoot: plan.repo_root,
+      targetSha: explicitTargetSha,
+      checkedAt: deps.now(),
+      env: deps.bootstrapEnv,
+      childSpawn: deps.spawnBootstrapChild,
+    });
+    if (plan.toolchain_check.status !== "pass") {
+      throw createSelfUpgradeError(
+        `blocked/toolchain: ${plan.toolchain_check.failures.map((failure) => failure.message).join(" ") || "bootstrap toolchain was not proven"}`,
+        1,
+      );
+    }
+
     // POL-2045/POL-2072: authoritative pre-mutation startup-contract gate. The
     // worktree is now at the adopted target head, so re-derive the verdict from
     // the adopted worktree + live supervisor and refuse before build/promote —
@@ -8183,12 +8416,12 @@ async function executeSelfUpgradePipeline(
     });
 
     await emitUpgradePhase("build");
-    const buildLogPath = path.join(buildLogRoot, `${formatTimestampForFilename(startedAt)}-${plan.host}.log`);
-    const buildResult = await deps.runBuild(plan.repo_root, buildLogPath);
+    const buildResult = await deps.runBuild(plan.repo_root);
     if (buildResult.code !== 0) {
-      const logTail = await tailLog(buildLogPath);
       throw createSelfUpgradeError(
-        `Build failed for ${plan.repo_root}.\n${logTail || buildResult.stderr.trim() || buildResult.stdout.trim()}`,
+        buildResult.timed_out
+          ? `Build timed out during ${buildResult.phase ?? "unknown"} phase for ${plan.repo_root}.`
+          : `Build failed during ${buildResult.phase ?? "unknown"} phase for ${plan.repo_root} (exit ${buildResult.code}).`,
         6,
       );
     }
@@ -8219,6 +8452,27 @@ async function executeSelfUpgradePipeline(
     installReceipt = await deps.prepareInstall({
       repoRoot: plan.repo_root,
       gitHead: postBuildHead,
+      env: deps.bootstrapEnv,
+      runPackageManagerCommand: async (command, args, cwd, env) => {
+        // `prepareVersionedInstall` has generic callers that intentionally
+        // retain diagnostic command output. This planner-local route is
+        // different: it must use the same frozen object as attestation/build
+        // and carries only a structured exit result into a terminal receipt.
+        if (env !== deps.bootstrapEnv) {
+          throw new Error("Self-upgrade package-manager child received an unexpected environment projection.");
+        }
+        const result = await deps.spawnBootstrapChild(command, args, {
+          cwd,
+          env,
+          timeoutMs: SELF_UPGRADE_BUILD_TIMEOUT_MS,
+          captureOutput: false,
+        });
+        return {
+          code: result.code,
+          ...(result.timed_out ? { timed_out: true } : {}),
+        };
+      },
+      runVerificationCommand: runBootstrapVerificationCommand,
     });
     const previousBuild = await readInstallBuildInfo(previousCurrentInstall);
     if (!options.targetOwnedExecution) {
@@ -8295,7 +8549,7 @@ async function executeSelfUpgradePipeline(
           6,
         );
       }
-      terminalResult = targetResult;
+      setTerminalResult(targetResult);
       return targetResult;
     }
     if (targetHandoff) {
@@ -8498,6 +8752,8 @@ async function executeSelfUpgradePipeline(
     installReceipt = await deps.promoteInstall(installReceipt, {
       operationId: opId,
       expectedCurrentInstallPaths: [previousCurrentInstall],
+      env: deps.bootstrapEnv,
+      runVerificationCommand: runBootstrapVerificationCommand,
     });
     await persistCutoverPhase("binary_promoted");
     const wrapperBootstrap = await migrateBootstrapWrapperToPromotedInstall({
@@ -8641,6 +8897,7 @@ async function executeSelfUpgradePipeline(
       host: plan.host,
       target_ref: plan.target_ref,
       target_evidence: plan.target_evidence,
+      ...(plan.toolchain_check ? { toolchain_check: plan.toolchain_check } : {}),
       status: "succeeded",
       started_at: startedAt,
       completed_at: completedAt,
@@ -8852,6 +9109,7 @@ async function executeSelfUpgradePipeline(
         before_head: plan.current_head,
         after_head: afterHead,
         receipt_locator: receiptLocator,
+        ...(plan.toolchain_check ? { toolchain_check: plan.toolchain_check } : {}),
       });
       await operationProjection.transition({
         schema_version: "self-upgrade-operation/v1",
@@ -8874,17 +9132,15 @@ async function executeSelfUpgradePipeline(
       });
     }
 
-    terminalResult = {
+    const result: SelfUpgradeResult = {
       status: "succeeded",
       plan,
       operation_id: opId,
       receipt_path: receiptPath,
       receipt,
     };
-    if (projectionIssues.length > 0) {
-      terminalResult.projection_issues = projectionIssues;
-    }
-    return terminalResult;
+    setTerminalResult(result);
+    return result;
   } catch (error) {
     if (cutoverCommitted) {
       const committedError = createSelfUpgradeError(
@@ -8892,9 +9148,11 @@ async function executeSelfUpgradePipeline(
         6,
         plan ? { plan } : {},
       );
-      if (projectionIssues.length > 0) {
-        committedError.projection_issues = projectionIssues;
-      }
+      // Register the exact error before the finalizer runs. Its cleanup
+      // observation is result-local diagnostic data and must compose onto
+      // every ordinary terminal error, including a failure after the durable
+      // cutover commit but before the normal error funnel below.
+      setTerminalError(committedError);
       throw committedError;
     }
     if (plan && !options.dryRun) {
@@ -8905,14 +9163,16 @@ async function executeSelfUpgradePipeline(
       const message = error instanceof Error ? error.message : String(error);
       const receiptOperationId = operationId
         ?? `self-upgrade-${formatTimestampForFilename(startedAt)}-${randomUUID()}`;
-      const durabilityIssues: SelfUpgradeReceiptDurabilityIssue[] = receiptWriteAttempted && !receiptPath
-        ? [{
-            scope: "final_receipt",
-            code: "receipt_persist_failed",
-            observed_at: completedAt,
-            message,
-          }]
-        : [];
+      const durabilityIssues: SelfUpgradeReceiptDurabilityIssue[] = [
+        ...(receiptWriteAttempted && !receiptPath
+          ? [{
+              scope: "final_receipt" as const,
+              code: "receipt_persist_failed" as const,
+              observed_at: completedAt,
+              message,
+            }]
+          : []),
+      ];
       const cutoverMutationStarted = Boolean(
         installReceipt
         && (
@@ -9036,6 +9296,7 @@ async function executeSelfUpgradePipeline(
         host: plan.host,
         target_ref: plan.target_ref,
         target_evidence: plan.target_evidence,
+        ...(plan.toolchain_check ? { toolchain_check: plan.toolchain_check } : {}),
         status: "failed",
         started_at: startedAt,
         completed_at: completedAt,
@@ -9230,6 +9491,7 @@ async function executeSelfUpgradePipeline(
           before_head: plan.current_head,
           ...(receipt.after_head ? { after_head: receipt.after_head } : {}),
           receipt_locator: receiptLocator,
+          ...(plan.toolchain_check ? { toolchain_check: plan.toolchain_check } : {}),
           error: message,
         });
         await operationProjection.transition({
@@ -9268,13 +9530,33 @@ async function executeSelfUpgradePipeline(
     if (typeof typed.exitCode !== "number") {
       typed.exitCode = 1;
     }
-    terminalError = typed;
-    if (projectionIssues.length > 0) {
-      terminalError.projection_issues = projectionIssues;
-    }
+    setTerminalError(typed);
     throw typed;
   } finally {
     restoreTargetCredentialEnvironment?.();
+    let cleanupDetail: "residue" | "inspection_unavailable" | undefined;
+    try {
+      const cleanup = await deps.cleanupBootstrapSandbox(bootstrapSandbox);
+      cleanupDetail = cleanup.status === "cleaned" ? undefined : cleanup.status;
+    } catch {
+      cleanupDetail = "inspection_unavailable";
+    }
+    if (cleanupDetail) {
+      const message = cleanupDetail === "residue"
+        ? "best-effort local self-upgrade cleanup left residue; no recovery authority was recorded"
+        : "best-effort local self-upgrade cleanup could not prove root absence; no recovery authority was recorded";
+      // This is appended only after the terminal operation result/error exists.
+      // It is deliberately result-local: receipt, event, operation, and fleet
+      // authority are already complete and do not acquire a cleanup claim.
+      recordProjectionIssue({
+        scope: "operation_cleanup",
+        code: "best_effort_cleanup",
+        detail: cleanupDetail,
+        observed_at: deps.now(),
+        message,
+      });
+      statusProjection.write(`warning: ${message}.\n`);
+    }
     await statusProjection.stop();
     await operationProjection?.stop();
     const release = await settleFailOpenProjection(

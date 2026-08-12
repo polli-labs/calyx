@@ -47,6 +47,11 @@ import {
   CALYX_ADMIN_RECONCILE_UNRESOLVED_REASONS,
   CALYX_CLOSED_RESPONSE_OBJECT_DESCRIPTION_PREFIX,
   CALYX_EXCLUSIVE_RESPONSE_UNION_DESCRIPTION_PREFIX,
+  WORKLOAD_ADMISSION_DECISION_SCHEMA_VERSION,
+  WORKLOAD_ADMISSION_GATE_RECEIPT_SCHEMA_VERSION,
+  WORKLOAD_ADMISSION_INTERIM_PROFILE,
+  WORKLOAD_ADMISSION_INTERIM_SURFACES,
+  WORKLOAD_ADMISSION_TARGET_BUNDLE_SCHEMA_VERSION,
   MESSAGE_STATUSES,
   MONITOR_STATUSES,
   MONITOR_WAKE_STATUSES,
@@ -57,6 +62,88 @@ import {
 function openStringEnum<const T extends readonly [string, ...string[]]>(values: T) {
   return z.enum(values).describe(`calyx-open-enum:${JSON.stringify(values)}`);
 }
+
+const workloadAdmissionTopologySchema = z.object({
+  schema_version: z.literal("fleet-topology-snapshot/v1"),
+  source_repository: z.literal("polli-labs/agents-infra"),
+  source_commit: z.string().min(1),
+  projection_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
+
+const workloadAdmissionTargetBundleSchema = z.object({
+  schema_version: z.literal(WORKLOAD_ADMISSION_TARGET_BUNDLE_SCHEMA_VERSION),
+  calyx_build: z.object({
+    git_head: z.string().min(1),
+    package_version: z.string().min(1),
+  }).strict(),
+  state_schema_target: z.string().min(1),
+}).strict();
+
+const workloadAdmissionGateReceiptSchema = z.object({
+  schema_version: z.literal(WORKLOAD_ADMISSION_GATE_RECEIPT_SCHEMA_VERSION),
+  profile: z.literal(WORKLOAD_ADMISSION_INTERIM_PROFILE),
+  evaluated_surfaces: z.tuple(WORKLOAD_ADMISSION_INTERIM_SURFACES.map(
+    (surface) => z.literal(surface),
+  ) as [z.ZodLiteral<"topology">, z.ZodLiteral<"reachability">, z.ZodLiteral<"running">, z.ZodLiteral<"state_schema">]),
+  deferred_surfaces: z.array(z.enum([
+    "topology", "reachability", "toolchain", "clone", "promoted", "running",
+    "daemon", "state_schema", "config", "skills", "hot_instruction",
+  ])),
+  host: z.string().min(1),
+  desired_membership: z.literal("active"),
+  topology: workloadAdmissionTopologySchema,
+  target_bundle: workloadAdmissionTargetBundleSchema,
+  checks: z.object({
+    topology: z.object({ status: z.literal("pass"), authority: z.literal("authoritative") }).strict(),
+    reachability: z.object({
+      status: z.literal("pass"),
+      evidence: z.enum(["daemon_listener", "in_process_composition"]),
+    }).strict(),
+    running: z.object({
+      status: z.literal("pass"),
+      git_head: z.string().min(1),
+      package_version: z.string().min(1),
+      dirty: z.literal(false),
+    }).strict(),
+    state_schema: z.object({
+      status: z.literal("pass"),
+      current: z.string().min(1),
+      target: z.string().min(1),
+    }).strict(),
+  }).strict(),
+  issued_at: z.string().datetime(),
+}).strict();
+
+export const workloadAdmissionDecisionSchema = z.discriminatedUnion("admission", [
+  z.object({
+    schema_version: z.literal(WORKLOAD_ADMISSION_DECISION_SCHEMA_VERSION),
+    admission: z.literal("fenced"),
+    reason: z.enum([
+      "withdrawn",
+      "topology_mismatch",
+      "convergence_drift",
+      "repair_in_progress",
+      "admission_evidence_missing",
+    ]),
+    failed_surface: z.enum([
+      "topology", "reachability", "toolchain", "clone", "promoted", "running",
+      "daemon", "state_schema", "config", "skills", "hot_instruction", "admission_evidence",
+    ]),
+    next_action: z.string().min(1),
+    last_accepted_topology: workloadAdmissionTopologySchema.optional(),
+    last_accepted_target_bundle: workloadAdmissionTargetBundleSchema.optional(),
+    last_gate_receipt: workloadAdmissionGateReceiptSchema.optional(),
+    decided_at: z.string().datetime(),
+  }).strict(),
+  z.object({
+    schema_version: z.literal(WORKLOAD_ADMISSION_DECISION_SCHEMA_VERSION),
+    admission: z.literal("open"),
+    accepted_topology: workloadAdmissionTopologySchema,
+    accepted_target_bundle: workloadAdmissionTargetBundleSchema,
+    gate_receipt: workloadAdmissionGateReceiptSchema,
+    decided_at: z.string().datetime(),
+  }).strict(),
+]);
 
 export const adminHealthSchema = z.object({
   schema_version: z.literal(CALYX_ADMIN_HEALTH_SCHEMA_VERSION),
@@ -91,6 +178,7 @@ export const adminHealthSchema = z.object({
     pending: z.number().int().nonnegative().optional(),
   }).strict().optional(),
   active_runs: z.number().int().nonnegative(),
+  workload_admission: workloadAdmissionDecisionSchema.optional(),
   maintenance_mode: z.boolean(),
   supports_features: z.array(z.string().min(1)),
   interactive_sessions: z.object({
@@ -868,6 +956,7 @@ export function toAdminHealth(source: CalyxDaemonHealth): CalyxAdminHealth {
         }
       : {}),
     active_runs: source.active_runs,
+    workload_admission: source.workload_admission,
     maintenance_mode: source.maintenance_mode,
     supports_features: [...source.supports_features],
     ...(source.interactive_sessions

@@ -1639,6 +1639,145 @@ export class DaemonService {
     }
   }
 
+  private async publishAdmittedLaunch(args: {
+    daemonId: string;
+    workflowPath: string;
+    issue: TrackerIssue;
+    previous?: IssueRuntimeRecord | undefined;
+    workspace: WorkspaceBinding;
+    intent: RunIntent;
+    dispatchReason: CandidateIssue["reason"];
+    claimMutationResult?: TrackerClaimResult | undefined;
+    claimCursor?: string | undefined;
+    claimedAt: string;
+    fetchedAt: string;
+  }): Promise<void> {
+    const launchedAt = nowIso(this.now);
+    const launchCursor = this.recordLedgerEvent({
+      daemonId: args.daemonId,
+      issue: args.issue,
+      eventType: "issue.launched",
+      occurredAt: launchedAt,
+      payload: {
+        run_id: args.intent.run_id,
+        dispatch_reason: args.dispatchReason,
+        workspace_path: args.workspace.workspace_path,
+        branch: args.workspace.branch_name,
+      },
+    });
+    await this.updateIssueRecord(
+      args.daemonId,
+      args.workflowPath,
+      args.issue.identifier,
+      (current) => ({
+        issue_id: args.issue.id,
+        issue_identifier: args.issue.identifier,
+        title: args.issue.title,
+        state_name: args.claimMutationResult?.current_state ?? args.issue.state.name,
+        ...(args.issue.state.type ? { state_type: args.issue.state.type } : {}),
+        workspace_key: args.workspace.workspace_key,
+        workspace_path: args.workspace.workspace_path,
+        branch_name: args.workspace.branch_name,
+        status: "running",
+        claim_status: "claimed",
+        retry_count: current?.retry_count ?? args.previous?.retry_count ?? 0,
+        last_seen_at: args.fetchedAt,
+        tracker_updated_at: args.issue.updated_at,
+        last_run_id: args.intent.run_id,
+        active_run_id: args.intent.run_id,
+        ...(current?.last_backend_session_id
+          ? { last_backend_session_id: current.last_backend_session_id }
+          : args.previous?.last_backend_session_id
+            ? { last_backend_session_id: args.previous.last_backend_session_id }
+            : {}),
+        ...(current?.last_backend_thread_id
+          ? { last_backend_thread_id: current.last_backend_thread_id }
+          : args.previous?.last_backend_thread_id
+            ? { last_backend_thread_id: args.previous.last_backend_thread_id }
+            : {}),
+        claimed_at: current?.claimed_at ?? args.previous?.claimed_at ?? args.claimedAt,
+        launched_at: launchedAt,
+        last_ledger_cursor: launchCursor
+          ?? args.claimCursor
+          ?? current?.last_ledger_cursor
+          ?? args.previous?.last_ledger_cursor,
+      }),
+    );
+  }
+
+  private async handleLaunchRejection(args: {
+    daemonId: string;
+    workflow: WorkflowFile;
+    issue: TrackerIssue;
+    previous?: IssueRuntimeRecord | undefined;
+    workspace: WorkspaceBinding;
+    intent: RunIntent;
+    claimMutationResult?: TrackerClaimResult | undefined;
+    claimCursor?: string | undefined;
+    claimedAt: string;
+    fetchedAt: string;
+    admissionResolved: boolean;
+    error: unknown;
+  }): Promise<void> {
+    this.activeRuns.delete(args.intent.run_id);
+    const message = args.error instanceof Error ? args.error.message : String(args.error);
+    const current = (await this.store.readStateSnapshot(args.daemonId))
+      ?.issues[args.issue.identifier];
+    const retryCount = (current?.retry_count ?? args.previous?.retry_count ?? 0) + 1;
+    const retryExhausted = retryLimitReached(args.workflow, retryCount);
+    const nextStatus = retryExhausted ? "waiting_external" : "waiting_retry";
+    await this.updateIssueRecord(
+      args.daemonId,
+      args.workflow.path,
+      args.issue.identifier,
+      (latest) => ({
+        ...(args.previous ?? {}),
+        ...(current ?? {}),
+        ...(latest ?? {}),
+        issue_id: args.issue.id,
+        issue_identifier: args.issue.identifier,
+        title: args.issue.title,
+        state_name: args.claimMutationResult?.current_state ?? args.issue.state.name,
+        ...(args.issue.state.type ? { state_type: args.issue.state.type } : {}),
+        workspace_key: args.workspace.workspace_key,
+        workspace_path: args.workspace.workspace_path,
+        branch_name: args.workspace.branch_name,
+        status: nextStatus,
+        claim_status: "claimed",
+        retry_count: retryCount,
+        last_seen_at: args.fetchedAt,
+        tracker_updated_at: args.issue.updated_at,
+        active_run_id: undefined,
+        ...(args.admissionResolved ? { last_run_id: args.intent.run_id } : {}),
+        last_error: message,
+        continuation_due_at: undefined,
+        retry_due_at: retryExhausted
+          ? undefined
+          : addSeconds(nowIso(this.now), backoffSeconds(args.workflow, retryCount)),
+        claimed_at: latest?.claimed_at
+          ?? current?.claimed_at
+          ?? args.previous?.claimed_at
+          ?? args.claimedAt,
+        last_ledger_cursor: latest?.last_ledger_cursor
+          ?? current?.last_ledger_cursor
+          ?? args.previous?.last_ledger_cursor
+          ?? args.claimCursor,
+      }),
+    );
+    await this.appendEvent(
+      args.daemonId,
+      "warn",
+      "run_launch_rejected",
+      `Run ${args.intent.run_id} was rejected for ${args.issue.identifier}: ${message}`,
+      {
+        issue: args.issue.identifier,
+        run_id: args.intent.run_id,
+        admission_resolved: args.admissionResolved,
+        next_status: nextStatus,
+      },
+    );
+  }
+
   private async workspaceMissing(workspacePath: string | undefined): Promise<boolean> {
     if (!workspacePath) {
       return false;
@@ -2327,6 +2466,7 @@ export class DaemonService {
 
     const slots = Math.max(workflow.config.polling.max_concurrent_agents - activeRuns, 0);
     const waitForRuns: Promise<void>[] = [];
+    const waitForAdmissions: Promise<void>[] = [];
     const seenCandidates = new Set<string>();
     const orderedCandidates = candidates
       .filter((candidate) => {
@@ -2398,41 +2538,6 @@ export class DaemonService {
         reason: candidate.reason,
         previous: candidate.record,
       });
-      const launchedAt = nowIso(this.now);
-      const launchCursor = this.recordLedgerEvent({
-        daemonId,
-        issue: candidate.issue,
-        eventType: "issue.launched",
-        occurredAt: launchedAt,
-        payload: {
-          run_id: intent.run_id,
-          dispatch_reason: candidate.reason,
-          workspace_path: workspace.workspace_path,
-          branch: workspace.branch_name,
-        },
-      });
-      await this.updateIssueRecord(daemonId, workflow.path, candidate.issue.identifier, (current) => ({
-        issue_id: candidate.issue.id,
-        issue_identifier: candidate.issue.identifier,
-        title: candidate.issue.title,
-        state_name: claimMutationResult?.current_state ?? candidate.issue.state.name,
-        ...(candidate.issue.state.type ? { state_type: candidate.issue.state.type } : {}),
-        workspace_key: workspace.workspace_key,
-        workspace_path: workspace.workspace_path,
-        branch_name: workspace.branch_name,
-        status: "running",
-        claim_status: "claimed",
-        retry_count: current?.retry_count ?? 0,
-        last_seen_at: pollResult.fetched_at,
-        tracker_updated_at: candidate.issue.updated_at,
-        last_run_id: intent.run_id,
-        active_run_id: intent.run_id,
-        ...(current?.last_backend_session_id ? { last_backend_session_id: current.last_backend_session_id } : {}),
-        ...(current?.last_backend_thread_id ? { last_backend_thread_id: current.last_backend_thread_id } : {}),
-        claimed_at: current?.claimed_at ?? claimedAt,
-        launched_at: launchedAt,
-        last_ledger_cursor: launchCursor ?? claimCursor ?? current?.last_ledger_cursor,
-      }));
       const nextTurnInput = this.createNextTurnInput({
         daemonId,
         issue: candidate.issue,
@@ -2442,40 +2547,119 @@ export class DaemonService {
         lastRunId: candidate.record?.last_run_id,
         resumeSessionId: candidate.record?.last_backend_session_id,
       });
-      const launchPromise = this.options.runService
+      let admissionResolved = false;
+      let admissionPublished = false;
+      let resolveAdmissionAttempt!: () => void;
+      let rejectAdmissionAttempt!: (error: unknown) => void;
+      const admissionAttempt = new Promise<void>((resolve, reject) => {
+        resolveAdmissionAttempt = resolve;
+        rejectAdmissionAttempt = reject;
+      });
+      waitForAdmissions.push(admissionAttempt);
+      const recordAdmission = async (record: RunRecord): Promise<void> => {
+        if (record.run_id !== intent.run_id) {
+          throw new Error(
+            `Run launch identity drift: expected ${intent.run_id}, received ${record.run_id}.`,
+          );
+        }
+        admissionResolved = true;
+      };
+      const publishExecutionAdmission = async (record: RunRecord): Promise<void> => {
+        await recordAdmission(record);
+        if (admissionPublished) return;
+        await this.publishAdmittedLaunch({
+          daemonId,
+          workflowPath: workflow.path,
+          issue: candidate.issue,
+          previous: candidate.record,
+          workspace,
+          intent,
+          claimMutationResult,
+          claimCursor,
+          claimedAt,
+          fetchedAt: pollResult.fetched_at,
+          dispatchReason: candidate.reason,
+        });
+        admissionPublished = true;
+        this.activeRuns.set(intent.run_id, {
+          daemonId,
+          workflowPath: workflow.path,
+          issueIdentifier: candidate.issue.identifier,
+          runId: intent.run_id,
+          promise: launchPromise,
+        });
+        inMemoryActiveIssues.add(candidate.issue.identifier);
+        activeRuns += 1;
+        launchedRuns.push(intent.run_id);
+        if (candidate.reason === "continuation") {
+          continuedRuns.push(intent.run_id);
+        }
+        if (candidate.reason === "retry") {
+          retriedRuns.push(intent.run_id);
+        }
+        resolveAdmissionAttempt();
+      };
+      const launchStarted = Promise.resolve().then(() => this.options.runService
         .launch(intent, {
           detached: false,
           nextTurnInput,
-        })
+          onAdmitted: recordAdmission,
+          onExecutionAdmitted: publishExecutionAdmission,
+        }));
+      const launchPromise = launchStarted
         .then(async (result) => {
+          // Test doubles and older in-process implementations may not invoke
+          // the execution callback. A non-queued result proves execution
+          // passed its gate. A queued fulfillment may instead be an execution-
+          // ownership loser and must remain observation-only.
+          if (!admissionPublished && result.record.state !== "queued") {
+            await publishExecutionAdmission(result.record);
+          }
+          if (!admissionPublished) {
+            resolveAdmissionAttempt();
+            return;
+          }
           await this.handleLaunchCompletion({
             daemonId,
             workflowPath: workflow.path,
             issueIdentifier: candidate.issue.identifier,
             runRecord: result.record,
           });
+        })
+        .catch(async (error) => {
+          try {
+            if (admissionPublished) {
+              inMemoryActiveIssues.delete(candidate.issue.identifier);
+              activeRuns = Math.max(activeRuns - 1, 0);
+            }
+            await this.handleLaunchRejection({
+              daemonId,
+              workflow,
+              issue: candidate.issue,
+              previous: candidate.record,
+              workspace,
+              intent,
+              claimMutationResult,
+              claimCursor,
+              claimedAt,
+              fetchedAt: pollResult.fetched_at,
+              admissionResolved,
+              error,
+            });
+            resolveAdmissionAttempt();
+          } catch (reconciliationError) {
+            rejectAdmissionAttempt(reconciliationError);
+          }
         });
-      this.activeRuns.set(intent.run_id, {
-        daemonId,
-        workflowPath: workflow.path,
-        issueIdentifier: candidate.issue.identifier,
-        runId: intent.run_id,
-        promise: launchPromise,
-      });
-      inMemoryActiveIssues.add(candidate.issue.identifier);
-      activeRuns += 1;
-
-      launchedRuns.push(intent.run_id);
-      if (candidate.reason === "continuation") {
-        continuedRuns.push(intent.run_id);
-      }
-      if (candidate.reason === "retry") {
-        retriedRuns.push(intent.run_id);
-      }
       if (options.awaitLaunchedRuns) {
         waitForRuns.push(launchPromise);
       }
     }
+
+    // The daemon loop remains nonblocking with respect to execution, but a
+    // tick does not publish its result until every selected candidate has
+    // either crossed durable admission or been reconciled as rejected.
+    await Promise.all(waitForAdmissions);
 
     if (waitForRuns.length > 0) {
       await Promise.allSettled(waitForRuns);

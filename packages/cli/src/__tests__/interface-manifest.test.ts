@@ -329,11 +329,11 @@ describe("interface manifest", () => {
     }
   });
 
-  test("catalogs the schema-less self health result array without inventing a payload version", () => {
+  test("catalogs the schema-less local result and versioned fleet health envelope", () => {
     const record = INTERFACE_MANIFEST_RECORDS.find((candidate) => candidate.id === "self.health");
     expect(record?.output_contract).toMatchObject({
-      schema_version: null,
-      json_schema_ref: "SelfHealthResult[]",
+      schema_version: "self-health-fleet/v1",
+      json_schema_ref: "SelfHealthResult[] | SelfHealthFleetJsonResult",
     });
   });
 

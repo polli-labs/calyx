@@ -28,6 +28,8 @@ import type {
   MonitorWakeStatus,
   PredicateEvaluationResult,
   PredicateV1,
+  WorkloadAdmissionDecisionV1,
+  WorkloadAdmissionFenceReason,
 } from "@polli-labs/calyx-core";
 import { CALYX_CLOSED_RESPONSE_OBJECT_DESCRIPTION_PREFIX } from "@polli-labs/calyx-core";
 import type { SupportedBackend } from "@polli-labs/calyx-runner";
@@ -551,6 +553,19 @@ export interface RecoveryStatus {
 export type RunLaunchMode = "inline" | "detached";
 export type RunLaunchStage = "accepted" | "dispatching" | "executing";
 
+export type RunExecutionAdmissionRefusal = {
+  schema_version: "calyx.run-execution-admission-refusal/v1";
+  dispatch_attempt: number;
+  refused_at: string;
+  decision: WorkloadAdmissionDecisionV1;
+  reason: WorkloadAdmissionFenceReason;
+  failed_surface: string;
+  next_action: string;
+} & (
+  | { code: "workload_admission_fenced" }
+  | { code: "workload_admission_busy"; acquire_timeout_ms: number }
+);
+
 export interface RunLaunchState {
   mode: RunLaunchMode;
   stage: RunLaunchStage;
@@ -565,6 +580,8 @@ export interface RunLaunchState {
   last_dispatch_at?: string;
   execution_id?: string;
   execution_started_at?: string;
+  /** Retryable first-execution refusal published by a detached worker. */
+  execution_admission_refusal?: RunExecutionAdmissionRefusal;
   /** Exact non-secret host-process effect binding persisted before spawn. */
   host_process_execution_binding?: HostProcessExecutionBinding;
 }
@@ -1279,6 +1296,7 @@ export interface RunServiceEvent {
     | "launch_result"
     | "spec_persisted"
     | "launch_dispatched"
+    | "execution_admission_refused"
     | "launch_started"
     | "launch_completed"
     | "integration_started"

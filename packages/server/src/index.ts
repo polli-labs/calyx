@@ -5,6 +5,7 @@ export {
   startRunServer,
   SUPPORTED_FEATURES,
 } from "./server.js";
+export { loadServerBuildInfo, resolveServerBuildInfoPath } from "./build-info.js";
 export { generateCalyxOpenApi, renderCalyxOpenApi } from "./openapi.js";
 export {
   CALYX_SCHEMA_REGISTRY,

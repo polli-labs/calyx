@@ -65,6 +65,7 @@ describe("durable directory anchors", () => {
     const target = path.join(home, "managed", "receipts");
     const probedCandidates: string[] = [];
     const anchor = await openPrivateDirectoryDurable(target, 0o700, {
+      descriptorPathCandidates: () => [target],
       descriptorChildTraversalProbe: async (candidate) => {
         probedCandidates.push(candidate);
         return false;
@@ -94,7 +95,10 @@ describe("durable directory anchors", () => {
     const anchor = await openExistingDirectoryDurable(target, {
       ...(fallback
         ? { descriptorPathCandidates: () => [] }
-        : { descriptorChildTraversalProbe: async () => true }),
+        : {
+            descriptorPathCandidates: () => [target],
+            descriptorChildTraversalProbe: async () => true,
+          }),
       afterExclusiveFileCreated: async () => {
         if (injectFailure) throw new Error("injected post-create write failure");
       },
@@ -168,7 +172,10 @@ describe("durable directory anchors", () => {
     const anchor = await openExistingDirectoryDurable(target, {
       ...(fallback
         ? { descriptorPathCandidates: () => [] }
-        : { descriptorChildTraversalProbe: async () => true }),
+        : {
+            descriptorPathCandidates: () => [target],
+            descriptorChildTraversalProbe: async () => true,
+          }),
       authorityOperationGate: async () => {
         markOperationStarted();
         await operationRelease;

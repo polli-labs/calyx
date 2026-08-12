@@ -1351,6 +1351,7 @@ function buildBackendOptions(
   definition: AgentDefinition,
   backend: AgentLaunchBackend,
   timeoutMs: number | undefined,
+  outputCapture: AgentRunOutputCapture | undefined,
 ): Record<string, unknown> {
   const backendOptions: Record<string, unknown> = {};
   if (definition.posture?.workspace_mutation === "forbidden") {
@@ -1358,9 +1359,11 @@ function buildBackendOptions(
       backendOptions["allowed_tools"] = CLAUDE_READONLY_ALLOWED_TOOLS;
     } else {
       backendOptions["sandbox"] = "read-only";
-      backendOptions["env"] = {
-        CALYX_AGENT_WORKSPACE_MUTATION: "forbidden",
-      };
+      if (!outputCapture) {
+        backendOptions["env"] = {
+          CALYX_AGENT_WORKSPACE_MUTATION: "forbidden",
+        };
+      }
     }
   }
   if (timeoutMs !== undefined) {
@@ -1652,7 +1655,6 @@ export async function compileAgentLaunch(
   const backend = selectBackend(loaded.definition, options.backend, options.requesterBackend);
   const timeoutMinutes = loaded.definition.execution.safety?.timeout_minutes;
   const timeoutMs = typeof timeoutMinutes === "number" ? Math.round(timeoutMinutes * 60 * 1000) : undefined;
-  const backendOptions = buildBackendOptions(loaded.definition, backend, timeoutMs);
   const artifacts = requiredArtifacts(loaded.definition);
   const capture = outputCapture(loaded.definition);
   if (capture && loaded.definition.posture?.workspace_mutation !== "forbidden") {
@@ -1661,6 +1663,7 @@ export async function compileAgentLaunch(
   if (capture && backend !== "codex") {
     throw new Error(`Agent "${agentId}" output capture requires the Codex backend.`);
   }
+  const backendOptions = buildBackendOptions(loaded.definition, backend, timeoutMs, capture);
   const model = loaded.definition.execution.model?.[backend];
   const reasoningEffort = loaded.definition.execution.reasoning_effort;
 

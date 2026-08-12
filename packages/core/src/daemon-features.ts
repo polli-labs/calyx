@@ -2,6 +2,7 @@ import { CALYX_DAEMON_HEALTH_PROTOCOL_EPOCH } from "./daemon-health";
 
 export const CALYX_DAEMON_FEATURES = {
   healthV1: "daemon.health/v1",
+  workloadAdmissionV1: "run.workload_admission/v1",
   agentRunnerV1: "run.agent_runner/v1",
   defaultPathInjectionV1: "run.default_path_injection/v1",
   detachedWorkerDiagnosticsV1: "run.detached_worker_diagnostics/v1",
@@ -77,6 +78,7 @@ export const FEATURE_DESCRIPTIONS: Record<CalyxDaemonFeature, string> = {
   [CALYX_DAEMON_FEATURES.leaseV1]: "lease/v1 (POL-1790)",
   [CALYX_DAEMON_FEATURES.runReadoptOnBootV1]: "run.readopt_on_boot/v1 (POL-1879/POL-1886)",
   [CALYX_DAEMON_FEATURES.runReconcilePreservesNoncanonicalV1]: "run.reconcile_preserves_noncanonical/v1 (POL-1980)",
+  [CALYX_DAEMON_FEATURES.workloadAdmissionV1]: "run.workload_admission/v1 (POL-2141)",
 };
 
 export interface DaemonFeatureIntentShape {
@@ -170,6 +172,7 @@ function formatDaemonBuildLine(host: string, health: DaemonCompatibilityHealth, 
 export function requiredFeaturesForIntent(intent: DaemonFeatureIntentShape): CalyxDaemonFeature[] {
   const required = new Set<CalyxDaemonFeature>(intent.required_features ?? []);
   required.add(CALYX_DAEMON_FEATURES.healthV1);
+  required.add(CALYX_DAEMON_FEATURES.workloadAdmissionV1);
 
   const kernel = isNonEmptyString(intent.kernel) ? intent.kernel : undefined;
   if (kernel === undefined || kernel === "agent_runner") {

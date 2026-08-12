@@ -13,6 +13,7 @@ import {
   CALYX_EXCLUSIVE_RESPONSE_UNION_DESCRIPTION_PREFIX,
   CALYX_HTTP_SSE_CURSOR_MAX_CHARS,
   HTTP_OPERATION_DESCRIPTORS,
+  fleetConvergenceToolchainCheckSchema,
   isCanonicalApiTimestamp,
   normalizeCalyxAdminReconcileResultForConsumer,
   resolveHttpOperation,
@@ -34,6 +35,7 @@ import {
 } from "@polli-labs/calyx-runner";
 import {
   adminHealthSchema,
+  workloadAdmissionDecisionSchema,
   adminReconcileConsumerResultSchema,
   adminReconcileResultSchema,
   activityMarkCreateRequestSchema,
@@ -374,6 +376,7 @@ const selfUpgradeReceiptSchema = z.object({
   host: nonEmptyString,
   target_ref: nonEmptyString,
   target_evidence: openJsonDictionary("self-upgrade-receipt.target-evidence"),
+  toolchain_check: fleetConvergenceToolchainCheckSchema.optional(),
   status: z.enum(["succeeded", "failed"]),
   started_at: isoTimestamp,
   completed_at: isoTimestamp,
@@ -405,12 +408,14 @@ const selfUpgradeReceiptSchema = z.object({
   maintenance_disposition: selfUpgradeMaintenanceDispositionSchema.optional(),
   artifact_cleanup: selfUpgradeArtifactCleanupSchema.optional(),
   warnings: z.array(z.string()).max(10_000),
-  durability_issues: z.array(z.object({
-    scope: z.literal("final_receipt"),
-    code: z.literal("receipt_persist_failed"),
-    observed_at: isoTimestamp,
-    message: nonEmptyString,
-  }).strict()).max(256).optional(),
+  durability_issues: z.array(z.discriminatedUnion("scope", [
+    z.object({
+      scope: z.literal("final_receipt"),
+      code: z.literal("receipt_persist_failed"),
+      observed_at: isoTimestamp,
+      message: nonEmptyString,
+    }).strict(),
+  ])).max(256).optional(),
   error: z.string().optional(),
 }).strict();
 
@@ -493,6 +498,7 @@ const activityListQuerySchema = paginationQuerySchema.extend({
 const activityMessagesQuerySchema = z.object({
   role: nonEmptyString.optional(),
   grep: nonEmptyString.optional(),
+  order: z.enum(["oldest_first", "newest_first"]).optional(),
   summary_only: booleanQueryString.optional(),
   max_text_chars: nonNegativeIntegerString.optional(),
   limit: positiveIntegerString.optional(),
@@ -501,6 +507,7 @@ const activityMessagesQuerySchema = z.object({
 
 const activityTurnsQuerySchema = z.object({
   role: nonEmptyString.optional(),
+  order: z.enum(["oldest_first", "newest_first"]).optional(),
   summary_only: booleanQueryString.optional(),
   max_text_chars: nonNegativeIntegerString.optional(),
   limit: positiveIntegerString.optional(),
@@ -687,6 +694,11 @@ const errorDetailsSchema = z.object({
   wake_id: nonEmptyString.optional(),
   monitor_id: nonEmptyString.optional(),
   conflicting_parameters: z.array(boundedRequestNonEmptyString(128)).max(16).optional(),
+  failed_surface: nonEmptyString.optional(),
+  next_action: nonEmptyString.optional(),
+  admission: nonEmptyString.optional(),
+  planned_topology_projection_sha256: nonEmptyString.optional(),
+  accepted_topology_projection_sha256: nonEmptyString.optional(),
 }).strict();
 
 const errorEnvelopeSchema = z.object({
@@ -1229,6 +1241,7 @@ const daemonHealthSchema = z.object({
   }).strict().optional(),
   active_runs: z.number().int().nonnegative(),
   active_run_ids: z.array(nonEmptyString).optional(),
+  workload_admission: workloadAdmissionDecisionSchema,
   maintenance_mode: z.boolean(),
   supports_features: z.array(nonEmptyString),
   interactive_sessions: z.object({
@@ -1866,6 +1879,7 @@ const runLaunchPortableRequestSchema = z.object({
   schema_version: z.literal("calyx.run-launch-request/v1"),
   intent: runIntentRequestSchema,
   idempotency_key: requestIdempotencyKey,
+  topology_projection_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
 }).strip();
 
 const runLaunchResultSchema = z.object({

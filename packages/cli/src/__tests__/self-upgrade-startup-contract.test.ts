@@ -12,6 +12,7 @@ import {
   resolveConsumerApiCredentialVerifiers,
   type CalyxDaemonDescriptor,
   type ConsumerApiCredentialTruth,
+  type FleetConvergenceToolchainCheck,
 } from "@polli-labs/calyx-core";
 import {
   buildTargetStartupContractPayload,
@@ -32,7 +33,13 @@ import {
 const runSelfUpgrade = (
   options: Parameters<typeof runSelfUpgradeImpl>[0],
   dependencies: Parameters<typeof runSelfUpgradeImpl>[1] = {},
-) => runSelfUpgradeImpl({ ...options, targetOwnedExecution: true }, dependencies);
+) => runSelfUpgradeImpl(
+  { ...options, targetOwnedExecution: true },
+  {
+    attestToolchain: async ({ host, targetSha }) => passingToolchainCheck(host, targetSha),
+    ...dependencies,
+  },
+);
 
 const CONTRACT_MANIFEST_PATH = "packages/core/startup-contract.json";
 const CONTRACT_JSON = JSON.stringify(CALYX_SERVER_STARTUP_CONTRACT);
@@ -45,6 +52,38 @@ const CONTRACT_WITHOUT_PROJECTOR_MARKER_JSON = JSON.stringify(CONTRACT_WITHOUT_P
 const ATTESTED_CONTRACT_JSON = CONTRACT_JSON;
 const BEFORE_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TARGET_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+function passingToolchainCheck(host: string, targetSha: string | null): FleetConvergenceToolchainCheck {
+  return {
+    schema_version: "fleet-convergence-check/v1",
+    surface: "toolchain",
+    status: "pass",
+    host,
+    expected: { node_range: ">=22.13.0", package_manager: "pnpm", pnpm_version: "10.34.1" },
+    observed: {
+      process_exec_path_realpath: "/usr/bin/node",
+      process_node_version: "v22.23.1",
+      child_node: { executable_realpath: "/usr/bin/node", version: "v22.23.1", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/usr/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "10.34.1", exit_code: 0, probe: "manage-package-manager-versions-disabled" },
+        nested: { version: "10.34.1", exit_code: 0 },
+      },
+      bootstrap_cwd: "$CWD",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1",
+      path_resolution: { observer: "parent_diagnostic", total_entries: 1, truncated: false, entries: [{ index: 0, directory: "/usr/bin" }] },
+    },
+    failures: [],
+    checked_at: "2026-08-02T00:00:00.000Z",
+    evidence: { source: "self-upgrade-bootstrap-attestation", spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1" },
+    freshness: { status: "current", observed_at: "2026-08-02T00:00:00.000Z" },
+    topology_identity: { status: "not_bound" },
+    target_bundle_identity: { calyx_source_sha: targetSha },
+  };
+}
 const BLADE_CREDENTIALS = [{
   client_id: "daemon:blade",
   credential_tier: "internal_runtime",

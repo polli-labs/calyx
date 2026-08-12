@@ -21,7 +21,7 @@ import {
   type OtelMetricsServerState,
   type OtelPushMetricExporterLike,
 } from "../otel-metrics.js";
-import { RunService } from "../service.js";
+import { RunService } from "./support/test-run-service.js";
 
 function buildInfoFixture(overrides: Partial<CalyxBuildInfo> = {}): CalyxBuildInfo {
   return {

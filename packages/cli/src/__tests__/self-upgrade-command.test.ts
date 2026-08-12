@@ -19,6 +19,7 @@ import {
   observeSelfUpgradeOperation,
   openStateStore,
   type CalyxDaemonDescriptor,
+  type FleetConvergenceToolchainCheck,
 } from "@polli-labs/calyx-core";
 import type {
   DetachedWorkerSupervisor,
@@ -61,8 +62,10 @@ import type { SelfUpgradePhaseEvent } from "../self-upgrade-progress";
 import type { SupervisorEnvInspection } from "../self-upgrade-startup-contract";
 
 // These are durable-operation integration tests: the command fsyncs every
-// lifecycle transition, including the target/supervisor cutover phases.
-vi.setConfig({ testTimeout: 10_000 });
+// lifecycle transition and several cases exercise repeated health verification.
+// Six-worker full-suite contention can legitimately exceed the repository's
+// 30-second unit-test ceiling; keep a finite integration-test hang bound.
+vi.setConfig({ testTimeout: 60_000 });
 
 const execFile = promisify(execFileCallback);
 const STARTUP_CONTRACT_JSON = JSON.stringify(CALYX_SERVER_STARTUP_CONTRACT);
@@ -283,6 +286,74 @@ function compatibleStartupInspection(host: string): SupervisorEnvInspection {
   };
 }
 
+function passingToolchainCheck(host: string, targetSha: string | null): FleetConvergenceToolchainCheck {
+  return {
+    schema_version: "fleet-convergence-check/v1",
+    surface: "toolchain",
+    status: "pass",
+    host,
+    expected: {
+      node_range: ">=22.13.0",
+      package_manager: "pnpm",
+      pnpm_version: "10.34.1",
+    },
+    observed: {
+      process_exec_path_realpath: "/usr/bin/node",
+      process_node_version: "v22.23.1",
+      child_node: { executable_realpath: "/usr/bin/node", version: "v22.23.1", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/usr/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "10.34.1", exit_code: 0, probe: "manage-package-manager-versions-disabled" },
+        nested: { version: "10.34.1", exit_code: 0 },
+      },
+      bootstrap_cwd: "$CWD",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1",
+      path_resolution: { observer: "parent_diagnostic", total_entries: 1, truncated: false, entries: [{ index: 0, directory: "/usr/bin" }] },
+    },
+    failures: [],
+    checked_at: "2026-08-02T00:00:00.000Z",
+    evidence: {
+      source: "self-upgrade-bootstrap-attestation",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+    },
+    freshness: { status: "current", observed_at: "2026-08-02T00:00:00.000Z" },
+    topology_identity: { status: "not_bound" },
+    target_bundle_identity: { calyx_source_sha: targetSha },
+  };
+}
+
+function blockedMbaToolchainCheck(targetSha: string | null): FleetConvergenceToolchainCheck {
+  const passing = passingToolchainCheck("mba", targetSha);
+  return {
+    ...passing,
+    status: "blocked",
+    observed: {
+      ...passing.observed,
+      child_node: {
+        executable_realpath: "/opt/homebrew/bin/node",
+        version: "v26.5.0",
+        exit_code: 0,
+      },
+      child_pnpm: {
+        executable_realpath: "/opt/homebrew/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "11.17.0", exit_code: 0, probe: "with-current" },
+        nested: { version: "11.17.0", exit_code: 0 },
+      },
+    },
+    failures: [
+      { code: "child_pnpm_intrinsic_version_mismatch", message: "Bootstrap child pnpm is intrinsically 11.17.0." },
+      { code: "nested_pnpm_version_mismatch", message: "Nested pnpm 11.17.0 does not match pnpm@10.34.1." },
+    ],
+    repair_owner: "fleet_ops",
+    next_action: { kind: "repair_toolchain", description: "Repair mba's bootstrap toolchain." },
+  };
+}
+
 /** Keep legacy self-upgrade fixtures focused on their named behavior. */
 async function runSelfUpgrade(
   options: Parameters<typeof runSelfUpgradeImpl>[0],
@@ -300,6 +371,8 @@ async function runSelfUpgrade(
   }
   const testDependencies = {
     ...dependencies,
+    attestToolchain: dependencies.attestToolchain
+      ?? (async ({ host, targetSha }) => passingToolchainCheck(host, targetSha)),
     readHostsTruth: dependencies.readHostsTruth ?? (async () => ({
       hosts: { [testHost]: { consumer_api_credentials: testCredentials(testHost) } },
     })),
@@ -2463,6 +2536,78 @@ describe("runSelfUpgrade", () => {
     expect(installWasInspected).toBe(true);
   });
 
+  test("uses the structured runner for versioned pack/install and retains only exit status", async () => {
+    const gitHead = "e".repeat(40);
+    const fakeRepo = path.join(root, "c1-structured-versioned-install");
+    const fakeCore = path.join(fakeRepo, "packages", "core");
+    const fakeCli = path.join(fakeRepo, "packages", "cli");
+    const installsRoot = path.join(root, "c1-structured-versioned-installs");
+    await mkdir(fakeCore, { recursive: true });
+    await mkdir(fakeCli, { recursive: true });
+    await writeFile(path.join(fakeRepo, "pnpm-lock.yaml"), [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "  packages/core: {}",
+      "  packages/cli: {}",
+      "",
+      "snapshots: {}",
+      "",
+    ].join("\n"), "utf8");
+    await writeFile(path.join(fakeCore, "package.json"), `${JSON.stringify({ name: "@polli-labs/calyx-core" })}\n`, "utf8");
+    await writeFile(path.join(fakeCli, "package.json"), `${JSON.stringify({ name: "@polli-labs/calyx" })}\n`, "utf8");
+    const frozenEnv = Object.freeze({
+      PATH: "/fixture/bin:/usr/bin:/bin",
+      HOME: path.join(root, "c1-private-home"),
+      XDG_CONFIG_HOME: path.join(root, "c1-private-config"),
+      TMPDIR: path.join(root, "c1-private-tmp"),
+    }) as NodeJS.ProcessEnv;
+    const calls: Array<{ args: readonly string[]; cwd: string; env: NodeJS.ProcessEnv }> = [];
+    const runPackageManagerCommand = vi.fn(async (
+      _command: "pnpm",
+      args: readonly string[],
+      cwd: string,
+      env: NodeJS.ProcessEnv,
+    ) => {
+      calls.push({ args, cwd, env });
+      if (args.includes("pack")) {
+        const packageName = args[args.indexOf("--filter") + 1]!;
+        const tarballsDirectory = args[args.indexOf("--pack-destination") + 1]!;
+        const tarballName = packageName.replace(/^@/, "").replace(/\//g, "-");
+        await writeFile(path.join(tarballsDirectory, `${tarballName}-0.2.0.tgz`), "", "utf8");
+        return { code: 0 };
+      }
+      expect(args).toEqual(["install", "--prod", "--ignore-scripts", "--prefer-offline"]);
+      return { code: 42 };
+    });
+
+    let thrown: Error | undefined;
+    try {
+      await prepareVersionedInstall({
+        repoRoot: fakeRepo,
+        gitHead,
+        installsRoot,
+        workspacePackages: [
+          { name: "@polli-labs/calyx-core", relativePath: "packages/core" },
+          { name: "@polli-labs/calyx", relativePath: "packages/cli" },
+        ],
+        env: frozenEnv,
+        runPackageManagerCommand,
+      });
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown?.message).toBe("pnpm install failed for versioned install (exit 42).");
+    expect(calls).toHaveLength(3);
+    expect(calls.every((call) => call.env === frozenEnv)).toBe(true);
+    expect(calls.filter((call) => call.args.includes("pack"))).toHaveLength(2);
+    expect(calls.filter((call) => call.args.includes("pack"))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ args: expect.arrayContaining(["--ignore-scripts"]) }),
+    ]));
+    expect(calls.at(-1)?.cwd).toContain(".staging-");
+  });
+
   test("dry-run returns a non-empty plan without mutating descriptors", async () => {
     const descriptor = makeDescriptor({ repoRoot, runsRoot });
     const descriptors = new Map([[descriptor.daemon_id, descriptor]]);
@@ -2955,6 +3100,7 @@ describe("runSelfUpgrade", () => {
             return { code: 0, stdout: "", stderr: "" };
           },
           runBuild: async () => ({ code: 0, stdout: "build ok\n", stderr: "" }),
+          attestToolchain: async ({ host, targetSha }) => passingToolchainCheck(host, targetSha),
           prepareInstall: async ({ gitHead }) => ({
             ...await prepareInstallFixture(homeRoot, gitHead),
             artifact_manifest_sha256: "e".repeat(64),
@@ -3050,6 +3196,143 @@ describe("runSelfUpgrade", () => {
       expect(resumed.receipt?.target_acceptance?.operation_id).toBe(orphanedOperationId);
       expect(resumedAcquireLock).toHaveBeenCalledTimes(1);
       expect(resumedRelease).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousOperatorToken === undefined) {
+        delete process.env[operatorTokenEnv];
+      } else {
+        process.env[operatorTokenEnv] = previousOperatorToken;
+      }
+    }
+  });
+
+  test("source planner composes its local cleanup warning with the prepared target result", async () => {
+    const previousHead = "a".repeat(40);
+    const targetHead = "c".repeat(40);
+    await materializeInstallFixture(homeRoot, previousHead);
+    const descriptor = makeDescriptor({
+      repoRoot,
+      runsRoot,
+      gitHead: previousHead,
+      argv: [process.execPath, currentInstallBin(homeRoot), "run", "serve"],
+    });
+    const release = vi.fn(async () => {});
+    const cleanupBootstrapSandbox = vi.fn(async () => ({ status: "residue" as const }));
+    let currentHead = previousHead;
+    const operatorTokenEnv = "CALYX_CONSUMER_API_TEST_BLADE_OPERATOR_TOKEN";
+    const previousOperatorToken = process.env[operatorTokenEnv];
+    process.env[operatorTokenEnv] = "target-handoff-composition-test-token";
+    const targetCleanupIssue = {
+      scope: "operation_cleanup" as const,
+      code: "best_effort_cleanup" as const,
+      detail: "residue" as const,
+      observed_at: "2026-08-04T00:00:00.000Z",
+      message: "prepared target retained its own local cleanup residue",
+    };
+
+    try {
+      const result = await runSelfUpgradeImpl(
+        {
+          host: "blade",
+          targetSha: targetHead,
+          authToken: "planner-only-legacy-token",
+        },
+        {
+          homeDir: () => homeRoot,
+          acquireLock: vi.fn(async () => ({
+            lockPath: path.join(homeRoot, "lock"),
+            release,
+          })),
+          resolveCurrentHostAlias: async () => "blade",
+          resolveAgentsInfraRoot: async () => path.join(root, "agents-infra"),
+          resolveRepo: async () => repoRoot,
+          readHostsTruth: async () => ({
+            hosts: {
+              blade: {
+                consumer_api_credentials: [
+                  ...testCredentials("blade"),
+                  {
+                    client_id: "operator_cli",
+                    credential_tier: "control_plane" as const,
+                    verifier_env: "CALYX_CONSUMER_API_TEST_BLADE_OPERATOR_VERIFIER",
+                    token_env: operatorTokenEnv,
+                    outbound: true,
+                    address_grants: {
+                      send_as: ["client:operator_cli@blade"],
+                      read: ["host:*"],
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+          listDescriptors: async () => [descriptor],
+          readDescriptor: async () => descriptor,
+          writeDescriptor: vi.fn(),
+          resolveSupervisorEnvNames: async () => compatibleStartupInspection("blade"),
+          createRunService: () => createRunServiceStub([]),
+          execGit: async (args) => {
+            if (args[0] === "status") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "show") return { code: 0, stdout: STARTUP_CONTRACT_JSON, stderr: "" };
+            if (args[0] === "fetch") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "rev-parse") {
+              return {
+                code: 0,
+                stdout: `${args[1] === "FETCH_HEAD" ? targetHead : currentHead}\n`,
+                stderr: "",
+              };
+            }
+            if (args[0] === "for-each-ref") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "merge" && args[1] === "--ff-only") {
+              currentHead = targetHead;
+              return { code: 0, stdout: "updated\n", stderr: "" };
+            }
+            if (args[0] === "log") {
+              return { code: 0, stdout: "abc123 POL-2072 target-owned cutover\n", stderr: "" };
+            }
+            return { code: 0, stdout: "", stderr: "" };
+          },
+          runBuild: async () => ({ code: 0, stdout: "build ok\n", stderr: "" }),
+          attestToolchain: async ({ host, targetSha }) => passingToolchainCheck(host, targetSha),
+          prepareInstall: async ({ gitHead }) => ({
+            ...await prepareInstallFixture(homeRoot, gitHead),
+            artifact_manifest_sha256: "e".repeat(64),
+            artifact_manifest_packages: ["@polli-labs/calyx"],
+          }),
+          // The source planner delegates before this can run, but its
+          // availability makes this otherwise repairable supervisor mismatch
+          // non-blocking during source-side planning.
+          prepareSupervisorCutover: vi.fn(),
+          cleanupBootstrapSandbox,
+          runTargetOwnedUpgrade: async (handoff) => ({
+            status: "succeeded",
+            operation_id: handoff.operation_id,
+            plan: {} as SelfUpgradePlan,
+            receipt: {
+              target_acceptance: {
+                schema_version: "self-upgrade-target-acceptance/v1",
+                status: "accepted",
+                operation_id: handoff.operation_id,
+              },
+            },
+            projection_issues: [targetCleanupIssue],
+          }) as never,
+        },
+      );
+
+      const cleanupIssues = result.projection_issues?.filter(
+        (issue) => issue.scope === "operation_cleanup",
+      );
+      expect(cleanupBootstrapSandbox).toHaveBeenCalledTimes(1);
+      expect(cleanupIssues).toEqual([
+        targetCleanupIssue,
+        expect.objectContaining({
+          scope: "operation_cleanup",
+          code: "best_effort_cleanup",
+          detail: "residue",
+          message: expect.stringContaining("left residue"),
+        }),
+      ]);
+      expect(result.projection_issues).toHaveLength(2);
     } finally {
       if (previousOperatorToken === undefined) {
         delete process.env[operatorTokenEnv];
@@ -3708,6 +3991,95 @@ describe("runSelfUpgrade", () => {
     }
   });
 
+  test("post-commit terminal errors retain a local cleanup diagnostic without rewriting authority", async () => {
+    let currentHead = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const descriptors = new Map<string, CalyxDaemonDescriptor>([
+      ["run-serve", makeDescriptor({ repoRoot, runsRoot, gitHead: currentHead })],
+    ]);
+    const cleanupBootstrapSandbox = vi.fn(async () => ({ status: "residue" as const }));
+    const writeDescriptor = vi.fn(async (next: CalyxDaemonDescriptor) => {
+      const current = descriptors.get(next.daemon_id);
+      // Maintenance is released only after the durable `committed` phase.
+      // Fail there to take the otherwise bypassed committed-error funnel.
+      if (current?.maintenance_mode && !next.maintenance_mode) {
+        throw new Error("injected post-commit maintenance publication failure");
+      }
+      descriptors.set(next.daemon_id, next);
+      return path.join(root, `${next.daemon_id}.json`);
+    });
+
+    let thrown: SelfUpgradeExecutionError | undefined;
+    try {
+      await runSelfUpgrade(
+        { host: "blade", authToken: "secret-token" },
+        {
+          homeDir: () => homeRoot,
+          acquireLock: vi.fn(async () => ({
+            lockPath: path.join(homeRoot, "lock"),
+            release: async () => {},
+          })),
+          resolveCurrentHostAlias: async () => "blade",
+          resolveAgentsInfraRoot: async () => path.join(root, "agents-infra"),
+          resolveRepo: async () => repoRoot,
+          listDescriptors: async () => [...descriptors.values()],
+          readDescriptor: async (daemonId: string) => descriptors.get(daemonId),
+          writeDescriptor,
+          execGit: async (args: string[]) => {
+            if (args[0] === "status") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "pull") {
+              currentHead = "cccccccccccccccccccccccccccccccccccccccc";
+              return { code: 0, stdout: "updated\n", stderr: "" };
+            }
+            return {
+              code: 0,
+              stdout: args[1] === "HEAD"
+                ? `${currentHead}\n`
+                : "cccccccccccccccccccccccccccccccccccccccc\n",
+              stderr: "",
+            };
+          },
+          runBuild: async () => ({ code: 0, stdout: "", stderr: "" }),
+          prepareInstall: vi.fn(async ({ gitHead }) => prepareInstallFixture(homeRoot, gitHead)),
+          cleanupBootstrapSandbox,
+          createRunService: () => createRunServiceStub([]),
+          createSupervisorAdapter: () => ({
+            kind: "direct" as const,
+            stop: async () => ({ signal: "SIGTERM" as const, forced: false }),
+            start: async () => {
+              const restartedMaintenanceMode = descriptors.get("run-serve")?.maintenance_mode;
+              descriptors.set("run-serve", makeDescriptor({
+                repoRoot,
+                runsRoot,
+                gitHead: currentHead,
+                pid: 5150,
+                argv: [process.execPath, currentInstallBin(homeRoot), "run", "serve"],
+                maintenanceMode: restartedMaintenanceMode ?? false,
+              }));
+              return { pid: 5150 };
+            },
+            status: async () => ({ running: true, pid: 5150 }),
+          }),
+          createAdminClient: createAdminClientFactory(vi.fn(async () => daemonHealthResponse(currentHead))),
+        },
+      );
+    } catch (error) {
+      thrown = error as SelfUpgradeExecutionError;
+    }
+
+    expect(thrown?.message).toContain("Target cutover is durably committed");
+    expect(thrown?.message).toContain("injected post-commit maintenance publication failure");
+    expect(thrown?.exitCode).toBe(6);
+    expect(cleanupBootstrapSandbox).toHaveBeenCalledTimes(1);
+    expect(thrown?.projection_issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        scope: "operation_cleanup",
+        code: "best_effort_cleanup",
+        detail: "residue",
+      }),
+    ]));
+    expect(thrown?.receipt).toBeUndefined();
+  });
+
   test("progress events are idempotent on event_id across re-append", async () => {
     const runsRoot2 = path.join(root, "runs-idem");
     await mkdir(runsRoot2, { recursive: true });
@@ -3845,6 +4217,74 @@ describe("runSelfUpgrade", () => {
     expect(supervisorInstall).not.toHaveBeenCalled();
     expect(runBuild).not.toHaveBeenCalled();
     expect(descriptors.get("run-serve")?.maintenance_mode).toBe(false);
+  });
+
+  test("POL-2140: blocked toolchain persists a failed receipt and operation observation before build", async () => {
+    const descriptors = new Map<string, CalyxDaemonDescriptor>([
+      ["run-serve", makeDescriptor({ repoRoot, runsRoot })],
+    ]);
+    const runBuild = vi.fn(async () => ({ code: 0, stdout: "", stderr: "" }));
+    let thrown: SelfUpgradeExecutionError | undefined;
+    try {
+      await runSelfUpgrade(
+        { host: "mba", authToken: "secret-token" },
+        {
+          homeDir: () => homeRoot,
+          acquireLock: vi.fn(async () => ({ lockPath: path.join(homeRoot, "lock"), release: async () => {} })),
+          resolveCurrentHostAlias: async () => "mba",
+          resolveAgentsInfraRoot: async () => path.join(root, "agents-infra"),
+          resolveRepo: async () => repoRoot,
+          listDescriptors: async () => [...descriptors.values()],
+          readDescriptor: async (daemonId: string) => descriptors.get(daemonId),
+          writeDescriptor: async (next) => {
+            descriptors.set(next.daemon_id, next);
+            return "";
+          },
+          execGit: async (args) => {
+            if (args[0] === "status") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "fetch") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "rev-parse") {
+              return {
+                code: 0,
+                stdout: `${args[1] === "HEAD" ? "a".repeat(40) : "c".repeat(40)}\n`,
+                stderr: "",
+              };
+            }
+            return { code: 0, stdout: "", stderr: "" };
+          },
+          attestToolchain: async ({ targetSha }) => blockedMbaToolchainCheck(targetSha),
+          runBuild,
+          createRunService: () => createRunServiceStub([]),
+          createSupervisorAdapter: () => ({
+            kind: "direct",
+            stop: async () => ({ signal: "SIGTERM", forced: false }),
+            start: async () => ({ pid: 5150 }),
+            status: async () => ({ running: true, pid: 5150 }),
+          }),
+        },
+      );
+    } catch (error) {
+      thrown = error as SelfUpgradeExecutionError;
+    }
+
+    expect(thrown?.message).toContain("blocked/toolchain");
+    expect(runBuild).not.toHaveBeenCalled();
+    expect(thrown?.receipt_path).toBeTruthy();
+    expect(thrown?.receipt).toMatchObject({
+      status: "failed",
+      host: "mba",
+      toolchain_check: { status: "blocked", surface: "toolchain" },
+    });
+    const operationId = thrown!.receipt!.operation_id!;
+    const observation = await observeSelfUpgradeOperation(
+      defaultSelfUpgradeOperationRoot(homeRoot),
+      operationId,
+    );
+    expect(observation.operation.hosts.mba).toMatchObject({
+      execution_status: "failed",
+      toolchain_check: { status: "blocked", surface: "toolchain" },
+      receipt_locator: { host: "mba" },
+    });
   });
 
   test("POL-2072: a latched event projection names every dropped event, not only the first", async () => {
@@ -5267,6 +5707,261 @@ describe("runSelfUpgrade", () => {
     expect(stopSpy).not.toHaveBeenCalled();
     expect(descriptors.get("run-serve")?.maintenance_mode).toBe(false);
     expect(observedPhases.map((event) => event.control.phase)).toEqual(["fetch", "build"]);
+  });
+
+  test("build failure drops generic child output and appends cleanup residue without rewriting the outcome", async () => {
+    const descriptors = new Map<string, CalyxDaemonDescriptor>([
+      ["run-serve", makeDescriptor({ repoRoot, runsRoot })],
+    ]);
+    const parentCanary = "generic-parent-canary";
+    const childCanary = "generic-child-output-canary";
+    const cleanupBootstrapSandbox = vi.fn(async () => ({ status: "residue" as const }));
+    const localWarnings: string[] = [];
+    const statusProjectionStream = new Writable({
+      write(chunk, _encoding, callback) {
+        localWarnings.push(String(chunk));
+        callback();
+      },
+    });
+    let bootstrapChildEnv: NodeJS.ProcessEnv | undefined;
+    const spawnBootstrapChild = vi.fn(async (_command: string, _args: readonly string[], options: {
+      env: NodeJS.ProcessEnv;
+      captureOutput?: boolean;
+    }) => {
+      bootstrapChildEnv = options.env;
+      expect(options.captureOutput).toBe(false);
+      return {
+        code: 1,
+        stdout: childCanary,
+        stderr: childCanary,
+      };
+    });
+    let thrown: SelfUpgradeExecutionError | undefined;
+    try {
+      await runSelfUpgrade(
+        { host: "blade", authToken: "secret-token" },
+        {
+          homeDir: () => homeRoot,
+          acquireLock: vi.fn(async () => ({ lockPath: path.join(homeRoot, "lock"), release: async () => {} })),
+          resolveCurrentHostAlias: async () => "blade",
+          resolveAgentsInfraRoot: async () => path.join(root, "agents-infra"),
+          resolveRepo: async () => repoRoot,
+          listDescriptors: async () => [...descriptors.values()],
+          readDescriptor: async (daemonId: string) => descriptors.get(daemonId),
+          writeDescriptor: vi.fn(async (next: CalyxDaemonDescriptor) => {
+            descriptors.set(next.daemon_id, next);
+            return "";
+          }),
+          execGit: async (args: string[]) => {
+            if (args[0] === "status") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "pull") return { code: 0, stdout: "updated\n", stderr: "" };
+            return {
+              code: 0,
+              stdout: args[1] === "HEAD"
+                ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+                : "cccccccccccccccccccccccccccccccccccccccc\n",
+              stderr: "",
+            };
+          },
+          bootstrapEnv: {
+            PATH: "/fixture/bin:/usr/bin:/bin",
+            LANG: "C.UTF-8",
+            TZ: "UTC",
+            HOME: "/host/home",
+            XDG_CONFIG_HOME: "/host/config",
+            TMPDIR: "/host/tmp",
+            PARENT_CANARY: parentCanary,
+          },
+          statusProjectionStream,
+          spawnBootstrapChild,
+          cleanupBootstrapSandbox,
+          createRunService: () => createRunServiceStub([]),
+          createSupervisorAdapter: () => ({
+            kind: "direct",
+            stop: async () => ({ signal: "SIGTERM", forced: false }),
+            start: async () => ({ pid: 5150 }),
+            status: async () => ({ running: true, pid: 5150 }),
+          }),
+        },
+      );
+    } catch (error) {
+      thrown = error as SelfUpgradeExecutionError;
+    }
+
+    expect(thrown).toBeDefined();
+    expect(spawnBootstrapChild).toHaveBeenCalledTimes(1);
+    expect(bootstrapChildEnv).toBeDefined();
+    expect(Object.isFrozen(bootstrapChildEnv)).toBe(true);
+    expect(bootstrapChildEnv).toMatchObject({
+      PATH: "/fixture/bin:/usr/bin:/bin",
+      LANG: "C.UTF-8",
+      TZ: "UTC",
+    });
+    expect(bootstrapChildEnv).not.toHaveProperty("PARENT_CANARY");
+    expect(bootstrapChildEnv?.HOME).not.toBe("/host/home");
+    expect(bootstrapChildEnv?.XDG_CONFIG_HOME).not.toBe("/host/config");
+    expect(bootstrapChildEnv?.TMPDIR).not.toBe("/host/tmp");
+    expect(thrown?.message).toContain("Build failed during install phase");
+    expect(thrown?.message).not.toContain(parentCanary);
+    expect(thrown?.message).not.toContain(childCanary);
+    expect(JSON.stringify(thrown?.receipt)).not.toContain(parentCanary);
+    expect(JSON.stringify(thrown?.receipt)).not.toContain(childCanary);
+    expect(thrown?.receipt_path).toBeTruthy();
+    const durableReceipt = await readFile(thrown!.receipt_path!, "utf8");
+    expect(durableReceipt).not.toContain(parentCanary);
+    expect(durableReceipt).not.toContain(childCanary);
+    const durableEvents = await readFile(path.join(runsRoot, "events.index.jsonl"), "utf8");
+    expect(durableEvents).not.toContain(parentCanary);
+    expect(durableEvents).not.toContain(childCanary);
+    const operation = await observeSelfUpgradeOperation(
+      defaultSelfUpgradeOperationRoot(homeRoot),
+      thrown!.receipt!.operation_id!,
+    );
+    expect(JSON.stringify(operation)).not.toContain(parentCanary);
+    expect(JSON.stringify(operation)).not.toContain(childCanary);
+    expect(cleanupBootstrapSandbox).toHaveBeenCalledTimes(1);
+    expect(localWarnings.join("")).toContain(
+      "best-effort local self-upgrade cleanup left residue",
+    );
+    expect(thrown?.projection_issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        scope: "operation_cleanup",
+        code: "best_effort_cleanup",
+        detail: "residue",
+        message: expect.stringContaining("left residue"),
+      }),
+    ]));
+    expect(thrown?.exitCode).toBe(6);
+    expect(JSON.stringify(thrown?.receipt)).not.toContain("bootstrap_sandbox");
+    expect(durableReceipt).not.toContain("bootstrap_sandbox");
+    expect(durableEvents).not.toContain("bootstrap_sandbox");
+    expect(JSON.stringify(operation)).not.toContain("bootstrap_sandbox");
+    expect(JSON.stringify(thrown?.receipt)).not.toContain("operation_cleanup");
+    expect(durableReceipt).not.toContain("operation_cleanup");
+    expect(durableEvents).not.toContain("operation_cleanup");
+    expect(JSON.stringify(operation)).not.toContain("operation_cleanup");
+    await expect(access(path.dirname(bootstrapChildEnv!.HOME!))).resolves.toBeUndefined();
+  });
+
+  test("prepare failure routes package-manager and executable verification through the same frozen child environment", async () => {
+    const descriptors = new Map<string, CalyxDaemonDescriptor>([
+      ["run-serve", makeDescriptor({ repoRoot, runsRoot })],
+    ]);
+    const parentCanary = "generic-parent-canary";
+    const childCanary = "generic-child-output-canary";
+    let prepareEnvironment: NodeJS.ProcessEnv | undefined;
+    const spawnBootstrapChild = vi.fn(async (_command: string, args: readonly string[], options: {
+      env: NodeJS.ProcessEnv;
+      captureOutput?: boolean;
+      maxCaptureBytes?: number;
+    }) => {
+      if (args.at(-1) === "--version") {
+        return {
+          code: 0,
+          // The first line is the one allowable typed observation; the tail
+          // is hostile raw child output and must not reach a receipt.
+          stdout: `0.2.0\n${childCanary}`,
+          stderr: childCanary,
+          ...(options.captureOutput === false ? {} : { stdout_truncated: true }),
+        };
+      }
+      return {
+        code: 23,
+        stdout: childCanary,
+        stderr: childCanary,
+        ...(options.captureOutput === false ? {} : { stdout_truncated: true }),
+      };
+    });
+    const prepareInstall = vi.fn(async (options: Parameters<typeof prepareVersionedInstall>[0]) => {
+      prepareEnvironment = options.env;
+      expect(options.runPackageManagerCommand).toBeTypeOf("function");
+      expect(options.runVerificationCommand).toBeTypeOf("function");
+      const verified = await options.runVerificationCommand!(
+        process.execPath,
+        ["/private/install/calyx", "--version"],
+        options.repoRoot,
+        options.env!,
+      );
+      expect(verified).toEqual({ code: 0, version: "0.2.0" });
+      const result = await options.runPackageManagerCommand!(
+        "pnpm",
+        ["install", "--prod", "--ignore-scripts", "--prefer-offline"],
+        options.repoRoot,
+        options.env!,
+      );
+      expect(result).toEqual({ code: 23 });
+      throw new Error(`pnpm install failed for versioned install (exit ${result.code}).`);
+    });
+    let thrown: SelfUpgradeExecutionError | undefined;
+    try {
+      await runSelfUpgrade(
+        { host: "blade", authToken: "secret-token" },
+        {
+          homeDir: () => homeRoot,
+          acquireLock: vi.fn(async () => ({ lockPath: path.join(homeRoot, "lock"), release: async () => {} })),
+          resolveCurrentHostAlias: async () => "blade",
+          resolveAgentsInfraRoot: async () => path.join(root, "agents-infra"),
+          resolveRepo: async () => repoRoot,
+          listDescriptors: async () => [...descriptors.values()],
+          readDescriptor: async (daemonId: string) => descriptors.get(daemonId),
+          writeDescriptor: vi.fn(async (next: CalyxDaemonDescriptor) => {
+            descriptors.set(next.daemon_id, next);
+            return "";
+          }),
+          execGit: async (args: string[]) => {
+            if (args[0] === "status") return { code: 0, stdout: "", stderr: "" };
+            if (args[0] === "pull") return { code: 0, stdout: "updated\n", stderr: "" };
+            return {
+              code: 0,
+              stdout: args[1] === "HEAD"
+                ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+                : "cccccccccccccccccccccccccccccccccccccccc\n",
+              stderr: "",
+            };
+          },
+          bootstrapEnv: {
+            PATH: "/fixture/bin:/usr/bin:/bin",
+            LANG: "C.UTF-8",
+            TZ: "UTC",
+            HOME: "/host/home",
+            XDG_CONFIG_HOME: "/host/config",
+            TMPDIR: "/host/tmp",
+            PARENT_CANARY: parentCanary,
+          },
+          runBuild: async () => ({ code: 0 }),
+          prepareInstall,
+          spawnBootstrapChild,
+          createRunService: () => createRunServiceStub([]),
+          createSupervisorAdapter: () => ({
+            kind: "direct",
+            stop: async () => ({ signal: "SIGTERM", forced: false }),
+            start: async () => ({ pid: 5150 }),
+            status: async () => ({ running: true, pid: 5150 }),
+          }),
+        },
+      );
+    } catch (error) {
+      thrown = error as SelfUpgradeExecutionError;
+    }
+
+    expect(thrown?.message).toBe("pnpm install failed for versioned install (exit 23).");
+    expect(prepareInstall).toHaveBeenCalledTimes(1);
+    expect(spawnBootstrapChild).toHaveBeenCalledTimes(2);
+    const verifierCall = spawnBootstrapChild.mock.calls.find(([, args]) => args.at(-1) === "--version");
+    const packageManagerCall = spawnBootstrapChild.mock.calls.find(([command]) => command === "pnpm");
+    expect(verifierCall?.[2]).toMatchObject({ captureOutput: true, maxCaptureBytes: 512 });
+    expect(packageManagerCall?.[2]).toMatchObject({ captureOutput: false });
+    expect(prepareEnvironment).toBeDefined();
+    expect(Object.isFrozen(prepareEnvironment)).toBe(true);
+    expect(verifierCall?.[2]?.env).toBe(prepareEnvironment);
+    expect(packageManagerCall?.[2]?.env).toBe(prepareEnvironment);
+    expect(prepareEnvironment).not.toHaveProperty("PARENT_CANARY");
+    expect(JSON.stringify(thrown?.receipt)).not.toContain(parentCanary);
+    expect(JSON.stringify(thrown?.receipt)).not.toContain(childCanary);
+    expect(thrown?.receipt_path).toBeTruthy();
+    const durableReceipt = await readFile(thrown!.receipt_path!, "utf8");
+    expect(durableReceipt).not.toContain(parentCanary);
+    expect(durableReceipt).not.toContain(childCanary);
   });
 
   test("respects the drain deadline for healthy non-resumable runs", async () => {

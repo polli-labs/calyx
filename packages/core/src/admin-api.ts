@@ -1,6 +1,7 @@
 import type { CalyxDaemonBuildSummary } from "./daemon-registry";
 import { CALYX_RUN_SERVICE_DAEMON_KIND } from "./daemon-registry";
 import type { StateSchemaStatus } from "./state/migrations";
+import type { WorkloadAdmissionDecisionV1 } from "./workload-admission";
 
 export const CALYX_ADMIN_HEALTH_SCHEMA_VERSION = "calyx.admin-health/v1";
 export const CALYX_ADMIN_RECONCILE_SCHEMA_VERSION = "calyx.admin-reconcile-result/v1";
@@ -61,6 +62,8 @@ export interface CalyxAdminHealth {
     pending?: number;
   };
   active_runs: number;
+  /** Absent only on rolling-fleet predecessors that predate POL-2141. */
+  workload_admission?: WorkloadAdmissionDecisionV1;
   maintenance_mode: boolean;
   supports_features: string[];
   interactive_sessions?: {

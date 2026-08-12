@@ -25,6 +25,7 @@ import {
   EventJournalEventIdentityConflictError,
   EventReplayCursorError,
   EventSseFrameTooLargeError,
+  issueRunCreationAdmission,
   RunIndexProjectionNotReadyError,
   RunStore,
 } from "../store.js";
@@ -149,7 +150,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
     });
 
     const intent = buildIntent("run-A");
-    await store.createRun(intent);
+    await store.createRun(issueRunCreationAdmission(), intent);
     const event = buildRunEvent("run-A");
     await store.appendStreamEvent(event);
 
@@ -199,7 +200,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
       observed.push(event);
     });
 
-    await store.createRun(buildIntent("run-process-local-wake"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-process-local-wake"));
     const event = buildRunEvent("run-process-local-wake");
     const append = store.appendStreamEvent(event);
     await projectionStartedBarrier;
@@ -220,7 +221,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
       eventLogIngest: (event) => sink.ingestStreamEvent(event),
     });
 
-    await store.createRun(buildIntent("run-B"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-B"));
     const event = buildRunEvent("run-B");
 
     // Simulate a launch + a reconcile pass that re-emits the same event.
@@ -252,7 +253,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
       eventLogIngest: (event) => sink.ingestStreamEvent(event),
     });
 
-    await store.createRun(buildIntent("run-C"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-C"));
     const event = buildRunEvent("run-C");
 
     await Promise.all(
@@ -270,7 +271,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
 
   test("independent stores atomically append one global and local row for the same event id", async () => {
     const stores = [new RunStore(runsRoot), new RunStore(runsRoot)];
-    await stores[0]!.createRun(buildIntent("run-cross-store-event"));
+    await stores[0]!.createRun(issueRunCreationAdmission(), buildIntent("run-cross-store-event"));
     const event = buildRunEvent("run-cross-store-event");
 
     await Promise.all(
@@ -352,7 +353,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("global authority replaces reverse producer cursors with replay-safe journal ordinals", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-reverse-producer-order";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const laterProducerCursor = buildControlEvent(
       "evt-reverse-control",
       "2026-05-10T00:00:02.000Z-control-later",
@@ -382,7 +383,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
         cursor: `2026-05-10T00:00:0${5 - index}.000Z-run-${index}`,
       });
     });
-    await Promise.all(runEvents.map((event) => stores[0]!.createRun(buildIntent(event.run.run_id))));
+    await Promise.all(runEvents.map((event) => stores[0]!.createRun(issueRunCreationAdmission(), buildIntent(event.run.run_id))));
     const events: CalyxStreamEvent[] = runEvents.flatMap((runEvent, index) => [
       buildControlEvent(
         `evt-cross-family-control-${index}`,
@@ -945,7 +946,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("duplicate event ids reuse only the exact canonical row and reject divergent payloads", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-event-id-authority";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const event = buildRunEvent(runId, { event_id: "evt-event-id-authority" });
     const canonical = await store.appendStreamEvent(event);
 
@@ -963,7 +964,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("global duplicate repair refuses a divergent local row and heals a missing local row canonically", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-local-global-authority";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const event = buildRunEvent(runId, { event_id: "evt-local-global-authority" });
     const canonical = await store.appendStreamEvent(event);
     const divergentLocal = {
@@ -985,7 +986,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("invalid unterminated per-run receipt fails closed without truncation or cursor reuse", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-local-invalid-tail";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const event = buildRunEvent(runId, { event_id: "evt-local-invalid-tail" });
     const canonical = await store.appendStreamEvent(event);
     const localPath = store.paths(runId).eventsPath;
@@ -1005,7 +1006,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("global preparation defers a corrupt per-run projection for authority-aware service recovery", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-deferred-corrupt-projection";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const event = await store.appendStreamEvent(buildRunEvent(runId, {
       event_id: "evt-deferred-corrupt-projection",
     }));
@@ -1037,7 +1038,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("startup defers and exact-idempotently repairs duplicate per-run event identities", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-duplicate-projection-identity";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const event = buildRunEvent(runId, { event_id: "evt-duplicate-projection-identity" });
     const canonical = await store.appendStreamEvent(event);
     const localPath = store.paths(runId).eventsPath;
@@ -1061,7 +1062,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("startup defers and exact-idempotently repairs divergent per-run event identities", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-divergent-projection-identity";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const event = buildRunEvent(runId, { event_id: "evt-divergent-projection-identity" });
     const canonical = await store.appendStreamEvent(event);
     const localPath = store.paths(runId).eventsPath;
@@ -1088,7 +1089,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("quarantine preserves verified local launch, lifecycle, and reconcile authority around a corrupt global row", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-mixed-local-global-quarantine";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const launchIntent = {
       timestamp: "2026-05-10T00:00:00.000Z",
       run_id: runId,
@@ -1166,7 +1167,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("quarantine replays the full SQLite authority before cached startup health clears", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-quarantine-full-authority-replay";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const first = await store.appendStreamEvent(buildRunEvent(runId, {
       event_id: "evt-quarantine-full-authority-replay-1",
     }));
@@ -1222,7 +1223,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("quarantine validates the promoted journal without whole-file materialization", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-quarantine-streaming-validation";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const first = await store.appendStreamEvent(buildRunEvent(runId, {
       event_id: "evt-quarantine-streaming-validation-1",
     }));
@@ -1266,7 +1267,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("a peer repair releases another store's cached corruption fence for append and retry", async () => {
     const seed = new RunStore(runsRoot);
     const runId = "run-cross-store-projection-repair";
-    await seed.createRun(buildIntent(runId));
+    await seed.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const first = await seed.appendStreamEvent(buildRunEvent(runId, {
       event_id: "evt-cross-store-projection-repair-1",
     }));
@@ -1299,7 +1300,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("a same-run append committed after quarantine replay retains its pending marker", async () => {
     const seed = new RunStore(runsRoot);
     const runId = "run-concurrent-quarantine-append";
-    await seed.createRun(buildIntent(runId));
+    await seed.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const first = await seed.appendStreamEvent(buildRunEvent(runId, {
       event_id: "evt-concurrent-quarantine-append-1",
     }));
@@ -1398,8 +1399,8 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
     const store = new RunStore(runsRoot);
     const damagedRunId = "run-projection-isolation-damaged";
     const healthyRunId = "run-projection-isolation-healthy";
-    await store.createRun(buildIntent(damagedRunId));
-    await store.createRun(buildIntent(healthyRunId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(damagedRunId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(healthyRunId));
     const damagedInput = buildRunEvent(damagedRunId, {
       event_id: "evt-projection-isolation-damaged-1",
     });
@@ -1511,7 +1512,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("restart reconciliation publishes pending global and per-run receipts without a new append", async () => {
     const runId = "run-restart-pending-receipts";
     const store = new RunStore(runsRoot);
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const event = await store.appendStreamEvent(buildRunEvent(runId, {
       event_id: "evt-restart-pending-receipts",
     }));
@@ -1687,7 +1688,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("RunStore without an eventLogIngest sink keeps existing JSONL behavior unchanged", async () => {
     // Wave 1 contract: omitting the sink still works (sink is optional).
     const store = new RunStore(runsRoot);
-    await store.createRun(buildIntent("run-D"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-D"));
     const event = buildRunEvent("run-D");
     await store.appendStreamEvent(event);
 
@@ -1707,8 +1708,8 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
 
   test("interior JSONL receipt corruption cannot shrink or replace SQLite replay authority", async () => {
     const store = new RunStore(runsRoot);
-    await store.createRun(buildIntent("run-index-corruption-A"));
-    await store.createRun(buildIntent("run-index-corruption-B"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-index-corruption-A"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-index-corruption-B"));
     const first = buildRunEvent("run-index-corruption-A", {
       event_id: "evt-index-corruption-A",
       cursor: "2026-05-10T00:00:00.000Z-index-000001",
@@ -1765,7 +1766,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   ])("parseable %s cannot enter SQLite replay authority through the JSONL receipt", async (_name, corruptRow) => {
     const store = new RunStore(runsRoot);
     const event = buildRunEvent("run-index-schema-corruption");
-    await store.createRun(buildIntent(event.run.run_id));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(event.run.run_id));
     await store.appendStreamEvent(event);
     const original = await readFile(store.eventsIndexPath(), "utf8");
     const corrupted = `${JSON.stringify(corruptRow)}\n${original}`;
@@ -1792,7 +1793,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("same-major response enum additions remain replayable when they do not select a shape", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-index-open-enums";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const runEvent = {
       ...buildRunEvent(runId),
       emitted_by: "future_reconciler",
@@ -2083,7 +2084,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
     await expect(readFile(store.eventsIndexPath())).resolves.toEqual(invalidUtf8Row);
 
     const runId = "run-invalid-utf8";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     await writeFile(store.paths(runId).eventsPath, invalidUtf8Row);
     await expect(store.readEvents(runId)).rejects.toMatchObject({
       filePath: store.paths(runId).eventsPath,
@@ -2095,7 +2096,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("bounds oversized physical rows across read, repair, and append", async () => {
     const store = new RunStore(runsRoot);
     const runId = "run-oversized-physical-row";
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const oversizedRow = Buffer.alloc(EVENT_JOURNAL_MAX_LINE_BYTES + 1, 0x78);
 
     await writeFile(store.eventsIndexPath(), oversizedRow);
@@ -2146,7 +2147,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   ])("per-run readers quarantine %s-wrapped JSON without normalizing its boundary", async (_name, boundary) => {
     const runId = `run-invalid-json-boundary-${boundary.codePointAt(0)!.toString(16)}`;
     const store = new RunStore(runsRoot);
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const localPath = store.paths(runId).eventsPath;
     const row = {
       timestamp: "2026-05-10T00:00:00.000Z",
@@ -2175,7 +2176,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("per-run readers quarantine schema-invalid local rows without normalizing them", async () => {
     const runId = "run-invalid-local-event-schema";
     const store = new RunStore(runsRoot);
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const localPath = store.paths(runId).eventsPath;
     const invalidRow = `${JSON.stringify({
       timestamp: "2026-05-10T00:00:00.000Z",
@@ -2202,7 +2203,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("local rolling additions survive through payload while unknown top-level fields remain quarantined", async () => {
     const runId = "run-local-event-extension-law";
     const store = new RunStore(runsRoot);
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const localPath = store.paths(runId).eventsPath;
     const runServicePayloadExtension = {
       timestamp: "2026-05-10T00:00:00.000Z",
@@ -2266,7 +2267,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
   test("missing-middle per-run projection fails closed then rebuilds its global subsequence in authority order", async () => {
     const runId = "run-missing-middle-projection";
     const store = new RunStore(runsRoot);
-    await store.createRun(buildIntent(runId));
+    await store.createRun(issueRunCreationAdmission(), buildIntent(runId));
     const first = await store.appendStreamEvent(buildRunEvent(runId, {
       event_id: "evt-missing-middle-A",
     }));
@@ -2326,7 +2327,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
       ["run-page-B", "2026-05-10T00:02:00.000Z", "blade"],
       ["run-page-A", "2026-05-10T00:01:00.000Z", "blade"],
     ] as const) {
-      await store.createRun({ run_id: runId, created_at: createdAt, host });
+      await store.createRun(issueRunCreationAdmission(), { run_id: runId, created_at: createdAt, host });
     }
 
     await expect(store.listRunsPage({ host: "blade", limit: 2 })).rejects.toBeInstanceOf(
@@ -2347,7 +2348,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
         throw ingestErr;
       },
     });
-    await store.createRun(buildIntent("run-E"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-E"));
     const event = buildRunEvent("run-E");
     await store.appendStreamEvent(event);
 
@@ -2375,7 +2376,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
       eventLogIngest: (event) => sink.ingestStreamEvent(event),
     });
 
-    await store.createRun(buildIntent("run-F"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-F"));
     const event = buildRunEvent("run-F");
     await store.appendStreamEvent(event);
 
@@ -2391,7 +2392,7 @@ describe("RunStore SQLite mirror (POL-1342)", () => {
     const store = new RunStore(runsRoot, {
       eventLogIngest: (event) => sink.ingestStreamEvent(event),
     });
-    await store.createRun(buildIntent("run-G"));
+    await store.createRun(issueRunCreationAdmission(), buildIntent("run-G"));
     await store.appendStreamEvent(buildRunEvent("run-G"));
     sink.close();
 

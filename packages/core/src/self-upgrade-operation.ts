@@ -6,6 +6,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { fleetConvergenceToolchainCheckSchema } from "./fleet-convergence-check.js";
 import {
   openExistingDirectoryDurable,
   openPrivateDirectoryDurable,
@@ -82,6 +83,7 @@ const operationId = z.string()
 const timestamp = z.string().datetime({ offset: true });
 const nonNegativeInteger = z.number().int().nonnegative();
 const fullSha = z.string().regex(/^[0-9a-f]{40}$/iu);
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/iu);
 const transitionBase = {
   schema_version: z.literal(SELF_UPGRADE_OPERATION_SCHEMA_VERSION),
   record: z.literal("transition"),
@@ -97,6 +99,18 @@ export const selfUpgradeReceiptLocatorSchema = z.object({
     .min(1)
     .max(4_096)
     .regex(/^\/v1\/admin\/self-upgrade-receipts\/[A-Za-z0-9](?:[A-Za-z0-9._-]{0,254})$/u),
+}).strict();
+
+const projectedReceiptVerificationSchema = z.object({
+  status: z.literal("unavailable"),
+  code: z.enum([
+    "conductor_auth_unavailable",
+    "transport_unavailable",
+    "route_unavailable",
+    "receipt_binding_unavailable",
+  ]),
+  attempts: nonNegativeInteger,
+  message: nonEmptyString.optional(),
 }).strict();
 
 const finalRowSchema = z.object({
@@ -155,6 +169,11 @@ const selfUpgradeOperationTransitionUnion = z.discriminatedUnion("kind", [
     before_head: fullSha.optional(),
     after_head: fullSha.optional(),
     receipt_locator: selfUpgradeReceiptLocatorSchema.optional(),
+    toolchain_check: fleetConvergenceToolchainCheckSchema.optional(),
+    /** Non-authoritative remote projection retained when canonical reread is unavailable. */
+    projected_receipt_path: nonEmptyString.max(4_096).optional(),
+    projected_toolchain_check: fleetConvergenceToolchainCheckSchema.optional(),
+    receipt_verification: projectedReceiptVerificationSchema.optional(),
     error: nonEmptyString.optional(),
   }).strict(),
   z.object({
@@ -238,10 +257,26 @@ const hostStateSchema = z.object({
   before_head: fullSha.optional(),
   after_head: fullSha.optional(),
   receipt_locator: selfUpgradeReceiptLocatorSchema.optional(),
+  toolchain_check: fleetConvergenceToolchainCheckSchema.optional(),
+  projected_receipt_path: nonEmptyString.max(4_096).optional(),
+  projected_toolchain_check: fleetConvergenceToolchainCheckSchema.optional(),
+  receipt_verification: projectedReceiptVerificationSchema.optional(),
   error: nonEmptyString.optional(),
 }).strict();
 
 export type SelfUpgradeOperationHostState = z.infer<typeof hostStateSchema>;
+
+export const selfUpgradeOperationTopologySnapshotSchema = z.object({
+  schema_version: z.literal("fleet-topology-snapshot/v1"),
+  source: z.object({
+    commit: fullSha,
+  }).strict(),
+  projection_sha256: sha256,
+}).strict();
+
+export type SelfUpgradeOperationTopologySnapshot = z.infer<
+  typeof selfUpgradeOperationTopologySnapshotSchema
+>;
 
 export const selfUpgradeOperationRecordSchema = z.object({
   schema_version: z.literal(SELF_UPGRADE_OPERATION_SCHEMA_VERSION),
@@ -251,6 +286,7 @@ export const selfUpgradeOperationRecordSchema = z.object({
   conductor_host: nonEmptyString,
   target_ref: nonEmptyString,
   target_sha: fullSha.optional(),
+  topology_snapshot: selfUpgradeOperationTopologySnapshotSchema.optional(),
   policy: z.object({
     dry_run: z.boolean(),
     parallel: z.boolean(),
@@ -442,6 +478,18 @@ function reduceOperationHosts(
         if (transition.receipt_locator) {
           row.receipt_locator = transition.receipt_locator;
         }
+        if (transition.toolchain_check) {
+          row.toolchain_check = transition.toolchain_check;
+        }
+        if (transition.projected_receipt_path) {
+          row.projected_receipt_path = transition.projected_receipt_path;
+        }
+        if (transition.projected_toolchain_check) {
+          row.projected_toolchain_check = transition.projected_toolchain_check;
+        }
+        if (transition.receipt_verification) {
+          row.receipt_verification = transition.receipt_verification;
+        }
         if (transition.error) {
           row.error = transition.error;
         }
@@ -530,6 +578,7 @@ export function createSelfUpgradeOperation(args: {
   conductorHost: string;
   targetRef: string;
   targetSha?: string;
+  topologySnapshot?: SelfUpgradeOperationTopologySnapshot;
   hosts: readonly string[];
   dryRun: boolean;
   parallel: boolean;
@@ -545,6 +594,7 @@ export function createSelfUpgradeOperation(args: {
     conductor_host: args.conductorHost,
     target_ref: args.targetRef,
     ...(args.targetSha ? { target_sha: args.targetSha } : {}),
+    ...(args.topologySnapshot ? { topology_snapshot: args.topologySnapshot } : {}),
     policy: {
       dry_run: args.dryRun,
       parallel: args.parallel,

@@ -10,7 +10,10 @@ import {
   type RunRecord,
 } from "../index.js";
 import type { RunCancellationRequest } from "../types.js";
-import { legacyLaunchAdmissionIdentity } from "../store.js";
+import {
+  issueRunCreationAdmission,
+  legacyLaunchAdmissionIdentity,
+} from "../store.js";
 
 const syncTrace = vi.hoisted(() => [] as string[]);
 const noReplaceLinkBarrier = vi.hoisted(() => ({
@@ -174,7 +177,7 @@ describe("RunStore durable event persistence", () => {
       },
     ];
     const stores = [new RunStore(runsRoot), new RunStore(runsRoot)];
-    const outcomes = await Promise.allSettled(stores.map((store, index) => store.createRun(intents[index]!, {
+    const outcomes = await Promise.allSettled(stores.map((store, index) => store.createRun(issueRunCreationAdmission(), intents[index]!, {
       creationProvenance: provenances[index],
     })));
     const winnerIndex = outcomes.findIndex((outcome) => outcome.status === "fulfilled");
@@ -415,7 +418,7 @@ describe("RunStore durable event persistence", () => {
       created_at: "2026-04-20T00:00:00.000Z",
     };
 
-    await expect(store.createRun(intent, {
+    await expect(store.createRun(issueRunCreationAdmission(), intent, {
       requestHash,
       admissionIdentity: legacyLaunchAdmissionIdentity(runId, requestHash),
     })).rejects.toThrow("reserved for read-time migration");

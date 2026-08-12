@@ -174,6 +174,8 @@ export {
   RunExecutionSettlementPendingError,
   RunNotFoundError,
   RunService,
+  WorkloadAdmissionBusyError,
+  WorkloadAdmissionFencedError,
   isLocalRunTarget,
   openDetachedLogFiles,
 } from "./service.js";

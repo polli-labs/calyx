@@ -568,6 +568,8 @@ export interface ActivityMessagesSelector {
   explain_classification?: boolean;
   /** Internal immutable seek boundary used by the HTTP consumer projection. */
   after_source_line?: number;
+  /** Internal reverse seek boundary used by newest-first consumer paging. */
+  before_source_line?: number;
 }
 
 export interface ActivityMessagesResult {
@@ -656,6 +658,8 @@ export interface ActivityTurnsSelector {
   max_text_chars?: number;
   /** Internal immutable seek boundary used by the HTTP consumer projection. */
   after_turn_index?: number;
+  /** Internal reverse seek boundary used by newest-first consumer paging. */
+  before_turn_index?: number;
 }
 
 export interface ActivityTurn {
@@ -2717,6 +2721,7 @@ export interface ActivityMessageSelectorInput {
   max_text_chars?: number;
   explain_classification?: boolean;
   after_source_line?: number;
+  before_source_line?: number;
 }
 
 export class ActivityMessageSelectorError extends Error {
@@ -2769,6 +2774,12 @@ function normalizeSelector(input: ActivityMessageSelectorInput): ActivityMessage
   if (typeof input.after_source_line === "number" && (!Number.isInteger(input.after_source_line) || input.after_source_line < 0)) {
     throw new ActivityMessageSelectorError("after_source_line must be a non-negative integer.");
   }
+  if (typeof input.before_source_line === "number" && (!Number.isInteger(input.before_source_line) || input.before_source_line < 0)) {
+    throw new ActivityMessageSelectorError("before_source_line must be a non-negative integer.");
+  }
+  if (typeof input.after_source_line === "number" && typeof input.before_source_line === "number") {
+    throw new ActivityMessageSelectorError("after_source_line and before_source_line are mutually exclusive.");
+  }
   return {
     ...(input.role ? { role: input.role } : {}),
     visibility,
@@ -2782,6 +2793,7 @@ function normalizeSelector(input: ActivityMessageSelectorInput): ActivityMessage
     max_text_chars: input.max_text_chars ?? DEFAULT_ACTIVITY_MESSAGE_TEXT_CHARS,
     ...(input.explain_classification ? { explain_classification: input.explain_classification } : {}),
     ...(typeof input.after_source_line === "number" ? { after_source_line: input.after_source_line } : {}),
+    ...(typeof input.before_source_line === "number" ? { before_source_line: input.before_source_line } : {}),
   };
 }
 
@@ -2804,6 +2816,9 @@ function applyMessagesSelector(
   const matched = filtered;
   if (typeof selector.after_source_line === "number") {
     filtered = filtered.filter((message) => (message.source_lines[0] ?? -1) > selector.after_source_line!);
+  }
+  if (typeof selector.before_source_line === "number") {
+    filtered = filtered.filter((message) => (message.source_lines[0] ?? Number.POSITIVE_INFINITY) < selector.before_source_line!);
   }
   let returned: ActivityMessage[];
 
@@ -5168,6 +5183,7 @@ export interface ActivityTurnSelectorInput {
   summary_only?: boolean;
   max_text_chars?: number;
   after_turn_index?: number;
+  before_turn_index?: number;
 }
 
 export class ActivityTurnSelectorError extends Error {
@@ -5210,6 +5226,12 @@ function normalizeTurnSelector(input: ActivityTurnSelectorInput): ActivityTurnsS
   if (typeof input.after_turn_index === "number" && (!Number.isInteger(input.after_turn_index) || input.after_turn_index < 0)) {
     throw new ActivityTurnSelectorError("after_turn_index must be a non-negative integer.");
   }
+  if (typeof input.before_turn_index === "number" && (!Number.isInteger(input.before_turn_index) || input.before_turn_index < 0)) {
+    throw new ActivityTurnSelectorError("before_turn_index must be a non-negative integer.");
+  }
+  if (typeof input.after_turn_index === "number" && typeof input.before_turn_index === "number") {
+    throw new ActivityTurnSelectorError("after_turn_index and before_turn_index are mutually exclusive.");
+  }
   return {
     ...(input.role ? { role: input.role } : {}),
     ...(typeof input.first === "number" ? { first: input.first } : {}),
@@ -5218,6 +5240,7 @@ function normalizeTurnSelector(input: ActivityTurnSelectorInput): ActivityTurnsS
     ...(input.summary_only ? { summary_only: input.summary_only } : {}),
     max_text_chars: input.max_text_chars ?? DEFAULT_ACTIVITY_MESSAGE_TEXT_CHARS,
     ...(typeof input.after_turn_index === "number" ? { after_turn_index: input.after_turn_index } : {}),
+    ...(typeof input.before_turn_index === "number" ? { before_turn_index: input.before_turn_index } : {}),
   };
 }
 
@@ -5370,6 +5393,9 @@ function applyTurnsSelector(
   const matched = filtered;
   if (typeof selector.after_turn_index === "number") {
     filtered = filtered.filter((turn) => turn.index > selector.after_turn_index!);
+  }
+  if (typeof selector.before_turn_index === "number") {
+    filtered = filtered.filter((turn) => turn.index < selector.before_turn_index!);
   }
   let returned: ActivityTurn[];
   if (typeof selector.first === "number") {

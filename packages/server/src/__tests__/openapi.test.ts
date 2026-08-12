@@ -33,6 +33,8 @@ import {
   validateSchema,
 } from "../operations.js";
 
+const TOPOLOGY_PROJECTION_SHA256 = "a".repeat(64);
+
 describe("Calyx OpenAPI emission", () => {
   test("publishes the exact receiver-owned bearer wire contract", () => {
     const document = generateCalyxOpenApi() as Record<string, unknown>;
@@ -1570,6 +1572,7 @@ describe("Calyx OpenAPI emission", () => {
     expect(() => validateOperationRequest("admin.run.launch", {
       schema_version: "calyx.run-launch-request/v1",
       idempotency_key: " padded-key ",
+      topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       intent: {
         run_id: "run-padded-key",
         host: "blade",
@@ -1603,6 +1606,7 @@ describe("Calyx OpenAPI emission", () => {
     expect(() => validateOperationRequest("admin.run.launch", {
       schema_version: "calyx.run-launch-request/v1",
       idempotency_key: "portable-launch-tombstone",
+      topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       detached: false,
       intent: {
         run_id: "portable-launch-tombstone",
@@ -1667,11 +1671,13 @@ describe("Calyx OpenAPI emission", () => {
     expect(() => validateOperationRequest("admin.run.launch", {
       schema_version: "calyx.run-launch-request/v1",
       idempotency_key: "pol-1982-forged",
+      topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       intent: launchIntent,
     })).toThrow("Claude does not support backend_options.max_threads");
     expect(() => validateOperationRequest("admin.run.launch", {
       schema_version: "calyx.run-launch-request/v1",
       idempotency_key: "pol-1982-wrong-type",
+      topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       intent: {
         ...launchIntent,
         backend: "codex",
@@ -2166,6 +2172,7 @@ describe("Calyx OpenAPI emission", () => {
     const launch = validateOperationRequest("admin.run.launch", {
       schema_version: "calyx.run-launch-request/v1",
       idempotency_key: "run-skew-request",
+      topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       future_root: true,
       intent: {
         run_id: "run-skew",

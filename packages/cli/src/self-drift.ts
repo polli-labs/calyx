@@ -7,12 +7,13 @@ import {
   classifyStateSchema,
   countStateMigrationsAfter,
   OPERATIONAL_FIXES,
-  readHostsTruth,
   resolveAgentsInfraRoot,
   resolveCurrentHostAlias,
   resolveRepo,
   STATE_MIGRATIONS,
   type CalyxAdminHealth,
+  type FleetTopologyTargetsV1,
+  type FleetConvergenceToolchainCheck,
   type OperationalFix,
   type StateSchemaStatus,
 } from "@polli-labs/calyx-core";
@@ -21,12 +22,30 @@ import {
   type CalyxResult,
 } from "@polli-labs/calyx-client/admin";
 import { formatStateSchemaConvergence, type SelfHealthResult } from "./self-health.js";
+import {
+  fleetTopologyOutput,
+  formatExcludedWithdrawn,
+  formatFleetTopologyIdentity,
+  resolveFleetTopologyForCommand,
+  summarizeFleetRead,
+  type FleetEffectiveState,
+  type FleetReadSummary,
+  type FleetTopologyOutput,
+  type ResolveFleetTopology,
+} from "./fleet-topology.js";
+import {
+  createUnobservedToolchainCheck,
+  type SelfUpgradeToolchainObservation,
+  type SelfUpgradeToolchainObservationDiagnostic,
+  type ToolchainCheckForHostResult,
+} from "./self-upgrade-toolchain.js";
 
 const execFileAsyncDefault = promisify(execFileCallback);
 const DEFAULT_SELF_DRIFT_AGAINST_REF = "origin/main";
 export const DEFAULT_SELF_DRIFT_AGE_THRESHOLD_COMMITS = 20;
 
 export type SelfDriftSeverity =
+  | "blocked"
   | "broken"
   | "current"
   | "needs_fetch"
@@ -36,11 +55,17 @@ export type SelfDriftSeverity =
   // TODO(POL-1120): reserve incompatible for requiredFeaturesForIntent cross-checks at dispatch time.
   | "incompatible";
 
-export type SelfDriftDiagnosticKind = "missing_target_ref" | "needs_fetch" | "compare_repo_unavailable";
+export type SelfDriftDiagnosticKind =
+  | "missing_target_ref"
+  | "needs_fetch"
+  | "compare_repo_unavailable"
+  | "operation_cleanup";
 
 export interface SelfDriftDiagnostic {
   readonly kind: SelfDriftDiagnosticKind;
   readonly severity: "warning";
+  /** Present only for a non-authoritative operation-local hygiene observation. */
+  readonly detail?: "residue" | "inspection_unavailable";
   readonly message: string;
   readonly actions: readonly string[];
 }
@@ -77,8 +102,13 @@ export interface SelfDriftReport {
   readonly diagnostics: readonly SelfDriftDiagnostic[];
   /** Null when the daemon is unreachable or predates the health field. */
   readonly schema: SelfDriftSchemaPosition | null;
+  readonly toolchain_check?: FleetConvergenceToolchainCheck;
   readonly summary: string;
   readonly brokenReason?: string;
+  readonly desired_membership?: "active";
+  readonly effective_state?: Exclude<FleetEffectiveState, "withdrawn">;
+  readonly owner?: string;
+  readonly roles?: readonly string[];
 }
 
 export interface SelfDriftJsonResult {
@@ -90,7 +120,21 @@ export interface SelfDriftJsonResult {
   readonly missing_op_fixes: readonly SelfDriftMissingOperationalFix[];
   readonly diagnostics: readonly SelfDriftDiagnostic[];
   readonly schema: SelfDriftSchemaPosition | null;
+  readonly toolchain_check?: FleetConvergenceToolchainCheck;
   readonly broken_reason?: string;
+  readonly desired_membership?: "active";
+  readonly effective_state?: Exclude<FleetEffectiveState, "withdrawn">;
+  readonly owner?: string;
+  readonly roles?: readonly string[];
+}
+
+export interface SelfDriftFleetResult extends FleetTopologyOutput {
+  schema_version: "self-drift-fleet/v1";
+  checked_at: string;
+  target_ref: string;
+  hosts: SelfDriftJsonResult[];
+  summary: FleetReadSummary;
+  exit_code: number;
 }
 
 export interface ExecFileAsyncResult {
@@ -123,6 +167,15 @@ export interface SelfDriftDependencies {
    * one daemon generation instead of issuing a second racing health request.
    */
   readonly observedHealthResults?: readonly SelfHealthResult[];
+  readonly fleetTopologyTargets?: FleetTopologyTargetsV1;
+  readonly resolveFleetTopology?: ResolveFleetTopology;
+  readonly now?: () => Date;
+  readonly toolchainCheckForHost?: (args: {
+    host: string;
+    repoRoot: string;
+    targetSha: string | null;
+    checkedAt: string;
+  }) => Promise<ToolchainCheckForHostResult>;
 }
 
 export interface SelfDriftServerAccess {
@@ -146,6 +199,7 @@ export interface SelfCompareRepoResolution {
 interface HealthFetchOutcome {
   readonly health?: CalyxAdminHealth;
   readonly brokenReason?: string;
+  readonly unavailable?: boolean;
 }
 
 function defaultSelfDriftRepoRoot(moduleUrl = import.meta.url): string {
@@ -332,8 +386,18 @@ export async function resolveSelfCompareRepoRoot(
 async function resolveTargetHosts(
   options: CollectSelfDriftReportsOptions,
   deps: SelfDriftDependencies,
-): Promise<{ currentHostAlias: string; targets: string[] }> {
-  const agentsInfraRoot = deps.agentsInfraRoot ?? await resolveAgentsInfraRoot();
+): Promise<{
+  currentHostAlias: string;
+  targets: string[];
+  topology?: FleetTopologyTargetsV1;
+}> {
+  let agentsInfraRoot = deps.agentsInfraRoot ?? await resolveAgentsInfraRoot();
+  const topology = options.fleet
+    ? deps.fleetTopologyTargets
+      ?? await (deps.resolveFleetTopology
+        ?? ((intent) => resolveFleetTopologyForCommand(intent, agentsInfraRoot)))("read_only")
+    : undefined;
+  agentsInfraRoot = topology?.snapshot.source.root ?? agentsInfraRoot;
   const currentHostAlias = normalizeHostAlias(
     deps.currentHostAlias ?? await resolveCurrentHostAlias(undefined, agentsInfraRoot),
   );
@@ -342,20 +406,12 @@ async function resolveTargetHosts(
     if (options.host && normalizeHostAlias(options.host) !== "local") {
       throw new Error("calyx self drift accepts either --host <h> or --fleet, not both.");
     }
-    if (!agentsInfraRoot) {
-      throw new Error("Unable to resolve agents-infra root for --fleet host enumeration.");
-    }
-
-    const hostsTruth = await readHostsTruth(agentsInfraRoot);
-    const targets = Object.keys(hostsTruth.hosts ?? {})
-      .map((entry) => normalizeHostAlias(entry))
-      .filter((entry) => entry.length > 0)
-      .sort();
+    const targets = topology!.desired_active.map((entry) => normalizeHostAlias(entry.host));
 
     if (targets.length === 0) {
-      throw new Error("No hosts found in fleet/truths/hosts.yaml.");
+      return { currentHostAlias, targets, topology: topology! };
     }
-    return { currentHostAlias, targets };
+    return { currentHostAlias, targets, topology: topology! };
   }
 
   const requestedHost = normalizeHostAlias(options.host ?? "local");
@@ -380,6 +436,8 @@ async function fetchDaemonHealth(
     if (!result.ok) {
       return {
         brokenReason: `Daemon health request failed: ${selfDriftHealthFailureMessage(result)}`,
+        unavailable: result.kind === "transport"
+          || (result.kind === "protocol" && result.status === 0),
       };
     }
     // The generated response is the wire authority. Core's domain type is
@@ -395,7 +453,10 @@ async function fetchDaemonHealth(
     return { health: payload };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { brokenReason: `Daemon health request failed: ${message}` };
+    return {
+      brokenReason: `Daemon health request failed: ${message}`,
+      unavailable: true,
+    };
   }
 }
 
@@ -469,6 +530,9 @@ function summarizeBuildDrift(args: {
   ageThresholdCommits: number;
   brokenReason?: string;
 }): string {
+  if (args.drift === "blocked") {
+    return args.brokenReason ?? "blocked";
+  }
   if (args.drift === "broken") {
     return args.brokenReason ?? "health unavailable";
   }
@@ -497,7 +561,12 @@ function summarizeBuildDrift(args: {
   return behind;
 }
 
-function createBrokenReport(host: string, targetHead: string, brokenReason: string): SelfDriftReport {
+function createBrokenReport(
+  host: string,
+  targetHead: string,
+  brokenReason: string,
+  unavailable = true,
+): SelfDriftReport {
   return {
     host,
     drift: "broken",
@@ -514,6 +583,7 @@ function createBrokenReport(host: string, targetHead: string, brokenReason: stri
       ageThresholdCommits: DEFAULT_SELF_DRIFT_AGE_THRESHOLD_COMMITS,
     }),
     brokenReason,
+    effective_state: unavailable ? "unavailable" : "repair",
   };
 }
 
@@ -554,13 +624,42 @@ function formatCell(value: string, width: number): string {
   return value.padEnd(width, " ");
 }
 
+function isSelfUpgradeToolchainObservation(
+  value: ToolchainCheckForHostResult,
+): value is SelfUpgradeToolchainObservation {
+  return "check" in value && "diagnostics" in value && Array.isArray(value.diagnostics);
+}
+
+function toSelfDriftToolchainDiagnostic(
+  diagnostic: SelfUpgradeToolchainObservationDiagnostic,
+): SelfDriftDiagnostic {
+  return {
+    kind: diagnostic.kind,
+    severity: diagnostic.severity,
+    detail: diagnostic.detail,
+    message: diagnostic.message,
+    actions: diagnostic.actions,
+  };
+}
+
+function normalizeToolchainCheckObservation(
+  value: ToolchainCheckForHostResult,
+): SelfUpgradeToolchainObservation {
+  return isSelfUpgradeToolchainObservation(value)
+    ? value
+    : { check: value, diagnostics: [] };
+}
+
 export async function collectSelfDriftReports(
   options: CollectSelfDriftReportsOptions,
   deps: SelfDriftDependencies = {},
 ): Promise<SelfDriftReport[]> {
   const ageThresholdCommits = options.ageThresholdCommits ?? DEFAULT_SELF_DRIFT_AGE_THRESHOLD_COMMITS;
   const againstRef = options.against?.trim() || DEFAULT_SELF_DRIFT_AGAINST_REF;
-  const { currentHostAlias, targets } = await resolveTargetHosts(options, deps);
+  const { currentHostAlias, targets, topology } = await resolveTargetHosts(options, deps);
+  const topologyByHost = new Map(
+    (topology?.desired_active ?? []).map((target) => [normalizeHostAlias(target.host), target]),
+  );
   const compareRepo = await resolveSelfCompareRepoRoot({ ...deps, currentHostAlias });
   const targetOutcome = compareRepo.repoRoot
     ? await resolveTargetHeadOutcome(againstRef, compareRepo.repoRoot, deps)
@@ -577,7 +676,12 @@ export async function collectSelfDriftReports(
     if (observedHealth) {
       healthOutcome = observedHealth.ok
         ? { health: observedHealth.health }
-        : { brokenReason: observedHealth.error.message };
+        : {
+            brokenReason: observedHealth.error.message,
+            unavailable: observedHealth.error.kind === "unreachable"
+              || (observedHealth.error.kind === "auth_failure"
+                && observedHealth.error.http_status === undefined),
+          };
     } else {
       const access = await deps.accessForHost?.(host);
       const authToken = options.authToken?.trim() || access?.token?.trim();
@@ -586,14 +690,22 @@ export async function collectSelfDriftReports(
           host,
           targetHead,
           `Missing operator_cli outbound credential for ${host}.`,
+          true,
         ));
         continue;
       }
-      const serverUrl = access?.serverUrl ?? buildHealthServerUrl(host, currentHostAlias);
+      const serverUrl = topologyByHost.get(normalizeHostAlias(host))?.run_serve_url
+        ?? access?.serverUrl
+        ?? buildHealthServerUrl(host, currentHostAlias);
       healthOutcome = await fetchDaemonHealth(serverUrl, authToken, deps);
     }
     if (!healthOutcome.health) {
-      reports.push(createBrokenReport(host, targetHead, healthOutcome.brokenReason ?? "health unavailable"));
+      reports.push(createBrokenReport(
+        host,
+        targetHead,
+        healthOutcome.brokenReason ?? "health unavailable",
+        healthOutcome.unavailable ?? true,
+      ));
       continue;
     }
 
@@ -706,7 +818,54 @@ export async function collectSelfDriftReports(
     });
   }
 
-  return reports;
+  const checkedAt = (deps.now?.() ?? new Date()).toISOString();
+  const toolchainRepoRoot = compareRepo.repoRoot ?? deps.repoRoot ?? defaultSelfDriftRepoRoot();
+  const withToolchain = await Promise.all(reports.map(async (report): Promise<SelfDriftReport> => {
+    const targetSha = /^[0-9a-f]{40}$/iu.test(report.targetHead) ? report.targetHead : null;
+    const toolchainCheckResult = deps.toolchainCheckForHost
+      ? await deps.toolchainCheckForHost({
+          host: report.host,
+          repoRoot: toolchainRepoRoot,
+          targetSha,
+          checkedAt,
+        })
+      : await createUnobservedToolchainCheck({
+          host: report.host,
+          repoRoot: toolchainRepoRoot,
+          targetSha,
+          checkedAt,
+        });
+    const toolchainObservation = normalizeToolchainCheckObservation(toolchainCheckResult);
+    const toolchainCheck = toolchainObservation.check;
+    const diagnostics = [
+      ...report.diagnostics,
+      ...toolchainObservation.diagnostics.map(toSelfDriftToolchainDiagnostic),
+    ];
+    if (toolchainCheck.status !== "blocked") {
+      return { ...report, diagnostics, toolchain_check: toolchainCheck };
+    }
+    return {
+      ...report,
+      drift: "blocked",
+      diagnostics,
+      toolchain_check: toolchainCheck,
+      summary: `blocked/toolchain: ${toolchainCheck.failures.map((failure) => failure.message).join(" ") || "bootstrap toolchain is blocked"}`,
+      effective_state: "repair",
+    };
+  }));
+
+  if (!topology) return withToolchain;
+  return withToolchain.map((report) => {
+    const target = topologyByHost.get(normalizeHostAlias(report.host))!;
+    return {
+      ...report,
+      owner: target.owner,
+      roles: target.roles,
+      desired_membership: "active" as const,
+      effective_state: report.effective_state
+        ?? (report.drift === "current" ? "active" : "repair"),
+    };
+  });
 }
 
 function formatSchemaCell(schema: SelfDriftSchemaPosition | null): string {
@@ -727,6 +886,7 @@ export function formatSelfDriftTable(reports: readonly SelfDriftReport[]): strin
     daemonHead: shortSha(report.daemonHead) ?? "-",
     commitsBehind: report.commitsBehind === null ? "-" : String(report.commitsBehind),
     missingFixes: String(report.missingOperationalFixes.length),
+    toolchain: report.toolchain_check?.status ?? "unknown",
     schema: formatSchemaCell(report.schema),
     summary: report.summary,
   }));
@@ -737,6 +897,7 @@ export function formatSelfDriftTable(reports: readonly SelfDriftReport[]): strin
     daemonHead: Math.max("daemon HEAD".length, ...rows.map((row) => row.daemonHead.length)),
     commitsBehind: Math.max("commits behind".length, ...rows.map((row) => row.commitsBehind.length)),
     missingFixes: Math.max("missing op-fixes".length, ...rows.map((row) => row.missingFixes.length)),
+    toolchain: Math.max("toolchain".length, ...rows.map((row) => row.toolchain.length)),
     schema: Math.max("schema".length, ...rows.map((row) => row.schema.length)),
   };
 
@@ -746,6 +907,7 @@ export function formatSelfDriftTable(reports: readonly SelfDriftReport[]): strin
     formatCell("daemon HEAD", widths.daemonHead),
     formatCell("commits behind", widths.commitsBehind),
     formatCell("missing op-fixes", widths.missingFixes),
+    formatCell("toolchain", widths.toolchain),
     formatCell("schema", widths.schema),
     "summary",
   ].join(" | ");
@@ -756,6 +918,7 @@ export function formatSelfDriftTable(reports: readonly SelfDriftReport[]): strin
     "-".repeat(widths.daemonHead),
     "-".repeat(widths.commitsBehind),
     "-".repeat(widths.missingFixes),
+    "-".repeat(widths.toolchain),
     "-".repeat(widths.schema),
     "-".repeat("summary".length),
   ].join("-+-");
@@ -767,6 +930,7 @@ export function formatSelfDriftTable(reports: readonly SelfDriftReport[]): strin
       formatCell(row.daemonHead, widths.daemonHead),
       formatCell(row.commitsBehind, widths.commitsBehind),
       formatCell(row.missingFixes, widths.missingFixes),
+      formatCell(row.toolchain, widths.toolchain),
       formatCell(row.schema, widths.schema),
       row.summary,
     ].join(" | "),
@@ -793,6 +957,47 @@ export function toSelfDriftJsonResults(
     missing_op_fixes: report.missingOperationalFixes,
     diagnostics: report.diagnostics,
     schema: report.schema,
+    ...(report.toolchain_check ? { toolchain_check: report.toolchain_check } : {}),
     ...(report.brokenReason ? { broken_reason: report.brokenReason } : {}),
+    ...(report.desired_membership ? { desired_membership: report.desired_membership } : {}),
+    ...(report.effective_state ? { effective_state: report.effective_state } : {}),
+    ...(report.owner ? { owner: report.owner } : {}),
+    ...(report.roles ? { roles: report.roles } : {}),
   }));
+}
+
+export async function runSelfDriftFleetCommand(
+  options: Omit<CollectSelfDriftReportsOptions, "fleet">,
+  deps: SelfDriftDependencies = {},
+): Promise<{ reports: SelfDriftReport[]; result: SelfDriftFleetResult; text: string }> {
+  const topologyTargets = deps.fleetTopologyTargets
+    ?? await (deps.resolveFleetTopology
+      ?? ((intent) => resolveFleetTopologyForCommand(intent, deps.agentsInfraRoot)))("read_only");
+  const reports = await collectSelfDriftReports(
+    { ...options, fleet: true },
+    { ...deps, fleetTopologyTargets: topologyTargets },
+  );
+  const topology = fleetTopologyOutput(topologyTargets);
+  const states = reports.map((report) => report.effective_state ?? "repair");
+  const summary = summarizeFleetRead(topology, states);
+  const targetRef = options.against?.trim() || DEFAULT_SELF_DRIFT_AGAINST_REF;
+  const result: SelfDriftFleetResult = {
+    schema_version: "self-drift-fleet/v1",
+    checked_at: new Date().toISOString(),
+    target_ref: targetRef,
+    ...topology,
+    hosts: toSelfDriftJsonResults(reports),
+    summary,
+    exit_code: summary.green ? 0 : 1,
+  };
+  return {
+    reports,
+    result,
+    text: [
+      formatFleetTopologyIdentity(topology),
+      formatSelfDriftTable(reports),
+      formatExcludedWithdrawn(topology),
+      `summary active=${summary.active} repair=${summary.repair} unavailable=${summary.unavailable} desired_active_total=${summary.desired_active_total} withdrawn_total=${summary.withdrawn_total} green=${String(summary.green)}`,
+    ].join("\n"),
+  };
 }

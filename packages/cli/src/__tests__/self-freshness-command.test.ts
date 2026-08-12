@@ -8,10 +8,12 @@ import {
   listFleetConvergenceRows,
   openStateStore,
   upsertFleetConvergenceRow,
+  type FleetConvergenceToolchainCheck,
 } from "@polli-labs/calyx-core";
 import { createCalyxAdminClient } from "@polli-labs/calyx-client/admin";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { buildProgram } from "../run-cli";
+import { createUnobservedToolchainCheck } from "../self-upgrade-toolchain.js";
 import {
   formatSelfFreshnessText,
   runSelfFreshnessCommand,
@@ -19,6 +21,12 @@ import {
 } from "../self-freshness.js";
 import type { SelfDriftReport } from "../self-drift.js";
 import type { SelfHealthCommandResult, SelfHealthErrorPayload } from "../self-health.js";
+import {
+  makeFleetTopologyTarget,
+  makeFleetTopologyTargets,
+  TEST_TOPOLOGY_COMMIT,
+  TEST_TOPOLOGY_DIGEST,
+} from "./fleet-topology-fixture";
 
 const NOW = new Date("2026-05-20T21:00:00.000Z");
 const CURRENT_HEAD = "970b73907f7b7f63271dbb75bbcb92a5b2705d2a";
@@ -41,12 +49,12 @@ async function makeTempRoot(): Promise<string> {
   return root;
 }
 
-async function makeAgentsInfraRoot(): Promise<string> {
+async function makeAgentsInfraRoot(host = "blade"): Promise<string> {
   const root = await makeTempRoot();
   await mkdir(join(root, "fleet", "truths"), { recursive: true });
   await writeFile(join(root, "fleet", "truths", "hosts.yaml"), [
     "hosts:",
-    "  blade:",
+    `  ${host}:`,
     "    home: /home/caleb",
     "    run_serve_url: http://127.0.0.1:8740",
     "",
@@ -143,6 +151,7 @@ function driftReport(overrides: {
   commitsBehind?: number | null;
   daemonHead?: string;
   diagnostics?: SelfDriftReport["diagnostics"];
+  toolchainCheck?: FleetConvergenceToolchainCheck;
 } = {}): SelfDriftReport {
   const drift = overrides.drift ?? "current";
   const commitsBehind = "commitsBehind" in overrides ? overrides.commitsBehind ?? null : (drift === "current" ? 0 : 1);
@@ -156,6 +165,39 @@ function driftReport(overrides: {
     schema: null,
     summary: drift === "current" ? "at 970b739" : `${commitsBehind} commit behind`,
     diagnostics: overrides.diagnostics ?? [],
+    ...(overrides.toolchainCheck ? { toolchain_check: overrides.toolchainCheck } : {}),
+  };
+}
+
+function blockedMbaToolchainCheck(): FleetConvergenceToolchainCheck {
+  return {
+    schema_version: "fleet-convergence-check/v1",
+    surface: "toolchain",
+    status: "blocked",
+    host: "mba",
+    expected: { node_range: ">=22.13.0", package_manager: "pnpm", pnpm_version: "10.34.1" },
+    observed: {
+      child_node: { executable_realpath: "/opt/homebrew/bin/node", version: "v26.5.0", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/opt/homebrew/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "11.17.0", exit_code: 0, probe: "with-current" },
+        nested: { version: "11.17.0", exit_code: 0 },
+      },
+      bootstrap_cwd: "/Users/caleb/dev/calyx/dev",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1",
+      path_resolution: { observer: "parent_diagnostic", total_entries: 1, truncated: false, entries: [{ index: 0, directory: "/opt/homebrew/bin" }] },
+    },
+    failures: [{ code: "child_pnpm_intrinsic_version_mismatch", message: "pnpm 11.17.0 does not match 10.34.1." }],
+    checked_at: NOW.toISOString(),
+    evidence: { source: "self-upgrade-bootstrap-attestation", spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1" },
+    freshness: { status: "current", observed_at: NOW.toISOString() },
+    repair_owner: "fleet_ops",
+    next_action: { kind: "repair_toolchain", description: "Repair mba's bootstrap toolchain." },
+    topology_identity: { status: "not_bound" },
+    target_bundle_identity: { calyx_source_sha: CURRENT_HEAD },
   };
 }
 
@@ -315,6 +357,35 @@ describe("self freshness", () => {
     });
   });
 
+  test("blocks freshness when mba's toolchain check overrides otherwise minor drift", async () => {
+    const result = await runSelfFreshnessCommand(
+      { host: "mba" },
+      {
+        now: () => NOW,
+        expectedFeatures: ["daemon.health/v1", "run.resource_attribution/v1"],
+        collectHealth: async () => healthResult({ host: "mba" }),
+        collectDrift: async () => [driftReport({
+          host: "mba",
+          drift: "blocked",
+          commitsBehind: 2,
+          toolchainCheck: blockedMbaToolchainCheck(),
+        })],
+      },
+    );
+
+    expect(result).toMatchObject({
+      exit_code: 6,
+      summary: { blocked: 1 },
+      hosts: [{
+        host: "mba",
+        verdict: "blocked",
+        drift: { status: "blocked", commits_behind: 2 },
+        toolchain_check: { status: "blocked", surface: "toolchain" },
+        actions: ["Repair mba's bootstrap toolchain."],
+      }],
+    });
+  });
+
   test("reconciles a converged daemon with a local compare needs_fetch to usable_with_warnings", async () => {
     const result = await runSelfFreshnessCommand(
       { host: "blade" },
@@ -357,7 +428,7 @@ describe("self freshness", () => {
       actions: ["git -C /repo fetch --all --prune"],
     });
     expect(formatSelfFreshnessText(result)).toContain(
-      "blade | usable_with_warnings | 970b739 | 970b739 | 970b739 | needs_fetch | converged | 0 | 0 | git -C /repo fetch --all --prune",
+      "blade | usable_with_warnings | 970b739 | 970b739 | 970b739 | needs_fetch | unknown | converged | 0 | 0 | git -C /repo fetch --all --prune",
     );
   });
 
@@ -597,6 +668,68 @@ describe("self freshness", () => {
     });
   });
 
+  test("fleet freshness keeps unavailable desired-active hosts and excludes withdrawn hosts", async () => {
+    const bladeHealth = healthResult({ host: "blade", features: ["daemon.health/v1"] });
+    const wormHealth = healthResult({ host: "worm", ok: false });
+    const result = await runSelfFreshnessCommand(
+      { fleet: true },
+      {
+        now: () => NOW,
+        expectedFeatures: ["daemon.health/v1"],
+        resolveFleetTopology: async () => makeFleetTopologyTargets({
+          active: [
+            makeFleetTopologyTarget("blade"),
+            makeFleetTopologyTarget("worm"),
+          ],
+          withdrawn: [makeFleetTopologyTarget("mba", "withdrawn")],
+        }),
+        collectHealth: async () => ({
+          results: [bladeHealth.results[0]!, wormHealth.results[0]!],
+          text: "",
+          exitCode: 6,
+          failureMessage: "worm unavailable",
+        }),
+        collectDrift: async () => [
+          driftReport({ host: "blade" }),
+          {
+            ...driftReport({ host: "worm", drift: "broken" }),
+            daemonHead: null,
+            commitsBehind: null,
+            brokenReason: "GET /health failed",
+          },
+        ],
+      },
+    );
+
+    expect(result.topology_snapshot).toMatchObject({
+      source: { commit: TEST_TOPOLOGY_COMMIT },
+      projection_sha256: TEST_TOPOLOGY_DIGEST,
+    });
+    expect(result.hosts).toEqual([
+      expect.objectContaining({
+        host: "blade",
+        desired_membership: "active",
+        effective_state: "active",
+      }),
+      expect.objectContaining({
+        host: "worm",
+        desired_membership: "active",
+        effective_state: "unavailable",
+      }),
+    ]);
+    expect(result.excluded_withdrawn).toEqual([
+      expect.objectContaining({ host: "mba", effective_state: "withdrawn" }),
+    ]);
+    expect(result.fleet_summary).toMatchObject({
+      active: 1,
+      unavailable: 1,
+      desired_active_total: 2,
+      withdrawn_total: 1,
+      green: false,
+    });
+    expect(result.exit_code).toBe(6);
+  });
+
   test.each([
     {
       name: "HTTP 400 failure",
@@ -677,8 +810,42 @@ describe("self freshness", () => {
     );
 
     expect(formatSelfFreshnessText(result)).toContain(
-      "blade | stale | 970b739 | 970b739 | 970b739 | current | converged | 0 | 1 | calyx self upgrade --host blade --dry-run",
+      "blade | stale | 970b739 | 970b739 | 970b739 | current | unknown | converged | 0 | 1 | calyx self upgrade --host blade --dry-run",
     );
+  });
+
+  test("carries an operation-cleanup diagnostic through freshness without changing the host verdict or actions", async () => {
+    const result = await runSelfFreshnessCommand(
+      { host: "blade" },
+      {
+        now: () => NOW,
+        authToken: "secret-token",
+        expectedFeatures: ["daemon.health/v1", "run.resource_attribution/v1"],
+        collectHealth: async () => healthResult(),
+        collectDrift: async () => [driftReport({
+          diagnostics: [{
+            kind: "operation_cleanup",
+            severity: "warning",
+            detail: "inspection_unavailable",
+            message: "Best-effort local self-upgrade cleanup could not prove root absence; no recovery authority was recorded.",
+            actions: [],
+          }],
+        })],
+      },
+    );
+
+    expect(result.hosts[0]).toMatchObject({
+      host: "blade",
+      verdict: "fresh",
+      drift: {
+        status: "current",
+        diagnostics: [{
+          kind: "operation_cleanup",
+          detail: "inspection_unavailable",
+        }],
+      },
+      actions: [],
+    });
   });
 
   test("CLI exposes calyx self freshness --json", async () => {
@@ -687,6 +854,7 @@ describe("self freshness", () => {
     const program = buildProgram({
         runCli: {
           currentHostAlias: "blade",
+          toolchainCheckForHost: createUnobservedToolchainCheck,
           agentsInfraRoot,
           repoRoot: "/tmp/calyx-compare",
           execFileAsync: vi.fn(async (file, args) => {
@@ -737,6 +905,7 @@ describe("self freshness", () => {
       const program = buildProgram({
         runCli: {
           currentHostAlias: "blade",
+          toolchainCheckForHost: createUnobservedToolchainCheck,
           agentsInfraRoot,
           repoRoot: "/tmp/calyx-compare",
           execFileAsync: vi.fn(async (file, args) => {
@@ -801,6 +970,114 @@ describe("self freshness", () => {
     } finally {
       // State-store assertions own their cleanup above; auth is injected through tokenForHost.
     }
+  });
+
+  test("production drift and freshness promote minor source drift to blocked from exact-target recalled toolchain proof", async () => {
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const agentsInfraRoot = await makeAgentsInfraRoot("mba");
+    await applyStateMigrations();
+    const blockedCheck = blockedMbaToolchainCheck();
+    const opened = await openStateStore();
+    try {
+      upsertFleetConvergenceRow(opened.db, {
+        host: "mba",
+        leg: "daemon_build",
+        target_rev: CURRENT_HEAD,
+        observed_rev: OLD_HEAD,
+        converged_from: CHECKOUT_HEAD,
+        policy: "auto",
+        last_checked_at: NOW.toISOString(),
+        verdict: "pending",
+        receipt_path: "/tmp/fleet-receipt.json",
+        detail: "blocked/toolchain",
+        payload: {
+          source: "self-upgrade-fleet",
+          toolchain_check: blockedCheck,
+        },
+      });
+    } finally {
+      opened.db.close();
+    }
+
+    const runCli = {
+      currentHostAlias: "blade",
+      agentsInfraRoot,
+      repoRoot: "/tmp/calyx-compare",
+      execFileAsync: vi.fn(async (file: string, args: readonly string[]) => {
+        const command = `${file} ${args.join(" ")}`;
+        if (command === "git rev-parse origin/main") {
+          return { stdout: `${CURRENT_HEAD}\n`, stderr: "" };
+        }
+        if (command === "git rev-parse HEAD") {
+          return { stdout: `${CHECKOUT_HEAD}\n`, stderr: "" };
+        }
+        if (command === `git log --format=%H ${OLD_HEAD}..${CURRENT_HEAD}`) {
+          return { stdout: "commit-a\ncommit-b\n", stderr: "" };
+        }
+        return { stdout: "", stderr: "" };
+      }),
+      createAdminClient: createAdminClientFactory(vi.fn(async () => {
+        const health = healthResult({
+          host: "mba",
+          runningHead: OLD_HEAD,
+          promotedHead: CURRENT_HEAD,
+          cloneHead: CURRENT_HEAD,
+        }).results[0]!;
+        return new Response(JSON.stringify(health.ok ? health.health : {}), {
+          headers: {
+            "content-type": "application/json",
+            "x-calyx-request-id": "req_123e4567-e89b-42d3-a456-426614174000",
+          },
+        });
+      })),
+      now: () => NOW,
+      tokenForHost: () => "secret-token",
+    };
+
+    await expect(buildProgram({ runCli }).parseAsync([
+      "node",
+      "calyx",
+      "self",
+      "drift",
+      "--host",
+      "mba",
+      "--json",
+    ])).rejects.toMatchObject({ exitCode: 1 });
+    expect(JSON.parse(String(out.mock.calls[0]?.[0]))).toMatchObject([{
+      host: "mba",
+      drift: "blocked",
+      commits_behind: 2,
+      toolchain_check: {
+        status: "blocked",
+        freshness: { status: "recalled", observed_at: NOW.toISOString() },
+        target_bundle_identity: { calyx_source_sha: CURRENT_HEAD },
+      },
+    }]);
+
+    out.mockClear();
+    await expect(buildProgram({ runCli }).parseAsync([
+      "node",
+      "calyx",
+      "self",
+      "freshness",
+      "--host",
+      "mba",
+      "--json",
+    ])).rejects.toMatchObject({ exitCode: 6 });
+    expect(JSON.parse(String(out.mock.calls[0]?.[0]))).toMatchObject({
+      exit_code: 6,
+      summary: { blocked: 1 },
+      hosts: [{
+        host: "mba",
+        verdict: "blocked",
+        drift: { status: "blocked", commits_behind: 2 },
+        toolchain_check: {
+          status: "blocked",
+          freshness: { status: "recalled", observed_at: NOW.toISOString() },
+        },
+        actions: ["Repair mba's bootstrap toolchain."],
+      }],
+    });
   });
 
   test("persists unreachable hosts as pending and preserves upgrade receipt linkage", async () => {

@@ -84,6 +84,8 @@ export interface AdapterStartOptions {
   backend_options?: BackendOptions;
   /** Runner-owned environment keys that must be absent from the provider child. */
   environment_redactions?: readonly string[];
+  /** Runner-validated posture translated into the provider child environment. */
+  workspace_mutation?: "forbidden";
   /** Replacement system prompt for backends that support it. */
   system_prompt?: string;
   /** Additional instructions to append to the backend's default system prompt. */
@@ -147,6 +149,8 @@ export interface AdapterSpawnOptions {
   backend_options?: BackendOptions;
   /** Runner-owned environment keys that must be absent from the provider child. */
   environment_redactions?: readonly string[];
+  /** Runner-validated posture translated into the provider child environment. */
+  workspace_mutation?: "forbidden";
   /** Replacement system prompt for backends that support it. */
   system_prompt?: string;
   /** Additional instructions to append to the backend's default system prompt. */

@@ -20,7 +20,7 @@ import {
   type ApiRequestAuditRow,
   type StateOpenOptions,
 } from "@polli-labs/calyx-core";
-import { RunService } from "@polli-labs/calyx-run-service";
+import { RunService } from "./support/test-run-service.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { startRunServer, type RunServerHandle } from "../server.js";
@@ -271,6 +271,7 @@ function mutationCases(harness: TestHarness, forwardedMessage: Record<string, un
         schema_version: "calyx.run-launch-request/v1",
         intent: launchIntent,
         idempotency_key: "audit-run-launch",
+        topology_projection_sha256: "a".repeat(64),
       },
       headers: { accept: "application/vnd.polli.calyx.run-launch-receipt+json;version=2" },
     },

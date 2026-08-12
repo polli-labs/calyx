@@ -412,10 +412,8 @@ describe("agent definitions", () => {
       required: true,
     };
     expect(compiled.backend).toBe("codex");
-    expect(compiled.backend_options).toMatchObject({
-      sandbox: "read-only",
-      env: { CALYX_AGENT_WORKSPACE_MUTATION: "forbidden" },
-    });
+    expect(compiled.backend_options).toMatchObject({ sandbox: "read-only" });
+    expect(compiled.backend_options).not.toHaveProperty("env");
     expect(compiled.output_capture).toEqual(expectedCapture);
     expect(compiled.required_artifacts).toEqual(["legacy-findings.md"]);
     expect(compiled.required_artifacts).not.toContain("review-verdict.json");

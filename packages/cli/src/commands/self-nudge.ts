@@ -158,6 +158,8 @@ function resolvedComment(checkedAt: string): string {
 }
 
 function requiresDriftIssue(severity: SelfDriftSeverity): boolean {
+  // A blocked toolchain is operational drift that needs a standing repair
+  // issue even when the underlying source comparison was only minor.
   return severity !== "current" && severity !== "needs_fetch";
 }
 
@@ -183,6 +185,10 @@ function formatMissingOperationalFixes(report: SelfDriftReport): string[] {
 function renderDriftIssueBody(report: SelfDriftReport, checkedAt: string, fingerprintLabel: string): string {
   const daemonHead = report.daemonHead ? `\`${report.daemonHead}\`` : "_unavailable_";
   const commitsBehind = report.commitsBehind === null ? "_unavailable_" : `\`${report.commitsBehind}\``;
+  const remediation = report.toolchain_check?.status === "blocked"
+    ? report.toolchain_check.next_action?.description
+      ?? `Repair ${report.host}'s bootstrap toolchain before retrying self upgrade.`
+    : `calyx self upgrade --host ${report.host}`;
   const lines = [
     "# Calyx daemon drift",
     "",
@@ -190,7 +196,7 @@ function renderDriftIssueBody(report: SelfDriftReport, checkedAt: string, finger
     `- Drift: \`${report.drift}\``,
     `- Checked at: \`${checkedAt}\``,
     `- Fingerprint label: \`${fingerprintLabel}\``,
-    `- Remediation: \`calyx self upgrade --host ${report.host}\``,
+    `- Remediation: ${remediation}`,
     "",
     "## Summary",
     report.summary,

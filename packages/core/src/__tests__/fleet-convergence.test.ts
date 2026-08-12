@@ -16,6 +16,7 @@ import {
   STATE_MIGRATIONS,
   upsertFleetConvergenceRow,
 } from "../state";
+import { fleetConvergenceToolchainCheckSchema } from "../fleet-convergence-check";
 
 const ENV_KEYS = ["CALYX_STATE_HOME", "CALYX_STATE_DB"] as const;
 
@@ -156,5 +157,130 @@ describe("fleet convergence state (migration 0005)", () => {
     expect(report.domains?.find((domain) => domain.domain === "fleet_convergence")).toMatchObject({
       status: "ok",
     });
+  });
+});
+
+describe("fleet convergence toolchain pass evidence", () => {
+  const passing = {
+    schema_version: "fleet-convergence-check/v1" as const,
+    surface: "toolchain" as const,
+    status: "pass" as const,
+    host: "blade",
+    expected: { node_range: ">=22.13.0", package_manager: "pnpm" as const, pnpm_version: "10.34.1" },
+    observed: {
+      process_exec_path_realpath: "/usr/bin/node",
+      process_node_version: "v22.23.1",
+      child_node: { executable_realpath: "/usr/bin/node", version: "v22.23.1", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/usr/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path" as const,
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "10.34.1", exit_code: 0, probe: "with-current" as const },
+        nested: { version: "10.34.1", exit_code: 0 },
+      },
+      bootstrap_cwd: "/srv/calyx",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1" as const,
+      path_resolution: {
+        observer: "parent_diagnostic" as const,
+        total_entries: 1,
+        truncated: false,
+        entries: [{ index: 0, directory: "/usr/bin" }],
+      },
+    },
+    failures: [],
+    checked_at: "2026-08-03T00:00:00.000Z",
+    evidence: {
+      source: "self-upgrade-bootstrap-attestation" as const,
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+    },
+    freshness: { status: "current" as const, observed_at: "2026-08-03T00:00:00.000Z" },
+    topology_identity: { status: "not_bound" as const },
+    target_bundle_identity: { calyx_source_sha: "a".repeat(40) },
+  };
+
+  test("requires pass evidence to be current, complete, and from the real child-spawn contract", () => {
+    expect(fleetConvergenceToolchainCheckSchema.safeParse(passing).success).toBe(true);
+    const invalidPasses = [
+      { ...passing, expected: { ...passing.expected, node_range: null } },
+      { ...passing, expected: { ...passing.expected, node_range: ">=not-a-node-version" } },
+      { ...passing, expected: { ...passing.expected, package_manager: undefined } },
+      { ...passing, expected: { ...passing.expected, pnpm_version: "not-a-pnpm-version" } },
+      { ...passing, evidence: { ...passing.evidence, source: "unobserved" } },
+      { ...passing, evidence: { ...passing.evidence, spawn_contract: "other" } },
+      { ...passing, observed: { ...passing.observed, spawn_contract: "other" } },
+      {
+        ...passing,
+        freshness: { status: "recalled" as const, observed_at: passing.checked_at },
+      },
+      { ...passing, observed: { ...passing.observed, process_exec_path_realpath: undefined } },
+      {
+        ...passing,
+        observed: {
+          ...passing.observed,
+          child_pnpm: {
+            ...passing.observed.child_pnpm,
+            nested: { version: "11.17.0", exit_code: 0 },
+          },
+        },
+      },
+      { ...passing, target_bundle_identity: { calyx_source_sha: null } },
+      {
+        ...passing,
+        observed: { ...passing.observed, process_node_version: undefined },
+      },
+      {
+        ...passing,
+        observed: { ...passing.observed, process_node_version: "v20.0.0" },
+      },
+      {
+        ...passing,
+        observed: {
+          ...passing.observed,
+          child_node: { ...passing.observed.child_node, version: "v20.0.0" },
+        },
+      },
+      {
+        ...passing,
+        observed: {
+          ...passing.observed,
+          child_pnpm: {
+            ...passing.observed.child_pnpm,
+            self_dispatched: { version: "11.17.0", exit_code: 0 },
+          },
+        },
+      },
+      {
+        ...passing,
+        observed: {
+          ...passing.observed,
+          child_pnpm: {
+            ...passing.observed.child_pnpm,
+            intrinsic: { version: "11.17.0", exit_code: 0, probe: "with-current" },
+          },
+        },
+      },
+      {
+        ...passing,
+        observed: {
+          ...passing.observed,
+          child_node: {
+            ...passing.observed.child_node,
+            error: "identity observation failed",
+          },
+        },
+      },
+      {
+        ...passing,
+        repair_owner: "fleet_ops" as const,
+        next_action: {
+          kind: "repair_toolchain" as const,
+          description: "repair contradictory pass",
+        },
+      },
+    ];
+    for (const invalid of invalidPasses) {
+      expect(fleetConvergenceToolchainCheckSchema.safeParse(invalid).success).toBe(false);
+    }
   });
 });

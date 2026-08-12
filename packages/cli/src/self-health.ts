@@ -1,17 +1,32 @@
 import { hostname as systemHostname } from "node:os";
 import {
-  listRunServeHosts,
   readHostsTruth,
   resolveAgentsInfraRoot,
   resolveConsumerApiClientToken,
   resolveCurrentHostAlias,
 } from "@polli-labs/calyx-core";
-import type { CalyxAdminHealth, HostsTruthFile } from "@polli-labs/calyx-core";
+import type {
+  CalyxAdminHealth,
+  FleetTopologyTarget,
+  FleetTopologyTargetsV1,
+  HostsTruthFile,
+} from "@polli-labs/calyx-core";
 import {
   createCalyxAdminClient,
   type CalyxProtocolFailure,
   type CalyxResult,
 } from "@polli-labs/calyx-client/admin";
+import {
+  fleetTopologyOutput,
+  formatExcludedWithdrawn,
+  formatFleetTopologyIdentity,
+  resolveFleetTopologyForCommand,
+  summarizeFleetRead,
+  type FleetEffectiveState,
+  type FleetReadSummary,
+  type FleetTopologyOutput,
+  type ResolveFleetTopology,
+} from "./fleet-topology.js";
 
 const HEALTH_TIMEOUT_MS = 5_000;
 
@@ -24,6 +39,8 @@ export interface SelfHealthCommandOptions {
 export interface SelfHealthCommandDeps {
   createAdminClient?: typeof createCalyxAdminClient;
   now?: () => Date;
+  agentsInfraRoot?: string;
+  resolveFleetTopology?: ResolveFleetTopology;
   tokenForHost?: (host: string) => Promise<string | undefined> | string | undefined;
 }
 
@@ -59,11 +76,25 @@ export type SelfHealthResult =
       error: SelfHealthErrorPayload;
     };
 
+export type SelfHealthFleetResult = SelfHealthResult & FleetTopologyTarget & {
+  desired_membership: "active";
+  effective_state: Exclude<FleetEffectiveState, "withdrawn">;
+};
+
+export interface SelfHealthFleetJsonResult extends FleetTopologyOutput {
+  schema_version: "self-health-fleet/v1";
+  checked_at: string;
+  hosts: SelfHealthFleetResult[];
+  summary: FleetReadSummary;
+  exit_code: number;
+}
+
 export interface SelfHealthCommandResult {
   results: SelfHealthResult[];
   text: string;
   exitCode: number;
   failureMessage?: string;
+  fleet?: SelfHealthFleetJsonResult;
 }
 
 interface ProbeTarget {
@@ -413,7 +444,21 @@ function formatTextRow(result: SelfHealthResult, now: Date): string {
     formatRelativeTime(result.health.build.built_at, now),
     String(result.health.active_runs),
     String(result.health.supports_features.length),
+    result.health.workload_admission?.admission === "open"
+      ? `open@${shortSha(result.health.workload_admission.accepted_topology.projection_sha256)}`
+      : result.health.workload_admission
+        ? `fenced:${result.health.workload_admission.reason}`
+        : "unknown",
     result.health.maintenance_mode ? "yes" : "no",
+  ].join(" | ");
+}
+
+function formatFleetTextRow(result: SelfHealthFleetResult, now: Date): string {
+  return [
+    result.host,
+    result.desired_membership,
+    result.effective_state,
+    result.ok ? formatTextRow(result, now).split(" | ").slice(1).join(" | ") : result.error.message,
   ].join(" | ");
 }
 
@@ -429,13 +474,29 @@ export function renderSelfHealthText(
 ): string {
   if (results.length === 0) {
     if (isFleet) {
-      return "No hosts with run_serve_url configured in fleet/truths/hosts.yaml.";
+      return "No desired-active hosts in the topology snapshot.";
     }
     return "No daemon health results.";
   }
 
+  if (isFleet && results.every(
+    (result) => "desired_membership" in result && "effective_state" in result,
+  )) {
+    const fleetResults = results as readonly SelfHealthFleetResult[];
+    const lines = [
+      "host | desired | effective | daemon_kind | uptime | running_build | promoted_build | clone_head | state_schema | built_at | active_runs | features | admission | maintenance",
+      ...fleetResults.map((result) => formatFleetTextRow(result, now)),
+    ];
+    if (fleetResults.length > 1) {
+      lines.push(formatStateSchemaConvergence(
+        fleetResults.map((result) => ({ host: result.host, schema: appliedStateSchemaId(result) })),
+      ));
+    }
+    return lines.join("\n");
+  }
+
   const lines = [
-    "host | daemon_kind | uptime | running_build | promoted_build | clone_head | state_schema | built_at | active_runs | features | maintenance",
+    "host | daemon_kind | uptime | running_build | promoted_build | clone_head | state_schema | built_at | active_runs | features | admission | maintenance",
     ...results.map((result) => formatTextRow(result, now)),
   ];
   // One host has nothing to converge with; two or more do.
@@ -487,18 +548,34 @@ async function resolveSingleTarget(
   };
 }
 
-async function resolveFleetTargets(agentsInfraRoot: string, deps: SelfHealthCommandDeps): Promise<ProbeTarget[]> {
-  const currentHost = await resolveCurrentHostAlias(undefined, agentsInfraRoot);
-  const hostsTruth = await readHostsTruth(agentsInfraRoot);
-  const configuredHosts = await listRunServeHosts(agentsInfraRoot);
-  return Promise.all(configuredHosts.map(async (target) => {
+async function resolveFleetTargets(
+  targets: FleetTopologyTargetsV1,
+  deps: SelfHealthCommandDeps,
+): Promise<ProbeTarget[]> {
+  const sourceRoot = deps.agentsInfraRoot ?? targets.snapshot.source.root;
+  const hostsTruth = sourceRoot && targets.desired_active.length > 0
+    ? await readHostsTruth(sourceRoot)
+    : {};
+  return Promise.all(targets.desired_active.map(async (target) => {
+    if (!target.run_serve_url) {
+      throw new Error(`Desired-active topology target ${target.host} has no run_serve_url.`);
+    }
     const token = await deps.tokenForHost?.(target.host) ?? resolveTokenForHost(target.host, hostsTruth);
     return {
       host: target.host,
-      serverUrl: resolveConfiguredServerUrl(target.host, hostsTruth, currentHost),
+      serverUrl: target.run_serve_url,
       ...(token ? { token } : {}),
     };
   }));
+}
+
+function healthEffectiveState(result: SelfHealthResult): Exclude<FleetEffectiveState, "withdrawn"> {
+  if (result.ok) return "active";
+  if (result.error.kind === "unreachable") return "unavailable";
+  if (result.error.kind === "auth_failure" && result.error.http_status === undefined) {
+    return "unavailable";
+  }
+  return "repair";
 }
 
 export async function runSelfHealthCommand(
@@ -509,15 +586,61 @@ export async function runSelfHealthCommand(
     throw new Error("Provide either --host or --fleet, not both.");
   }
 
-  const agentsInfraRoot = await resolveAgentsInfraRoot();
-  const targets = options.fleet
-    ? agentsInfraRoot
-      ? await resolveFleetTargets(agentsInfraRoot, deps)
-      : []
+  const agentsInfraRoot = deps.agentsInfraRoot ?? await resolveAgentsInfraRoot();
+  const topologyTargets = options.fleet
+    ? await (deps.resolveFleetTopology
+        ?? ((intent) => resolveFleetTopologyForCommand(intent, agentsInfraRoot)))("read_only")
+    : undefined;
+  const targets = topologyTargets
+    ? await resolveFleetTargets(topologyTargets, deps)
     : [await resolveSingleTarget(options.host, agentsInfraRoot, deps)];
-  const results = await Promise.all(targets.map((target) => probeHealth(target, deps)));
+  const probedResults = await Promise.all(targets.map((target) => probeHealth(target, deps)));
   const now = deps.now?.() ?? new Date();
+  const results: SelfHealthResult[] = topologyTargets
+    ? probedResults.map((result, index) => ({
+        ...topologyTargets.desired_active[index]!,
+        ...result,
+        desired_membership: "active" as const,
+        effective_state: healthEffectiveState(result),
+      }))
+    : probedResults;
   const failureMessage = failureMessageForResults(results);
+
+  if (topologyTargets) {
+    const topology = fleetTopologyOutput(topologyTargets);
+    const fleetResults = results as SelfHealthFleetResult[];
+    const summary = summarizeFleetRead(
+      topology,
+      fleetResults.map((result) => result.effective_state),
+    );
+    const exitCode = summary.green ? 0 : exitCodeForResults(results) || 6;
+    const topologyFailure = topology.can_emit_green_verdict
+      ? undefined
+      : `Topology snapshot is ${topology.topology_authority.status}: ${topology.topology_authority.reasons.join(", ")}.`;
+    const fleetFailureMessage = failureMessage ?? topologyFailure;
+    const fleet: SelfHealthFleetJsonResult = {
+      schema_version: "self-health-fleet/v1",
+      checked_at: now.toISOString(),
+      ...topology,
+      hosts: fleetResults,
+      summary,
+      exit_code: exitCode,
+    };
+    return {
+      results,
+      text: [
+        formatFleetTopologyIdentity(topology),
+        renderSelfHealthText(results, now, true),
+        formatExcludedWithdrawn(topology),
+        `summary active=${summary.active} repair=${summary.repair} unavailable=${summary.unavailable} desired_active_total=${summary.desired_active_total} withdrawn_total=${summary.withdrawn_total} green=${String(summary.green)}`,
+      ].join("\n"),
+      exitCode,
+      ...(fleetFailureMessage
+        ? { failureMessage: fleetFailureMessage }
+        : {}),
+      fleet,
+    };
+  }
 
   return {
     results,

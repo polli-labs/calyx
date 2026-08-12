@@ -6,6 +6,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { CALYX_SERVER_STARTUP_CONTRACT } from "@polli-labs/calyx-core";
 import { buildProgram } from "../run-cli";
 import type { SelfUpgradeFleetResult } from "../commands/self-upgrade-fleet";
+import {
+  makeFleetTopologyTarget,
+  makeFleetTopologyTargets,
+} from "./fleet-topology-fixture";
 
 const tempRoots: string[] = [];
 const originalHome = process.env["HOME"];
@@ -37,6 +41,13 @@ async function createAgentsInfraFixture(): Promise<string> {
     "utf8",
   );
   return root;
+}
+
+async function resolveUpgradeTopology() {
+  return makeFleetTopologyTargets({
+    active: [makeFleetTopologyTarget("blade")],
+    intent: "mutating",
+  });
 }
 
 function extractSshHost(args: readonly unknown[]): string {
@@ -152,6 +163,7 @@ describe("self upgrade CLI", () => {
         agentsInfraRoot,
         currentHostAlias: "carbon",
         execFileAsync,
+        resolveFleetTopology: resolveUpgradeTopology,
       },
     });
 
@@ -179,6 +191,7 @@ describe("self upgrade CLI", () => {
         agentsInfraRoot,
         currentHostAlias: "carbon",
         execFileAsync,
+        resolveFleetTopology: resolveUpgradeTopology,
       },
     });
 
@@ -211,6 +224,7 @@ describe("self upgrade CLI", () => {
         agentsInfraRoot,
         currentHostAlias: "carbon",
         execFileAsync,
+        resolveFleetTopology: resolveUpgradeTopology,
       },
     });
 
@@ -242,6 +256,7 @@ describe("self upgrade CLI", () => {
         agentsInfraRoot,
         currentHostAlias: "carbon",
         execFileAsync,
+        resolveFleetTopology: resolveUpgradeTopology,
       },
     });
 
@@ -273,6 +288,7 @@ describe("self upgrade CLI", () => {
         agentsInfraRoot,
         currentHostAlias: "carbon",
         execFileAsync,
+        resolveFleetTopology: resolveUpgradeTopology,
       },
     });
 
@@ -668,6 +684,22 @@ describe("self upgrade CLI", () => {
       return {
         status: "dry-run" as const,
         plan: JSON.parse(dryRunJson("blade"))?.plan,
+        projection_issues: [
+          {
+            scope: "operation_cleanup" as const,
+            code: "best_effort_cleanup" as const,
+            detail: "residue" as const,
+            observed_at: "2026-07-21T12:00:01.000Z",
+            message: "bootstrap cleanup did not reach proven absence",
+          },
+          {
+            scope: "operation_cleanup" as const,
+            code: "best_effort_cleanup" as const,
+            detail: "residue" as const,
+            observed_at: "2026-07-21T12:00:02.000Z",
+            message: "bootstrap cleanup did not reach proven absence",
+          },
+        ],
       };
     });
     const program = buildProgram({
@@ -691,14 +723,21 @@ describe("self upgrade CLI", () => {
       ]);
 
       expect(out).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(String(out.mock.calls[0]?.[0]))).toMatchObject({
+      const terminal = JSON.parse(String(out.mock.calls[0]?.[0])) as {
+        status: string;
+        projection_issues: Array<Record<string, unknown>>;
+      };
+      expect(terminal).toMatchObject({
         status: "dry-run",
-        projection_issues: [expect.objectContaining({
+      });
+      expect(terminal.projection_issues.filter((issue) => issue.scope === "operation_cleanup")).toHaveLength(2);
+      expect(terminal.projection_issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({
           scope: "remote_phase_stderr",
           code: "projection_unavailable",
           message: "remote relay EPIPE",
-        })],
-      });
+        }),
+      ]));
     } finally {
       progressStream.destroy();
       if (previousSchema === undefined) delete process.env["CALYX_SELF_UPGRADE_PROGRESS_SCHEMA"];

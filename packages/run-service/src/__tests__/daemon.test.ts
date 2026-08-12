@@ -2,7 +2,12 @@ import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { acquireLock, applyStateMigrations, openStateStore } from "@polli-labs/calyx-core";
+import {
+  acquireLock,
+  applyStateMigrations,
+  openStateStore,
+  WorkloadAdmissionEvidenceError,
+} from "@polli-labs/calyx-core";
 import { DaemonService } from "../daemon.js";
 import { DAEMON_LEDGER_AGGREGATE_TYPE, daemonAggregateId, daemonLockKey } from "../daemon-ledger.js";
 import {
@@ -12,7 +17,15 @@ import {
   isRunResourceTerminal,
 } from "../store.js";
 import { createTrackerRegistry } from "../tracker.js";
-import type { RunCancellationResult } from "../service.js";
+import {
+  WorkloadAdmissionBusyError,
+  type LaunchRunOptions,
+  type RunCancellationResult,
+} from "../service.js";
+import {
+  passingTestWorkloadAdmissionReconciler,
+  RunService as TestRunService,
+} from "./support/test-run-service.js";
 import type {
   DaemonStateSnapshot,
   IssueRuntimeRecord,
@@ -1429,8 +1442,11 @@ describe("DaemonService", () => {
           ...(input.metadata ? { metadata: input.metadata } : {}),
         };
       },
-      async launch(intent: RunIntent): Promise<RunLaunchResult> {
-        runRecords.set(intent.run_id, makeRunRecord(intent, "running"));
+      async launch(intent: RunIntent, options: LaunchRunOptions = {}): Promise<RunLaunchResult> {
+        const record = makeRunRecord(intent, "running");
+        runRecords.set(intent.run_id, record);
+        await options.onAdmitted?.(record);
+        await options.onExecutionAdmitted?.(record);
         return new Promise<RunLaunchResult>(() => undefined);
       },
       async getRunRecord(runId: string): Promise<RunRecord | undefined> {
@@ -1970,6 +1986,267 @@ describe("DaemonService Symphony v0 ledger", () => {
       await stateDbHandle.cleanup();
       stateDbHandle = undefined;
     }
+  });
+
+  test("admission rejection never publishes a phantom active workflow run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "calyx-symphony-admission-rejected-"));
+    created.push(root);
+    await mkdir(join(root, "repo"), { recursive: true });
+    const workflowPath = join(root, "WORKFLOW.md");
+    await writeFile(workflowPath, makeWorkflowContent(root), "utf8");
+    stateDbHandle = await makeStateDb();
+
+    const trackerRegistry = createTrackerRegistry();
+    const issue = makeIssue("POL-2141");
+    trackerRegistry.register("linear", () => ({
+      kind: "linear",
+      async pollIssues(): Promise<TrackerPollResult> {
+        return {
+          fetched_at: "2026-08-04T05:00:00.000Z",
+          issues: [issue],
+        };
+      },
+    }));
+    const fakeRunService = makeFakeRunService(root);
+    let launchOptions: LaunchRunOptions | undefined;
+    fakeRunService.launch = async (_intent, options = {}) => {
+      launchOptions = options;
+      throw new WorkloadAdmissionBusyError({
+        acquireTimeoutMs: 5,
+        decision: {
+          schema_version: "calyx.workload-admission-decision/v1",
+          admission: "fenced",
+          reason: "admission_evidence_missing",
+          failed_surface: "admission_evidence",
+          next_action: "Retry after the current admission evaluation finishes.",
+          decided_at: "2026-08-04T05:00:00.000Z",
+        },
+      });
+    };
+    const daemon = new DaemonService(
+      {
+        trackerRegistry,
+        runService: fakeRunService,
+        daemonsRoot: join(root, "daemons"),
+        stateDb: stateDbHandle.db,
+        host: "test-host",
+      },
+      {
+        now: () => "2026-08-04T05:00:00.000Z",
+        exec: async (_cmd, args) => {
+          if (args[0] === "show-ref") {
+            return { code: 1, stdout: "", stderr: "" };
+          }
+          if (args[0] === "worktree" && args[1] === "add") {
+            await mkdir(args[4]!, { recursive: true });
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+
+    const result = await daemon.tick(workflowPath, "daemon-admission-rejected", {
+      awaitLaunchedRuns: true,
+    });
+    const state = await daemon.store.readStateSnapshot("daemon-admission-rejected");
+    const ledgerEvents = daemon.ledger!.listIssueEvents({
+      daemonId: "daemon-admission-rejected",
+      issueIdentifier: issue.identifier,
+    });
+
+    expect(launchOptions?.onAdmitted).toEqual(expect.any(Function));
+    expect(launchOptions?.onExecutionAdmitted).toEqual(expect.any(Function));
+    expect(result.launched_runs).toEqual([]);
+    expect(result.active_runs).toBe(0);
+    expect(state?.active_run_ids).toEqual([]);
+    expect(state?.issues[issue.identifier]).toMatchObject({
+      status: "waiting_retry",
+      claim_status: "claimed",
+      retry_count: 1,
+      last_error: expect.stringContaining("Workload admission is busy"),
+    });
+    expect(state?.issues[issue.identifier]).not.toHaveProperty("active_run_id");
+    expect(state?.issues[issue.identifier]).not.toHaveProperty("last_run_id");
+    expect(ledgerEvents.map((event) => event.event_type)).toEqual(["issue.claimed"]);
+  });
+
+  test("a fenced first-execution recheck keeps Symphony claimed with a queued retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "calyx-symphony-execution-fenced-"));
+    created.push(root);
+    await mkdir(join(root, "repo"), { recursive: true });
+    const workflowPath = join(root, "WORKFLOW.md");
+    await writeFile(workflowPath, makeWorkflowContent(root), "utf8");
+    stateDbHandle = await makeStateDb();
+
+    const trackerRegistry = createTrackerRegistry();
+    const issue = makeIssue("POL-2141-FENCED");
+    trackerRegistry.register("linear", () => ({
+      kind: "linear",
+      async pollIssues(): Promise<TrackerPollResult> {
+        return { fetched_at: "2026-08-04T06:00:00.000Z", issues: [issue] };
+      },
+    }));
+    let reconciliationCount = 0;
+    const runService = new TestRunService({
+      runsRoot: join(root, "runs"),
+      workloadAdmission: {
+        reconcile: async (request) => {
+          reconciliationCount += 1;
+          if (reconciliationCount === 1) {
+            return passingTestWorkloadAdmissionReconciler(request);
+          }
+          throw new WorkloadAdmissionEvidenceError({
+            reason: "withdrawn",
+            failedSurface: "topology",
+            nextAction: "Reactivate this host through authoritative fleet lifecycle.",
+            message: "Host was withdrawn before first execution.",
+          });
+        },
+      },
+    });
+    const daemon = new DaemonService(
+      {
+        trackerRegistry,
+        runService,
+        daemonsRoot: join(root, "daemons"),
+        stateDb: stateDbHandle.db,
+        host: "test-host",
+      },
+      {
+        now: () => "2026-08-04T06:00:00.000Z",
+        exec: async (_cmd, args) => {
+          if (args[0] === "show-ref") return { code: 1, stdout: "", stderr: "" };
+          if (args[0] === "worktree" && args[1] === "add") {
+            await mkdir(args[4]!, { recursive: true });
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+
+    const result = await daemon.tick(workflowPath, "daemon-execution-fenced", {
+      awaitLaunchedRuns: true,
+    });
+    const state = await daemon.store.readStateSnapshot("daemon-execution-fenced");
+    const issueRecord = state?.issues[issue.identifier];
+    const runRecord = issueRecord?.last_run_id
+      ? await runService.getRunRecord(issueRecord.last_run_id)
+      : undefined;
+    const ledgerEvents = daemon.ledger!.listIssueEvents({
+      daemonId: "daemon-execution-fenced",
+      issueIdentifier: issue.identifier,
+    });
+
+    expect(result.launched_runs).toEqual([]);
+    expect(result.active_runs).toBe(0);
+    expect(state?.active_run_ids).toEqual([]);
+    expect(issueRecord).toMatchObject({
+      status: "waiting_retry",
+      claim_status: "claimed",
+      retry_count: 1,
+      last_error: expect.stringContaining("Workload admission refused (withdrawn)"),
+    });
+    expect(issueRecord).not.toHaveProperty("active_run_id");
+    expect(runRecord).toMatchObject({ state: "queued", launch: { stage: "accepted" } });
+    expect(ledgerEvents.map((event) => event.event_type)).toEqual(["issue.claimed"]);
+  });
+
+  test("a busy first-execution recheck keeps Symphony claimed with a queued retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "calyx-symphony-execution-busy-"));
+    created.push(root);
+    await mkdir(join(root, "repo"), { recursive: true });
+    const workflowPath = join(root, "WORKFLOW.md");
+    await writeFile(workflowPath, makeWorkflowContent(root), "utf8");
+    stateDbHandle = await makeStateDb();
+
+    const trackerRegistry = createTrackerRegistry();
+    const issue = makeIssue("POL-2141-BUSY");
+    trackerRegistry.register("linear", () => ({
+      kind: "linear",
+      async pollIssues(): Promise<TrackerPollResult> {
+        return { fetched_at: "2026-08-04T06:00:00.000Z", issues: [issue] };
+      },
+    }));
+    let holdReconciliation = false;
+    let evaluationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      evaluationStarted = resolve;
+    });
+    let releaseEvaluation!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseEvaluation = resolve;
+    });
+    const runService = new TestRunService({
+      runsRoot: join(root, "runs"),
+      workloadAdmission: {
+        acquireTimeoutMs: 5,
+        reconcile: async (request) => {
+          if (holdReconciliation) {
+            evaluationStarted();
+            await released;
+          }
+          return passingTestWorkloadAdmissionReconciler(request);
+        },
+      },
+    });
+    const originalLaunch = runService.launch.bind(runService);
+    let heldReconciliation: Promise<unknown> | undefined;
+    runService.launch = async (intent, options = {}) => originalLaunch(intent, {
+      ...options,
+      onAdmitted: async (record) => {
+        await options.onAdmitted?.(record);
+        holdReconciliation = true;
+        heldReconciliation = runService.reconcileWorkloadAdmission();
+        await started;
+      },
+    });
+    const daemon = new DaemonService(
+      {
+        trackerRegistry,
+        runService,
+        daemonsRoot: join(root, "daemons"),
+        stateDb: stateDbHandle.db,
+        host: "test-host",
+      },
+      {
+        now: () => "2026-08-04T06:00:00.000Z",
+        exec: async (_cmd, args) => {
+          if (args[0] === "show-ref") return { code: 1, stdout: "", stderr: "" };
+          if (args[0] === "worktree" && args[1] === "add") {
+            await mkdir(args[4]!, { recursive: true });
+          }
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+
+    const result = await daemon.tick(workflowPath, "daemon-execution-busy", {
+      awaitLaunchedRuns: true,
+    });
+    releaseEvaluation();
+    await heldReconciliation;
+    const state = await daemon.store.readStateSnapshot("daemon-execution-busy");
+    const issueRecord = state?.issues[issue.identifier];
+    const runRecord = issueRecord?.last_run_id
+      ? await runService.getRunRecord(issueRecord.last_run_id)
+      : undefined;
+    const ledgerEvents = daemon.ledger!.listIssueEvents({
+      daemonId: "daemon-execution-busy",
+      issueIdentifier: issue.identifier,
+    });
+
+    expect(result.launched_runs).toEqual([]);
+    expect(result.active_runs).toBe(0);
+    expect(state?.active_run_ids).toEqual([]);
+    expect(issueRecord).toMatchObject({
+      status: "waiting_retry",
+      claim_status: "claimed",
+      retry_count: 1,
+      last_error: expect.stringContaining("Workload admission is busy"),
+    });
+    expect(issueRecord).not.toHaveProperty("active_run_id");
+    expect(runRecord).toMatchObject({ state: "queued", launch: { stage: "accepted" } });
+    expect(ledgerEvents.map((event) => event.event_type)).toEqual(["issue.claimed"]);
   });
 
   test("tick claims via tracker, mirrors ledger events, and posts a bounded handoff receipt on successful handoff", async () => {

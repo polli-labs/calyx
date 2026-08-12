@@ -357,6 +357,14 @@ Before multi-host dispatch, prefer one fleet readiness snapshot:
 calyx self freshness --fleet --json
 ```
 
+Read the topology identity first: `topology_snapshot.source.commit` and
+`topology_snapshot.projection_sha256` bind the host set used by the result.
+`hosts` contains every desired-active member; an offline host remains present
+as `effective_state=unavailable` and makes `fleet_summary.green=false`.
+`excluded_withdrawn` is intentionally outside that denominator. Do not treat a
+URL-bearing truth row, an old convergence row, or a physically absent machine
+as permission to add or remove a target.
+
 Use the `actions` field to drill into stale daemons (`calyx self upgrade`),
 active-run occupancy (`calyx run ps`), or reachability failures
 (`calyx self health`).
@@ -480,6 +488,11 @@ Versioned daemon install model:
   `/v1/admin/health`, promoted build from `installs/current`, and clone HEAD from
   `git rev-parse HEAD`. `calyx self freshness --json` classifies
   `clone_not_promoted` and `promoted_not_restarted` distinctly.
+- Fleet health, drift, freshness, upgrade, and convergence status all use the
+  same enrolled-host topology resolver. Each fleet read/plan/receipt names the
+  snapshot commit and digest. Desired-active unreachable hosts are
+  `unavailable` and non-green; withdrawn hosts are visible only in the separate
+  `excluded_withdrawn` section and are never upgrade targets.
 - **State-schema drift is the default fleet state and must be read, not
   assumed.** A host's migration ledger only advances when something runs there,
   so quiet hosts fall behind silently; on 2026-07-27 the fleet was running four

@@ -50,10 +50,13 @@ import {
   resolveRunIntent,
   RunAlreadyExistsError,
   RunNotFoundError,
-  RunService,
   type CalyxStreamEvent,
   type RunServiceDependencies,
 } from "@polli-labs/calyx-run-service";
+import {
+  RunService,
+  passingTestWorkloadAdmissionReceipt,
+} from "./support/test-run-service.js";
 import {
   EVENT_STREAM_IDLE_TIMEOUT_MS,
   CALYX_RUN_LAUNCH_ACCEPT_V1,
@@ -103,6 +106,7 @@ const BUILD_INFO = {
   branch: "main",
   dirty: false,
 };
+const TOPOLOGY_PROJECTION_SHA256 = "a".repeat(64);
 
 function makeReceipt(spec: RunSpec): RunReceipt {
   const now = new Date().toISOString();
@@ -221,6 +225,7 @@ function createServerOptions(
   registryRoot: string,
   options: {
     advertisedHost?: string;
+    actualHost?: string;
     stateStoreOptions?: StateOpenOptions;
     messageHostAliases?: Readonly<Record<string, string>>;
     reconcileIntervalMs?: number | false;
@@ -251,6 +256,7 @@ function createServerOptions(
     ],
     host: "127.0.0.1",
     advertisedHost,
+    hostname: () => options.actualHost ?? "blade",
     port: 0,
     service,
     registryRoot,
@@ -1301,6 +1307,7 @@ describe("run server", () => {
         body: JSON.stringify({
           schema_version: "calyx.run-launch-request/v1",
           idempotency_key: "invalid-unicode",
+          topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
           intent: invalidUnicodeIntent,
         }),
       });
@@ -1393,6 +1400,7 @@ describe("run server", () => {
       const payload = JSON.stringify({
         schema_version: "calyx.run-launch-request/v1",
         idempotency_key: "json-whitespace",
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
         intent,
       });
       const legalBoundaryWhitespace = await rawHttpRequest(endpoint, {
@@ -2725,6 +2733,7 @@ describe("run server", () => {
       const launchRequest: RunLaunchRequest = {
         schema_version: "calyx.run-launch-request/v1",
         idempotency_key: "admin-observation-contract",
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
         intent: service.createIntent({
           run_id: "run:admin-observation-contract",
           host: "local",
@@ -2878,6 +2887,53 @@ describe("run server", () => {
       const internalReconcile = await internalReconcileResponse.json() as { rebuilt: string[]; repair_pending: string[] };
       expect(internalReconcile.rebuilt).toEqual(expect.any(Array));
       expect(internalReconcile.repair_pending).toEqual(expect.any(Array));
+    } finally {
+      await handle.close();
+    }
+  });
+
+  test("returns a typed topology refusal before the HTTP launch path creates a run", async () => {
+    const service = new RunService({ runsRoot, subscribers: [] }, buildDeps());
+    const handle = await startRunServer(createServerOptions(service, registryRoot));
+    const intent = service.createIntent({
+      run_id: "run-http-stale-topology",
+      host: "local",
+      prompt: "Stale topology",
+      require_execplan: false,
+    });
+
+    try {
+      const response = await fetch(`${handle.url}/v1/admin/runs`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer secret-token",
+          "content-type": "application/json",
+          accept: CALYX_RUN_LAUNCH_ACCEPT_V1,
+        },
+        body: JSON.stringify({
+          schema_version: "calyx.run-launch-request/v1",
+          idempotency_key: "http-stale-topology",
+          topology_projection_sha256: "d".repeat(64),
+          intent,
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: {
+          code: "workload_admission_fenced",
+          retryable: false,
+          details: {
+            reason: "topology_mismatch",
+            failed_surface: "topology",
+            admission: "open",
+            planned_topology_projection_sha256: "d".repeat(64),
+            accepted_topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
+            next_action: expect.stringContaining("Retry"),
+          },
+        },
+      });
+      await expect(service.getRunRecord(intent.run_id)).resolves.toBeUndefined();
     } finally {
       await handle.close();
     }
@@ -3162,6 +3218,7 @@ describe("run server", () => {
         schema_version: "calyx.run-launch-request/v1",
         intent: { ...intent, run_id: "../portable-run-escape" },
         idempotency_key: traversalKey,
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       });
       expect(traversal.status).toBe(400);
       expect(await traversal.json()).toMatchObject({ error: { code: "invalid_request" } });
@@ -3191,6 +3248,7 @@ describe("run server", () => {
           schema_version: "calyx.run-launch-request/v1",
           intent: hostileIntent,
           idempotency_key: idempotencyKey,
+          topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
         });
         expect(mismatch.status, requestedHost).toBe(409);
         expect(await mismatch.json(), requestedHost).toMatchObject({
@@ -3221,6 +3279,7 @@ describe("run server", () => {
         schema_version: "calyx.run-launch-request/v1",
         intent,
         idempotency_key: "portable-launch-1",
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       };
       const unnamed = await post(body, "");
       expect(unnamed.status).toBe(406);
@@ -3277,13 +3336,18 @@ describe("run server", () => {
         const sentIntent = JSON.parse(JSON.stringify(intent)) as Record<string, unknown>;
         expect(binding).toEqual({
           asserted_actor: "operator:one",
-          request_hash: hashCanonicalJcs({ schema_version: "calyx.run-launch-request/v1", intent: sentIntent }),
+          request_hash: hashCanonicalJcs({
+            schema_version: "calyx.run-launch-request/v1",
+            intent: sentIntent,
+            topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
+          }),
         });
         expect(binding.request_hash).not.toBe(hashCanonicalJcs({ intent: sentIntent }));
         expect(binding.request_hash).not.toBe(hashCanonicalJcs({
           schema_version: "calyx.run-launch-request/v1",
           intent: sentIntent,
           detached: true,
+          topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
         }));
       } finally {
         opened.db.close();
@@ -3299,6 +3363,16 @@ describe("run server", () => {
       const missingKey = await post({ schema_version: "calyx.run-launch-request/v1", intent });
       expect(missingKey.status).toBe(400);
       expect(await missingKey.json()).toMatchObject({ error: { code: "idempotency_key_required" } });
+
+      const missingTopologyProjection = await post({
+        schema_version: "calyx.run-launch-request/v1",
+        idempotency_key: "portable-launch-missing-topology",
+        intent,
+      });
+      expect(missingTopologyProjection.status).toBe(400);
+      expect(await missingTopologyProjection.json()).toMatchObject({
+        error: { code: "topology_projection_required" },
+      });
 
       const conflictingRunId = await post({ ...body, idempotency_key: "portable-launch-2" });
       expect(conflictingRunId.status).toBe(409);
@@ -3362,6 +3436,86 @@ describe("run server", () => {
     }
   });
 
+  test("portable launch returns a declared retryable 503 while admission is contended", async () => {
+    let blockAdmission = false;
+    let admissionStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      admissionStarted = resolve;
+    });
+    let releaseAdmission!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const stateStoreOptions = {
+      env: { ...process.env, CALYX_STATE_HOME: join(runsRoot, "portable-launch-busy-state") },
+    };
+    const service = new RunService({
+      runsRoot,
+      workloadAdmission: {
+        acquireTimeoutMs: 5,
+        reconcile: async ({ host }) => {
+          if (blockAdmission) {
+            admissionStarted();
+            await released;
+          }
+          return passingTestWorkloadAdmissionReceipt(host);
+        },
+      },
+    }, buildDeps());
+    const handle = await startRunServer(createServerOptions(service, registryRoot, {
+      advertisedHost: "blade",
+      stateStoreOptions,
+    }));
+    const serverUrl = handle.url.replace("http://blade:", "http://127.0.0.1:");
+    const intent = service.createIntent({
+      run_id: "run-portable-admission-busy",
+      host: "local",
+      prompt: "Retry after admission contention",
+      require_execplan: false,
+    });
+
+    blockAdmission = true;
+    const heldAdmission = service.reconcileWorkloadAdmission();
+    await started;
+    try {
+      const response = await fetch(`${serverUrl}/v1/admin/runs`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer secret-token",
+          "content-type": "application/json",
+          accept: CALYX_RUN_LAUNCH_ACCEPT_V1,
+        },
+        body: JSON.stringify({
+          schema_version: "calyx.run-launch-request/v1",
+          idempotency_key: "portable-launch-admission-busy",
+          topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
+          intent,
+        }),
+      });
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        error: {
+          schema_version: "calyx.error/v1",
+          code: "workload_admission_busy",
+          retryable: true,
+          details: {
+            reason: "admission_evidence_missing",
+            failed_surface: "admission_evidence",
+            admission: "open",
+            planned_topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
+            accepted_topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
+          },
+        },
+      });
+      await expect(service.getRunRecord(intent.run_id)).resolves.toBeUndefined();
+    } finally {
+      releaseAdmission();
+      await heldAdmission;
+      await handle.close();
+    }
+  });
+
   test("portable run replay preserves the first creator after binding commits before launch", async () => {
     const stateStoreOptions = { env: { ...process.env, CALYX_STATE_HOME: join(runsRoot, "portable-launch-crash-state") } };
     const service = new RunService({ runsRoot }, buildDeps());
@@ -3382,6 +3536,7 @@ describe("run server", () => {
       schema_version: "calyx.run-launch-request/v1",
       intent,
       idempotency_key: "portable-crash-binding",
+      topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
     };
     const post = (actor: string) => fetch(`${handle.url}/v1/admin/runs`, {
       method: "POST",
@@ -3461,7 +3616,11 @@ describe("run server", () => {
       worktree_path: join(runsRoot, "original-resume-worktree"),
       worktree_source: "activity_inventory_cwd" as const,
     };
-    const requestHash = hashCanonicalJcs({ schema_version: "calyx.run-launch-request/v1", intent: rawIntent });
+    const requestHash = hashCanonicalJcs({
+      schema_version: "calyx.run-launch-request/v1",
+      intent: rawIntent,
+      topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
+    });
     const admissionIdentity = hashCanonicalJcs({
       domain: "calyx.admin.run.launch-idempotency/v1",
       subject: "test-control-plane",
@@ -3523,6 +3682,7 @@ describe("run server", () => {
         body: JSON.stringify({
           schema_version: "calyx.run-launch-request/v1",
           idempotency_key: "portable-resume-drift",
+          topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
           intent: rawIntent,
         }),
       });
@@ -3651,6 +3811,56 @@ describe("run server", () => {
     } finally {
       reconcileSpy.mockRestore();
       await handle.close();
+    }
+  });
+
+  test("boot admission contention preserves the fenced management listener", async () => {
+    let admissionStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      admissionStarted = resolve;
+    });
+    let releaseAdmission!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const service = new RunService({
+      runsRoot,
+      workloadAdmission: {
+        acquireTimeoutMs: 5,
+        reconcile: async ({ host }) => {
+          admissionStarted();
+          await released;
+          return passingTestWorkloadAdmissionReceipt(host);
+        },
+      },
+    }, buildDeps());
+    const heldAdmission = service.reconcileWorkloadAdmission();
+    await started;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let handle: Awaited<ReturnType<typeof startRunServer>> | undefined;
+    try {
+      handle = await startRunServer(createServerOptions(service, registryRoot));
+      const health = await fetch(`${handle.url}/v1/internal/health`, {
+        headers: { authorization: "Bearer self-daemon-token" },
+      });
+
+      expect(health.status).toBe(200);
+      expect(await health.json()).toMatchObject({
+        workload_admission: {
+          admission: "fenced",
+          reason: "admission_evidence_missing",
+          failed_surface: "admission_evidence",
+        },
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("serving with the current fenced decision"),
+        expect.stringContaining("Workload admission is busy"),
+      );
+    } finally {
+      releaseAdmission();
+      await heldAdmission;
+      await handle?.close();
+      warnSpy.mockRestore();
     }
   });
 
@@ -4503,6 +4713,7 @@ describe("run server", () => {
       host: "blade",
       backend: "codex",
       resume_session_id: "session-run-admission",
+      worktree_path: runsRoot,
       require_execplan: false,
     }));
     const submitSpy = vi.spyOn(service, "submitDetached");
@@ -4962,7 +5173,7 @@ describe("run server", () => {
     const interactiveHome = await mkdtemp(join(tmpdir(), "calyx-binary-order-interactive-home-"));
     const service = new RunService({ runsRoot, interactiveHomeDir: interactiveHome }, buildDeps());
     const createdAt = "2026-05-09T12:03:00.000Z";
-    for (const runId of ["run-a-tie", "run-A-tie"]) {
+    for (const runId of ["run-z-tie", "run-A-tie"]) {
       const record = await service.initializeRun(service.createIntent({
         run_id: runId,
         host: "local",
@@ -4995,7 +5206,7 @@ describe("run server", () => {
         { headers: { authorization: "Bearer secret-token" } },
       );
       const second = await secondResponse.json() as { runs: Array<{ run_id: string }> };
-      expect(second.runs.map((run) => run.run_id)).toEqual(["run-a-tie"]);
+      expect(second.runs.map((run) => run.run_id)).toEqual(["run-z-tie"]);
     } finally {
       await handle.close();
       await rm(interactiveHome, { recursive: true, force: true });
@@ -5912,6 +6123,71 @@ describe("run server", () => {
       expect(firstTurnBody.turns).toHaveLength(1);
       expect(firstTurnBody.next_cursor).toBeTruthy();
 
+      const newestMessages = await fetch(
+        `${handle.url}/v1/activity/${encodeURIComponent(activityId)}/messages?limit=2&order=newest_first`,
+        { headers: auth },
+      );
+      expect(newestMessages.status).toBe(200);
+      const newestMessageBody = await newestMessages.json() as {
+        messages: Array<{ id: string; text?: string }>;
+        truncated: boolean;
+        next_cursor?: string;
+      };
+      expect(newestMessageBody.messages).toMatchObject([
+        { text: "four" },
+        { text: expect.stringContaining("three") },
+      ]);
+      expect(newestMessageBody.truncated).toBe(true);
+      expect(newestMessageBody.next_cursor).toBeTruthy();
+
+      const olderMessages = await fetch(
+        `${handle.url}/v1/activity/${encodeURIComponent(activityId)}/messages?limit=2&order=newest_first&cursor=${encodeURIComponent(newestMessageBody.next_cursor!)}`,
+        { headers: auth },
+      );
+      expect(olderMessages.status).toBe(200);
+      const olderMessageBody = await olderMessages.json() as {
+        messages: Array<{ id: string; text?: string }>;
+        truncated: boolean;
+        next_cursor?: string;
+      };
+      expect(olderMessageBody.messages).toMatchObject([
+        { text: "two" },
+        { text: expect.stringContaining("one") },
+      ]);
+      expect(olderMessageBody.truncated).toBe(false);
+      expect(olderMessageBody.next_cursor).toBeUndefined();
+
+      const mismatchedOrder = await fetch(
+        `${handle.url}/v1/activity/${encodeURIComponent(activityId)}/messages?limit=2&cursor=${encodeURIComponent(newestMessageBody.next_cursor!)}`,
+        { headers: auth },
+      );
+      expect(mismatchedOrder.status).toBe(400);
+      expect(await mismatchedOrder.json()).toMatchObject({ error: { code: "invalid_request" } });
+
+      const newestTurns = await fetch(
+        `${handle.url}/v1/activity/${encodeURIComponent(activityId)}/turns?limit=1&order=newest_first`,
+        { headers: auth },
+      );
+      expect(newestTurns.status).toBe(200);
+      const newestTurnBody = await newestTurns.json() as {
+        turns: Array<{ index: number }>;
+        truncated: boolean;
+        next_cursor?: string;
+      };
+      expect(newestTurnBody.turns).toEqual([expect.objectContaining({ index: 3 })]);
+      expect(newestTurnBody.truncated).toBe(true);
+      expect(newestTurnBody.next_cursor).toBeTruthy();
+
+      const olderTurns = await fetch(
+        `${handle.url}/v1/activity/${encodeURIComponent(activityId)}/turns?limit=1&order=newest_first&cursor=${encodeURIComponent(newestTurnBody.next_cursor!)}`,
+        { headers: auth },
+      );
+      expect(olderTurns.status).toBe(200);
+      expect(await olderTurns.json()).toMatchObject({
+        truncated: true,
+        turns: [expect.objectContaining({ index: 2 })],
+      });
+
       const firstAttachments = await fetch(
         `${handle.url}/v1/activity/${encodeURIComponent(activityId)}/attachments?limit=1`,
         { headers: auth },
@@ -6212,6 +6488,20 @@ describe("run server", () => {
       expect(secondMessageBody).not.toHaveProperty("returned_messages");
       expect(secondMessageBody.next_cursor).toBeUndefined();
       expect(secondMessageBody.messages[0]?.id).not.toBe(firstMessageBody.messages[0]?.id);
+
+      const newestVisibleMessages = await fetch(
+        `${handle.url}/v1/activity/${encodeURIComponent(activityId)}/messages?order=newest_first&limit=2`,
+        { headers: auth },
+      );
+      expect(newestVisibleMessages.status).toBe(200);
+      const newestVisibleBody = await newestVisibleMessages.json() as {
+        total_messages: number;
+        matched_messages: number;
+        messages: Array<{ role: string; text?: string }>;
+      };
+      expect(newestVisibleBody).toMatchObject({ total_messages: 2, matched_messages: 2 });
+      expect(newestVisibleBody.messages.map((message) => message.role)).toEqual(["assistant", "human"]);
+      expect(JSON.stringify(newestVisibleBody)).not.toMatch(/hidden-(?:session|harness|tool)-image/i);
 
       for (const [label, sourceLine, privateText] of [
         ["hidden harness", 2, "AGENTS.md instructions"],
@@ -7376,6 +7666,14 @@ describe("run server", () => {
         },
         active_runs: 0,
         active_run_ids: [],
+        workload_admission: {
+          admission: "open",
+          accepted_topology: { projection_sha256: TOPOLOGY_PROJECTION_SHA256 },
+          gate_receipt: {
+            profile: "d1-interim-topology-reachability-build-schema",
+            evaluated_surfaces: ["topology", "reachability", "running", "state_schema"],
+          },
+        },
         maintenance_mode: false,
         supports_features: [],
       });
@@ -7810,7 +8108,7 @@ describe("run server", () => {
 
     const service = new RunService({ runsRoot }, buildDeps());
     const handle = await startRunServer({
-      ...createServerOptions(service, registryRoot),
+      ...createServerOptions(service, registryRoot, { actualHost: localHost }),
       runtimeConfigRoots: { managedConfigsRoot, liveHome },
     });
 
@@ -7866,7 +8164,7 @@ describe("run server", () => {
         },
         body: JSON.stringify(requestBody),
       });
-      expect(response.status).toBe(200);
+      expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
 
       const payload = await response.json() as {
         backend: string;
@@ -7984,7 +8282,7 @@ describe("run server", () => {
         },
         body: JSON.stringify(requestBody),
       });
-      expect(response.status).toBe(200);
+      expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
       const payload = await response.json() as { backend: string; requestedHost: string; summary: { total: number } };
       expect(payload.backend).toBe("runtime-config");
       expect(payload.requestedHost).toBe("worm");

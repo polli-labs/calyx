@@ -90,11 +90,19 @@ export {
   selfUpgradeOperationPath,
   selfUpgradeOperationPhaseSchema,
   selfUpgradeOperationRecordSchema,
+  selfUpgradeOperationTopologySnapshotSchema,
   selfUpgradeOperationTransitionSchema,
   selfUpgradeReceiptLocatorSchema,
   selfUpgradeRelayModeSchema,
   selfUpgradeTransitionId,
 } from "./self-upgrade-operation";
+export {
+  FLEET_CONVERGENCE_CHECK_SCHEMA_VERSION,
+  fleetConvergenceToolchainCheckSchema,
+} from "./fleet-convergence-check";
+export type {
+  FleetConvergenceToolchainCheck,
+} from "./fleet-convergence-check";
 export type {
   ClaimSelfUpgradeOperationOptions,
   DiscoverSelfUpgradeOperationOptions,
@@ -111,6 +119,7 @@ export type {
   SelfUpgradeOperationRecord,
   SelfUpgradeOperationRunningState,
   SelfUpgradeOperationTransition,
+  SelfUpgradeOperationTopologySnapshot,
   SelfUpgradeRelayMode,
   SelfUpgradeReceiptLocator,
   SelfUpgradeOperationWriter,
@@ -409,7 +418,6 @@ export {
   agentsInfraEnvVar,
   doctorRepoRegistry,
   formatRepoRegistryRootError,
-  listRunServeHosts,
   readHostsTruth,
   resolveAgentsInfraRoot,
   resolveCurrentHostAlias,
@@ -425,8 +433,51 @@ export type {
   RepoRegistryDoctorOptions,
   RepoTruthEntry,
   ResolvedRepoIdentity,
-  RunServeHostTarget,
 } from "./agents-infra";
+export {
+  FLEET_TOPOLOGY_EXPECTED_SURFACES,
+  FLEET_TOPOLOGY_RESOLVER_IDENTITY,
+  FLEET_TOPOLOGY_SNAPSHOT_SCHEMA_VERSION,
+  FLEET_TOPOLOGY_SOURCE_REPOSITORY,
+  FLEET_TOPOLOGY_TARGETS_SCHEMA_VERSION,
+  FleetTopologyAuthorityError,
+  loadFleetTopologySnapshot,
+  resolveFleetTopologyTargets,
+} from "./fleet-topology";
+export {
+  WORKLOAD_ADMISSION_DECISION_SCHEMA_VERSION,
+  WORKLOAD_ADMISSION_FENCE_REASONS,
+  WORKLOAD_ADMISSION_GATE_RECEIPT_SCHEMA_VERSION,
+  WORKLOAD_ADMISSION_INTERIM_DEFERRED_SURFACES,
+  WORKLOAD_ADMISSION_INTERIM_PROFILE,
+  WORKLOAD_ADMISSION_INTERIM_SURFACES,
+  WORKLOAD_ADMISSION_TARGET_BUNDLE_SCHEMA_VERSION,
+  WorkloadAdmissionEvidenceError,
+  createInterimWorkloadAdmissionReconciler,
+} from "./workload-admission";
+export type {
+  InterimWorkloadAdmissionReconcilerOptions,
+  WorkloadAdmissionDecisionV1,
+  WorkloadAdmissionFenceReason,
+  WorkloadAdmissionGateReceiptV1,
+  WorkloadAdmissionReconcileRequest,
+  WorkloadAdmissionReconciler,
+  WorkloadAdmissionTargetBundleV1,
+  WorkloadAdmissionTopologyIdentityV1,
+} from "./workload-admission";
+export type {
+  FleetTopologyAuthorityReason,
+  FleetTopologyCatchUpPolicy,
+  FleetTopologyDesiredMembership,
+  FleetTopologyExpectedSurface,
+  FleetTopologyHostRecord,
+  FleetTopologyResolutionIntent,
+  FleetTopologySnapshotV1,
+  FleetTopologyTarget,
+  FleetTopologyTargetsV1,
+  FleetTopologyValidationIssue,
+  LoadFleetTopologySnapshotOptions,
+} from "./fleet-topology";
 export {
   adoptInstructionSurfaces,
   applyInstructionSurfaces,

@@ -18,7 +18,7 @@ import {
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { MessageOutboxForwarder } from "../message-outbox-forwarder.js";
-import { RunService } from "../service.js";
+import { RunService } from "./support/test-run-service.js";
 import type { DeliveryV1Fetch } from "../delivery.js";
 
 const ENV_KEYS = ["CALYX_STATE_HOME", "CALYX_STATE_DB"] as const;

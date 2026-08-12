@@ -23,6 +23,7 @@ const requestHeaders = {
   "x-calyx-request-id": "req_00000000-0000-4000-8000-000000000001",
 };
 const recoveryReceiptIntegrityKey = Uint8Array.from({ length: 32 }, (_value, index) => index);
+const TOPOLOGY_PROJECTION_SHA256 = "a".repeat(64);
 const fixtureBearerTokenContract = {
   encoding: "ascii",
   max_bytes: 4_096,
@@ -2703,6 +2704,7 @@ describe("generated Calyx client", () => {
           },
         },
         idempotency_key: "sensitive-recovery",
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       },
     })).resolves.toMatchObject({
       ok: false,
@@ -3250,6 +3252,7 @@ describe("generated Calyx client", () => {
           host_process: { argv: ["echo", undefined] },
         },
         idempotency_key: "undefined-array",
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       } as never,
     })).rejects.toThrow(/must not contain undefined/u);
     expect(tokenProvider).not.toHaveBeenCalled();
@@ -4012,6 +4015,7 @@ describe("generated Calyx client", () => {
           template_vars: { ALPHA: "one", ZETA: "two" },
         },
         schema_version: "calyx.run-launch-request/v1",
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       });
       return new Response(JSON.stringify({
         schema_version: "calyx.run-launch-result/v1",
@@ -4052,6 +4056,7 @@ describe("generated Calyx client", () => {
           unknown_sibling: "must not cross",
         },
         idempotency_key: "launch-fixture",
+        topology_projection_sha256: TOPOLOGY_PROJECTION_SHA256,
       } as never,
     })).resolves.toMatchObject({
       ok: true,
