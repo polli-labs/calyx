@@ -443,9 +443,12 @@ definitions declare it as an `artifact_writes` entry with
 turning it into a model-written file requirement.
 
 Capture-bearing runs currently require Codex, one ephemeral turn, and
-`sandbox: read-only`. They use config-isolated `codex exec` with the runner's
-output schema, `--ignore-user-config`, `--ignore-rules`, and
-`-c project_doc_max_bytes=0`; they do not add the run directory or inherit user
+`sandbox: read-only`. The compiler preserves the forbidden workspace-mutation
+posture in agent-definition metadata instead of caller-controlled
+`backend_options.env`; after spawn-gate validation, the runner maps that posture
+into the Codex child environment. They use config-isolated `codex exec` with
+the runner's output schema, `--ignore-user-config`, `--ignore-rules`, and `-c
+project_doc_max_bytes=0`; they do not add the run directory or inherit user
 MCP/app tools. They reject caller-supplied `backend_options.env`, resolve the
 provider executable against the runner-managed path before assembling the
 child environment, and enforce `max_bytes` incrementally while reading stdout.

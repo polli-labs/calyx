@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, truncate, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -300,7 +300,7 @@ describe("self-upgrade-operation/v1", () => {
     });
     const written = writer.operationPath;
 
-    expect(written).toBe(path.join(root, `${record.operation_id}.json`));
+    expect(written).toBe(path.join(await realpath(root), `${record.operation_id}.json`));
     expect(await readSelfUpgradeOperation(root, record.operation_id)).toEqual(record);
     expect(() => bindSelfUpgradeOperationTarget(record, "b".repeat(40), "2026-07-21T08:00:02.000Z"))
       .toThrow(/already bound/u);

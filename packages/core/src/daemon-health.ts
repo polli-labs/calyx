@@ -1,6 +1,7 @@
 import type { CalyxDaemonBuildSummary } from "./daemon-registry";
 import { CALYX_RUN_SERVICE_DAEMON_KIND } from "./daemon-registry";
 import type { StateSchemaStatus } from "./state/migrations";
+import type { WorkloadAdmissionDecisionV1 } from "./workload-admission";
 
 export const CALYX_DAEMON_HEALTH_SCHEMA_VERSION = "daemon-health/v1";
 export const CALYX_DAEMON_HEALTH_PROTOCOL_EPOCH = 1;
@@ -68,6 +69,7 @@ export interface CalyxDaemonHealth {
   state_schema?: CalyxDaemonStateSchemaSummary;
   active_runs: number;
   active_run_ids?: string[];
+  workload_admission: WorkloadAdmissionDecisionV1;
   maintenance_mode: boolean;
   supports_features: string[];
   interactive_sessions?: CalyxDaemonInteractiveSessionSummary;

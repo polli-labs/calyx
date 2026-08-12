@@ -63,6 +63,13 @@ import {
   validateApiProvenance,
   withSqliteBusyRetry,
   withSqliteMutex,
+  WORKLOAD_ADMISSION_DECISION_SCHEMA_VERSION,
+  WORKLOAD_ADMISSION_GATE_RECEIPT_SCHEMA_VERSION,
+  WORKLOAD_ADMISSION_INTERIM_DEFERRED_SURFACES,
+  WORKLOAD_ADMISSION_INTERIM_PROFILE,
+  WORKLOAD_ADMISSION_INTERIM_SURFACES,
+  WORKLOAD_ADMISSION_TARGET_BUNDLE_SCHEMA_VERSION,
+  WorkloadAdmissionEvidenceError,
 } from "@polli-labs/calyx-core";
 import type {
   ActivityMarkTargetKind,
@@ -77,6 +84,10 @@ import type {
   RunIndexProjection,
   StateDriverDatabase,
   StateOpenOptions,
+  WorkloadAdmissionDecisionV1,
+  WorkloadAdmissionFenceReason,
+  WorkloadAdmissionGateReceiptV1,
+  WorkloadAdmissionReconciler,
 } from "@polli-labs/calyx-core";
 import { AgentRunnerKernel, HostProcessKernel, type ExecutionKernel } from "./kernel.js";
 import {
@@ -104,9 +115,11 @@ import {
   hasSynthesizedLegacyAdmission,
   legacyDeadSettlementAuthorityId,
   legacyResourceSettlementAuthorityId,
+  issueRunCreationAdmission,
   RunCreationConflictError,
   RunListSnapshotChangedError,
   RunStore,
+  type RunCreationAdmission,
   defaultRunsRoot,
   isRunResourceTerminal,
   isTerminalState,
@@ -187,6 +200,7 @@ import type {
   RunActivityEntry,
   RunHealthSnapshot,
   RunIntent,
+  RunExecutionAdmissionRefusal,
   RunLaunchState,
   RunLaunchMode,
   RunLaunchResult,
@@ -344,6 +358,15 @@ export interface RunServiceOptions {
   subscribers?: RunSubscriber[];
   runtimeAdapterRegistry?: RuntimeAdapterRegistry;
   exitClassifierPipeline?: ClassifierPipeline;
+  /**
+   * Current-authority evidence provider for the universal workload boundary.
+   * Absence is intentionally fail-closed; only a validated receipt opens it.
+   */
+  workloadAdmission?: {
+    reconcile: WorkloadAdmissionReconciler;
+    /** Bound admission-lock wait; callers receive a typed busy refusal. */
+    acquireTimeoutMs?: number | undefined;
+  } | undefined;
   /**
    * Optional projection callback. When set, every appended
    * `CalyxStreamEvent` is mirrored into the SQLite orchestration ledger
@@ -548,10 +571,31 @@ export interface LaunchRunOptions {
   detached?: boolean;
   nextTurnInput?: RunNextTurnInput | undefined;
   provenance?: ApiProvenanceV1 | undefined;
+  /**
+   * Runs after admission is durable but before execution dispatch. Throwing
+   * keeps the admitted run queued and prevents the external execution effect.
+   */
+  onAdmitted?: ((record: RunRecord) => Promise<void>) | undefined;
+  /**
+   * Runs only after first-execution ownership is held and the queued-run
+   * admission recheck passes. Throwing prevents the external execution effect.
+   */
+  onExecutionAdmitted?: ((record: RunRecord) => Promise<void>) | undefined;
   /** API callers bind retries to their durable idempotency key domain. */
   admissionIdentity?: string | undefined;
   /** API callers supply the hash already bound in their idempotency ledger. */
   requestHash?: string | undefined;
+  /** Fleet launch authority the conductor planned against. */
+  plannedTopologyProjectionSha256?: string | undefined;
+}
+
+interface InitializeRunOptions {
+  creationProvenance?: ApiProvenanceV1 | undefined;
+  launchMode?: RunLaunchMode | undefined;
+  admissionIdentity?: string | undefined;
+  requestHash?: string | undefined;
+  acceptedAt?: string | undefined;
+  plannedTopologyProjectionSha256?: string | undefined;
 }
 
 export interface StopRunOptions {
@@ -639,10 +683,62 @@ export class RunExecutionSettlementPendingError extends Error {
   }
 }
 
+export class WorkloadAdmissionFencedError extends Error {
+  readonly code = "workload_admission_fenced" as const;
+  readonly reason: WorkloadAdmissionFenceReason;
+  readonly failedSurface: string;
+  readonly nextAction: string;
+  readonly decision: WorkloadAdmissionDecisionV1;
+
+  constructor(args: {
+    reason: WorkloadAdmissionFenceReason;
+    failedSurface: string;
+    nextAction: string;
+    decision: WorkloadAdmissionDecisionV1;
+  }) {
+    super(
+      `Workload admission refused (${args.reason}) at ${args.failedSurface}. `
+      + `Next action: ${args.nextAction}`,
+    );
+    this.name = "WorkloadAdmissionFencedError";
+    this.reason = args.reason;
+    this.failedSurface = args.failedSurface;
+    this.nextAction = args.nextAction;
+    this.decision = args.decision;
+  }
+}
+
+const WORKLOAD_ADMISSION_BUSY_NEXT_ACTION =
+  "Retry the same operation; workload-admission evaluation is currently busy.";
+
+export class WorkloadAdmissionBusyError extends Error {
+  readonly code = "workload_admission_busy" as const;
+  readonly reason = "admission_evidence_missing" as const;
+  readonly failedSurface = "admission_evidence" as const;
+  readonly nextAction = WORKLOAD_ADMISSION_BUSY_NEXT_ACTION;
+  readonly decision: WorkloadAdmissionDecisionV1;
+  readonly acquireTimeoutMs: number;
+
+  constructor(args: {
+    decision: WorkloadAdmissionDecisionV1;
+    acquireTimeoutMs: number;
+  }) {
+    super(
+      `Workload admission is busy after ${args.acquireTimeoutMs}ms. `
+      + `Next action: ${WORKLOAD_ADMISSION_BUSY_NEXT_ACTION}`,
+    );
+    this.name = "WorkloadAdmissionBusyError";
+    this.decision = args.decision;
+    this.acquireTimeoutMs = args.acquireTimeoutMs;
+  }
+}
+
 export interface ExecuteStoredRunOptions {
   nextTurnInput?: RunNextTurnInput | undefined;
   /** Internal worker observation used to make duplicate ownership losers exit cleanly. */
   onOwnershipResolved?: ((ownership: "acquired" | "contended") => void) | undefined;
+  /** Internal first-execution publication seam; invoked only by the mutex owner. */
+  onExecutionAdmitted?: ((record: RunRecord) => Promise<void>) | undefined;
 }
 
 type ReceiptRecoveryOutcome =
@@ -2999,6 +3095,7 @@ export class RunService {
   private infraErrorCensusCursor: string | undefined;
   private infraErrorCensusRefresh: Promise<void> | undefined;
   private totalServicedSinceStart = 0;
+  private workloadAdmissionState!: WorkloadAdmissionDecisionV1;
 
   constructor(options: RunServiceOptions = {}, deps: Partial<RunServiceDependencies> = {}) {
     this.store = new RunStore(options.runsRoot ?? defaultRunsRoot(), {
@@ -3040,6 +3137,11 @@ export class RunService {
       }),
       ...(deps.spawnWorker ? { spawnWorker: deps.spawnWorker } : {}),
     };
+    this.workloadAdmissionState = this.fencedWorkloadAdmissionDecision({
+      reason: "admission_evidence_missing",
+      failedSurface: "admission_evidence",
+      nextAction: "Run workload-admission reconciliation against current topology and target-bundle evidence.",
+    });
     this.subscribers = options.subscribers ?? makeDefaultSubscribers();
     const subscriberNames = new Set<string>();
     for (const subscriber of this.subscribers) {
@@ -4349,21 +4451,16 @@ export class RunService {
     }
   }
 
-  async initializeRun(
+  protected async initializeAdmittedRun(
+    admission: RunCreationAdmission,
     intent: RunIntent,
-    options: {
-      creationProvenance?: ApiProvenanceV1 | undefined;
-      launchMode?: RunLaunchMode | undefined;
-      admissionIdentity?: string | undefined;
-      requestHash?: string | undefined;
-      acceptedAt?: string | undefined;
-    } = {},
+    options: InitializeRunOptions = {},
   ): Promise<RunRecord> {
     await this.store.ensureRoot();
     const creationProvenance = optionalApiProvenance(options.creationProvenance);
     let record: RunRecord;
     try {
-      record = await this.store.createRun(intent, {
+      record = await this.store.createRun(admission, intent, {
         ...(creationProvenance ? { creationProvenance } : {}),
         launchMode: options.launchMode ?? "inline",
         admissionIdentity: options.admissionIdentity,
@@ -4379,6 +4476,23 @@ export class RunService {
     }
     await this.ensureLaunchAdmissionEvents(record, false);
     return record;
+  }
+
+  /**
+   * Protected test/internal seam that remains safe when re-publicized: it
+   * obtains a fresh one-shot capability beneath the universal boundary.
+   */
+  protected async initializeRun(
+    input: RunIntent,
+    options: InitializeRunOptions = {},
+  ): Promise<RunRecord> {
+    const admission = await this.withWorkloadAdmissionBoundary(async () => {
+      await this.reconcileWorkloadAdmissionUnserialized();
+      this.assertWorkloadAdmission(options.plannedTopologyProjectionSha256);
+      return issueRunCreationAdmission();
+    });
+    const intent = await this.applyResumeWorktreeDefaults(input);
+    return this.initializeAdmittedRun(admission, intent, options);
   }
 
   private async ensureLaunchAdmissionEvents(
@@ -4441,11 +4555,217 @@ export class RunService {
     }
   }
 
+  private fencedWorkloadAdmissionDecision(args: {
+    reason: WorkloadAdmissionFenceReason;
+    failedSurface: WorkloadAdmissionEvidenceError["failedSurface"];
+    nextAction: string;
+    accepted?: WorkloadAdmissionDecisionV1;
+  }): WorkloadAdmissionDecisionV1 {
+    const accepted = args.accepted;
+    const retained = accepted?.admission === "open"
+      ? {
+          last_accepted_topology: accepted.accepted_topology,
+          last_accepted_target_bundle: accepted.accepted_target_bundle,
+          last_gate_receipt: accepted.gate_receipt,
+        }
+      : accepted?.last_accepted_topology
+          && accepted.last_accepted_target_bundle
+          && accepted.last_gate_receipt
+        ? {
+            last_accepted_topology: accepted.last_accepted_topology,
+            last_accepted_target_bundle: accepted.last_accepted_target_bundle,
+            last_gate_receipt: accepted.last_gate_receipt,
+          }
+        : {};
+    return {
+      schema_version: WORKLOAD_ADMISSION_DECISION_SCHEMA_VERSION,
+      admission: "fenced",
+      reason: args.reason,
+      failed_surface: args.failedSurface ?? "admission_evidence",
+      next_action: args.nextAction,
+      ...retained,
+      decided_at: nowIso(this.deps.now),
+    };
+  }
+
+  private async withWorkloadAdmissionBoundary<T>(action: () => Promise<T>): Promise<T> {
+    const acquireTimeoutMs = this.options.workloadAdmission?.acquireTimeoutMs ?? 5_000;
+    try {
+      return await withSqliteMutex(
+        this.store.workloadAdmissionMutexPath(),
+        action,
+        { acquireTimeoutMs, queueInProcess: false },
+      );
+    } catch (error) {
+      if (error instanceof SqliteMutexBusyError) {
+        throw new WorkloadAdmissionBusyError({
+          decision: this.workloadAdmissionDecision(),
+          acquireTimeoutMs,
+        });
+      }
+      throw error;
+    }
+  }
+
+  private validateWorkloadAdmissionReceipt(
+    receipt: WorkloadAdmissionGateReceiptV1,
+    host: string,
+  ): void {
+    const invalid = (failedSurface: string, message: string): never => {
+      throw new WorkloadAdmissionEvidenceError({
+        reason: "admission_evidence_missing",
+        failedSurface: failedSurface === "admission_evidence"
+          ? "admission_evidence"
+          : failedSurface as WorkloadAdmissionGateReceiptV1["evaluated_surfaces"][number],
+        nextAction: "Regenerate the admission receipt from the current reconciler and retry.",
+        message,
+      });
+    };
+    if (
+      receipt.schema_version !== WORKLOAD_ADMISSION_GATE_RECEIPT_SCHEMA_VERSION
+      || receipt.profile !== WORKLOAD_ADMISSION_INTERIM_PROFILE
+    ) {
+      invalid("admission_evidence", "Unsupported workload-admission receipt contract or profile.");
+    }
+    if (
+      !isDeepStrictEqual(receipt.evaluated_surfaces, [...WORKLOAD_ADMISSION_INTERIM_SURFACES])
+      || !isDeepStrictEqual(receipt.deferred_surfaces, [...WORKLOAD_ADMISSION_INTERIM_DEFERRED_SURFACES])
+    ) {
+      invalid("admission_evidence", "The workload-admission receipt does not name the exact interim check set.");
+    }
+    if (normalizeHost(receipt.host) !== host || receipt.desired_membership !== "active") {
+      invalid("topology", `The workload-admission receipt is not bound to desired-active host ${host}.`);
+    }
+    if (
+      receipt.topology.schema_version !== "fleet-topology-snapshot/v1"
+      || receipt.topology.source_repository !== "polli-labs/agents-infra"
+      || !receipt.topology.source_commit.trim()
+      || !receipt.topology.projection_sha256.trim()
+      || receipt.checks.topology.status !== "pass"
+      || receipt.checks.topology.authority !== "authoritative"
+    ) {
+      invalid("topology", "The workload-admission receipt lacks authoritative topology identity.");
+    }
+    if (
+      receipt.target_bundle.schema_version !== WORKLOAD_ADMISSION_TARGET_BUNDLE_SCHEMA_VERSION
+      || !receipt.target_bundle.calyx_build.git_head.trim()
+      || !receipt.target_bundle.calyx_build.package_version.trim()
+      || !receipt.target_bundle.state_schema_target.trim()
+    ) {
+      invalid("running", "The workload-admission receipt lacks a complete target-bundle identity.");
+    }
+    if (
+      receipt.checks.running.status !== "pass"
+      || receipt.checks.running.dirty !== false
+      || receipt.checks.running.git_head !== receipt.target_bundle.calyx_build.git_head
+      || receipt.checks.running.package_version !== receipt.target_bundle.calyx_build.package_version
+    ) {
+      invalid("running", "The passing running-build evidence does not match the target bundle.");
+    }
+    if (
+      receipt.checks.reachability.status !== "pass"
+      || !["daemon_listener", "in_process_composition"].includes(receipt.checks.reachability.evidence)
+    ) {
+      invalid("reachability", "The workload-admission receipt lacks passing reachability evidence.");
+    }
+    if (
+      receipt.checks.state_schema.status !== "pass"
+      || receipt.checks.state_schema.current !== receipt.checks.state_schema.target
+      || receipt.checks.state_schema.target !== receipt.target_bundle.state_schema_target
+    ) {
+      invalid("state_schema", "The passing state-schema evidence does not match the target bundle.");
+    }
+    if (!Number.isFinite(Date.parse(receipt.issued_at))) {
+      invalid("admission_evidence", "The workload-admission receipt timestamp is invalid.");
+    }
+  }
+
+  private async reconcileWorkloadAdmissionUnserialized(): Promise<WorkloadAdmissionDecisionV1> {
+    const previouslyAccepted = this.workloadAdmissionState;
+    const reconciler = this.options.workloadAdmission?.reconcile;
+    if (!reconciler) {
+      this.workloadAdmissionState = this.fencedWorkloadAdmissionDecision({
+        reason: "admission_evidence_missing",
+        failedSurface: "admission_evidence",
+        nextAction: "Configure the workload-admission reconciler, then retry the launch.",
+        accepted: previouslyAccepted,
+      });
+      return this.workloadAdmissionState;
+    }
+    const host = normalizeHost(this.options.hostname ?? this.deps.hostname());
+    try {
+      const receipt = await reconciler({ host });
+      this.validateWorkloadAdmissionReceipt(receipt, host);
+      this.workloadAdmissionState = {
+        schema_version: WORKLOAD_ADMISSION_DECISION_SCHEMA_VERSION,
+        admission: "open",
+        accepted_topology: receipt.topology,
+        accepted_target_bundle: receipt.target_bundle,
+        gate_receipt: receipt,
+        decided_at: nowIso(this.deps.now),
+      };
+    } catch (error) {
+      const evidence = error instanceof WorkloadAdmissionEvidenceError
+        ? error
+        : new WorkloadAdmissionEvidenceError({
+            reason: "admission_evidence_missing",
+            failedSurface: "admission_evidence",
+            nextAction: "Restore workload-admission evidence, then retry the launch.",
+            message: error instanceof Error ? error.message : String(error),
+          });
+      this.workloadAdmissionState = this.fencedWorkloadAdmissionDecision({
+        reason: evidence.reason,
+        failedSurface: evidence.failedSurface,
+        nextAction: evidence.nextAction,
+        accepted: previouslyAccepted,
+      });
+    }
+    return this.workloadAdmissionState;
+  }
+
+  /** Current immutable workload-admission publication for health/status. */
+  workloadAdmissionDecision(): WorkloadAdmissionDecisionV1 {
+    return structuredClone(this.workloadAdmissionState);
+  }
+
+  /** The only action capable of replacing fenced boot state with an open receipt. */
+  reconcileWorkloadAdmission(): Promise<WorkloadAdmissionDecisionV1> {
+    return this.withWorkloadAdmissionBoundary(() => this.reconcileWorkloadAdmissionUnserialized());
+  }
+
+  private assertWorkloadAdmission(
+    plannedTopologyProjectionSha256: string | undefined,
+  ): void {
+    const decision = this.workloadAdmissionState;
+    if (decision.admission === "fenced") {
+      throw new WorkloadAdmissionFencedError({
+        reason: decision.reason,
+        failedSurface: decision.failed_surface,
+        nextAction: decision.next_action,
+        decision,
+      });
+    }
+    if (
+      plannedTopologyProjectionSha256 !== undefined
+      && plannedTopologyProjectionSha256 !== decision.accepted_topology.projection_sha256
+    ) {
+      throw new WorkloadAdmissionFencedError({
+        reason: "topology_mismatch",
+        failedSurface: "topology",
+        nextAction: "Retry the original launch command so it replans against the current authoritative topology digest.",
+        decision,
+      });
+    }
+  }
+
   private async admitLaunch(
     input: RunIntent,
     mode: RunLaunchMode,
     provenance: ApiProvenanceV1 | undefined,
-    binding: Pick<LaunchRunOptions, "admissionIdentity" | "requestHash"> = {},
+    binding: Pick<
+      LaunchRunOptions,
+      "admissionIdentity" | "requestHash" | "plannedTopologyProjectionSha256"
+    > = {},
   ): Promise<{ record: RunRecord; created: boolean }> {
     const requestHash = binding.requestHash ?? hashCanonicalJcs(input);
     const admissionIdentity = binding.admissionIdentity ?? hashCanonicalJcs({
@@ -4466,14 +4786,15 @@ export class RunService {
       return { record: existing, created: false };
     }
 
-    const intent = await this.applyResumeWorktreeDefaults(input);
-
-    const record = await this.initializeRun(intent, {
+    const record = await this.initializeRun(input, {
       ...(provenance ? { creationProvenance: provenance } : {}),
       launchMode: mode,
       admissionIdentity,
       requestHash,
       acceptedAt: nowIso(this.deps.now),
+      ...(binding.plannedTopologyProjectionSha256
+        ? { plannedTopologyProjectionSha256: binding.plannedTopologyProjectionSha256 }
+        : {}),
     });
     await this.ensureLaunchAdmissionEvents(record, true);
     return { record, created: true };
@@ -4826,7 +5147,11 @@ export class RunService {
 
   private async waitForExecutionRegistration(
     runId: string,
-    options: { timeoutMs?: number; provenance?: ApiProvenanceV1 } = {},
+    options: {
+      timeoutMs?: number;
+      provenance?: ApiProvenanceV1;
+      dispatchAttempt?: number;
+    } = {},
   ): Promise<RunRecord> {
     const deadline = Date.now() + (options.timeoutMs ?? 10_000);
     while (Date.now() <= deadline) {
@@ -4849,8 +5174,16 @@ export class RunService {
         );
         throw new Error(failed.summary);
       });
-      if (ownership.owned && isTerminalState(ownership.value.state)) {
-        return ownership.value;
+      if (ownership.owned) {
+        if (isTerminalState(ownership.value.state)) return ownership.value;
+        const refusal = ownership.value.launch.execution_admission_refusal;
+        if (
+          refusal
+          && options.dispatchAttempt !== undefined
+          && refusal.dispatch_attempt === options.dispatchAttempt
+        ) {
+          throw this.executionAdmissionRefusalError(refusal);
+        }
       }
       if (
         !ownership.owned
@@ -4864,6 +5197,74 @@ export class RunService {
     }
     throw new Error(
       `Detached worker for ${runId} did not durably register execution ownership before the dispatch deadline.`,
+    );
+  }
+
+  private executionAdmissionRefusalError(
+    refusal: RunExecutionAdmissionRefusal,
+  ): WorkloadAdmissionFencedError | WorkloadAdmissionBusyError {
+    return refusal.code === "workload_admission_busy"
+      ? new WorkloadAdmissionBusyError({
+          decision: refusal.decision,
+          acquireTimeoutMs: refusal.acquire_timeout_ms,
+        })
+      : new WorkloadAdmissionFencedError({
+          reason: refusal.reason,
+          failedSurface: refusal.failed_surface,
+          nextAction: refusal.next_action,
+          decision: refusal.decision,
+        });
+  }
+
+  private async publishExecutionAdmissionRefusal(
+    record: RunRecord,
+    error: WorkloadAdmissionFencedError | WorkloadAdmissionBusyError,
+  ): Promise<void> {
+    const refusedAt = nowIso(this.deps.now);
+    const commonRefusal = {
+      schema_version: "calyx.run-execution-admission-refusal/v1" as const,
+      dispatch_attempt: record.launch.dispatch_attempts,
+      refused_at: refusedAt,
+      reason: error.reason,
+      failed_surface: error.failedSurface,
+      next_action: error.nextAction,
+      decision: error.decision,
+    };
+    const refusal: RunExecutionAdmissionRefusal = error instanceof WorkloadAdmissionBusyError
+      ? {
+          ...commonRefusal,
+          code: "workload_admission_busy",
+          acquire_timeout_ms: error.acquireTimeoutMs,
+        }
+      : { ...commonRefusal, code: "workload_admission_fenced" };
+    const current = await this.store.readRunRecord(record.run_id);
+    if (!current) throw new Error(`Run record disappeared while refusing execution ${record.run_id}.`);
+    assertRunRecordIdentity(record.run_id, current);
+    if (current.state !== "queued") {
+      throw new Error(
+        `Run ${record.run_id} left queued state before its execution-admission refusal was durable.`,
+      );
+    }
+    const retryable: RunRecord = {
+      ...current,
+      launch: {
+        ...current.launch,
+        stage: "accepted",
+        execution_admission_refusal: refusal,
+      },
+      summary: `Run ${record.run_id} remains queued after a retryable execution-admission refusal.`,
+      updated_at: refusedAt,
+    };
+    await this.store.writeRunRecord(record.run_id, retryable);
+    await this.store.appendEvent(
+      record.run_id,
+      buildServiceEvent(
+        this.deps.now,
+        record.run_id,
+        "execution_admission_refused",
+        "Detached worker refused first execution before an external effect.",
+        { refusal },
+      ),
     );
   }
 
@@ -4955,6 +5356,7 @@ export class RunService {
           }
         }
         const admitted = await this.admitLaunch(intent, "detached", provenance, options);
+        await options.onAdmitted?.(admitted.record);
         let record = await this.store.readRunRecord(intent.run_id) ?? admitted.record;
         if (isTerminalState(record.state)) {
           return this.launchResult(record);
@@ -4988,6 +5390,7 @@ export class RunService {
         if (!ownershipProbe.owned) {
           return this.launchResult(await this.waitForExecutionRegistration(intent.run_id, {
             ...(provenance ? { provenance } : {}),
+            dispatchAttempt: record.launch.dispatch_attempts,
           }));
         }
         record = ownershipProbe.value.record;
@@ -5004,10 +5407,12 @@ export class RunService {
             "RunService detached submission requires a workerEntrypoint.",
           );
         }
+        const retryableLaunch = { ...record.launch };
+        delete retryableLaunch.execution_admission_refusal;
         record = {
           ...record,
           launch: {
-            ...record.launch,
+            ...retryableLaunch,
             stage: "dispatching",
             dispatch_attempts: record.launch.dispatch_attempts + 1,
             last_dispatch_at: nowIso(this.deps.now),
@@ -5042,6 +5447,7 @@ export class RunService {
         );
         const registered = await this.waitForExecutionRegistration(intent.run_id, {
           ...(provenance ? { provenance } : {}),
+          dispatchAttempt: record.launch.dispatch_attempts,
         });
         this.totalServicedSinceStart += 1;
         if (provenance) {
@@ -5083,6 +5489,7 @@ export class RunService {
           throw new RunExecutionSettlementPendingError(input.run_id);
         }
         const admitted = await this.admitLaunch(input, "inline", provenance, options);
+        await options.onAdmitted?.(admitted.record);
         let resolveOwnership!: (ownership: "acquired" | "contended") => void;
         let rejectOwnership!: (error: unknown) => void;
         const ownershipReady = new Promise<"acquired" | "contended">((resolve, reject) => {
@@ -5092,6 +5499,9 @@ export class RunService {
         const execution = this.executeStoredRun(admitted.record.run_id, {
           ...(options.nextTurnInput ? { nextTurnInput: options.nextTurnInput } : {}),
           onOwnershipResolved: resolveOwnership,
+          ...(options.onExecutionAdmitted
+            ? { onExecutionAdmitted: options.onExecutionAdmitted }
+            : {}),
         });
         void execution.catch(rejectOwnership);
         await ownershipReady;
@@ -5130,8 +5540,30 @@ export class RunService {
     }
     const result = await this.tryExecutionOwnership(
       runId,
-      () => {
+      async () => {
         options.onOwnershipResolved?.("acquired");
+        const ownedRecord = await this.store.readRunRecord(runId);
+        if (!ownedRecord) throw new Error(`Run record not found for ${runId}.`);
+        if (ownedRecord.state === "queued") {
+          try {
+            await this.withWorkloadAdmissionBoundary(async () => {
+              await this.reconcileWorkloadAdmissionUnserialized();
+              this.assertWorkloadAdmission(undefined);
+            });
+          } catch (error) {
+            if (
+              ownedRecord.launch.mode === "detached"
+              && (
+                error instanceof WorkloadAdmissionFencedError
+                || error instanceof WorkloadAdmissionBusyError
+              )
+            ) {
+              await this.publishExecutionAdmissionRefusal(ownedRecord, error);
+            }
+            throw error;
+          }
+          await options.onExecutionAdmitted?.(ownedRecord);
+        }
         return this.executeStoredRunOwned(runId, options);
       },
     );

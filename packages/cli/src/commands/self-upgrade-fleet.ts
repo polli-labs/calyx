@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { Writable } from "node:stream";
+import { satisfies, valid, validRange } from "semver";
 import { z } from "zod";
 import {
   adminOperationRoutes,
@@ -12,6 +13,7 @@ import {
 import {
   openStateStore,
   planStateMigrations,
+  readFleetConvergenceRow,
   upsertFleetConvergenceRow,
   applySelfUpgradeOperationTransition,
   appendSelfUpgradeOperationDurabilityIssue,
@@ -20,7 +22,7 @@ import {
   claimSelfUpgradeOperation,
   createSelfUpgradeOperation,
   defaultSelfUpgradeOperationRoot,
-  listRunServeHosts,
+  fleetConvergenceToolchainCheckSchema,
   openChildDirectoryDurable,
   openExistingDirectoryDurable,
   openPrivateDirectoryDurable,
@@ -36,9 +38,9 @@ import {
   selfUpgradeTransitionId,
 } from "@polli-labs/calyx-core";
 import type {
-  RunServeHostTarget,
   DurableDirectoryAnchor,
   DurableDirectoryOpenOptions,
+  FleetConvergenceToolchainCheck,
   SelfUpgradeHostPhaseTransition,
   SelfUpgradeOperationFinalRow,
   SelfUpgradeOperationRecord,
@@ -48,6 +50,8 @@ import type {
   SelfUpgradeOperationPhase,
   SelfUpgradeReceiptLocator,
   SelfUpgradeRelayMode,
+  FleetTopologyResolutionIntent,
+  FleetTopologyTargetsV1,
 } from "@polli-labs/calyx-core";
 import {
   defaultDaemonsRoot,
@@ -104,6 +108,13 @@ import {
   type SelfUpgradeStreamingExecOptions,
   type SelfUpgradeStreamingExecResult,
 } from "../self-upgrade-stream-io.js";
+import {
+  fleetTopologyOutput,
+  formatExcludedWithdrawn,
+  formatFleetTopologyIdentity,
+  resolveFleetTopologyForCommand,
+  type FleetTopologyOutput,
+} from "../fleet-topology.js";
 const DEFAULT_TARGET_REF = "origin/main";
 const DEFAULT_DRAIN_DEADLINE_MS = 10 * 60 * 1_000;
 const DEFAULT_COMMAND_MAX_BUFFER = DEFAULT_SELF_UPGRADE_COMMAND_CAPTURE_BYTES;
@@ -187,6 +198,15 @@ type CommandResult = {
 
 type FleetHostStatus = "pending" | "dry-run" | "succeeded" | "unverified" | "failed" | "skipped";
 
+interface SelfUpgradeFleetTarget {
+  host: string;
+  runServeUrl: string;
+}
+
+type ResolveSelfUpgradeFleetTopology = (
+  intent: FleetTopologyResolutionIntent,
+) => Promise<FleetTopologyTargetsV1>;
+
 export interface SelfUpgradeFleetOptions {
   to?: string;
   /**
@@ -263,6 +283,14 @@ export interface SelfUpgradeFleetHostResult {
    * partitioned away from `stderr_tail`/`error` and retained under its own key.
    */
   remote_environment_noise?: string;
+  /**
+   * A remote CLI's claimed receipt path retained only when its canonical
+   * receipt could not be reread. It is not a canonical receipt locator and
+   * cannot authorize success or clear a prior convergence blocker.
+   */
+  projected_receipt_path?: string;
+  /** Typed, non-authoritative blocked evidence paired with projected_receipt_path. */
+  projected_toolchain_check?: FleetConvergenceToolchainCheck;
   receipt_locator?: SelfUpgradeReceiptLocator;
   receipt_verification?: SelfUpgradeFleetReceiptVerification;
   plan?: SelfUpgradePlan;
@@ -440,7 +468,7 @@ export interface SelfUpgradeFleetPostflight {
   error?: string;
 }
 
-export interface SelfUpgradeFleetReceipt {
+export interface SelfUpgradeFleetReceipt extends FleetTopologyOutput {
   schema_version: "self-upgrade-fleet-receipt/v1";
   conductor_host: string;
   target_ref: string;
@@ -532,18 +560,24 @@ export interface VerifiedRemoteReceipt {
   attempts?: number;
 }
 
-export interface SelfUpgradeFleetReceiptVerification {
-  status: "verified" | "unavailable";
-  code:
-    | "verified"
-    | "conductor_auth_unavailable"
-    | "transport_unavailable"
-    | "route_unavailable"
-    | "receipt_binding_unavailable";
-  attempts: number;
-  locator?: SelfUpgradeReceiptLocator;
-  message?: string;
-}
+export type SelfUpgradeFleetReceiptVerification =
+  | {
+      status: "verified";
+      code: "verified";
+      attempts: number;
+      locator: SelfUpgradeReceiptLocator;
+    }
+  | {
+      status: "unavailable";
+      code:
+        | "conductor_auth_unavailable"
+        | "transport_unavailable"
+        | "route_unavailable"
+        | "receipt_binding_unavailable";
+      attempts: number;
+      locator?: SelfUpgradeReceiptLocator;
+      message?: string;
+    };
 
 export interface SelfUpgradeFleetDependencies {
   now?: () => string;
@@ -551,7 +585,7 @@ export interface SelfUpgradeFleetDependencies {
   execFileAsync?: ExecFileAsync;
   resolveAgentsInfraRoot?: () => Promise<string | undefined>;
   resolveCurrentHostAlias?: (host?: string, agentsInfraRoot?: string) => Promise<string>;
-  listRunServeHosts?: (agentsInfraRoot: string) => Promise<RunServeHostTarget[]>;
+  resolveFleetTopology?: ResolveSelfUpgradeFleetTopology;
   listDescriptors?: typeof listDescriptors;
   /** Resolve one normalized conductor authority via targeted fetch + FETCH_HEAD. */
   resolveConductorTargetEvidence?: (
@@ -1225,9 +1259,9 @@ async function defaultExecRemoteCommand(
 }
 
 class RemoteReceiptVerificationUnavailableError extends Error {
-  readonly verification: SelfUpgradeFleetReceiptVerification;
+  readonly verification: Extract<SelfUpgradeFleetReceiptVerification, { status: "unavailable" }>;
 
-  constructor(verification: SelfUpgradeFleetReceiptVerification) {
+  constructor(verification: Extract<SelfUpgradeFleetReceiptVerification, { status: "unavailable" }>) {
     super(verification.message ?? verification.code);
     this.name = "RemoteReceiptVerificationUnavailableError";
     this.verification = verification;
@@ -1429,6 +1463,7 @@ const remotePlanSchema = z.object({
   target_ref: z.string().trim().min(1),
   target_head: fullGitShaSchema.optional(),
   target_evidence: remoteTargetEvidenceSchema,
+  toolchain_check: fleetConvergenceToolchainCheckSchema.optional(),
 }).passthrough().refine(
   (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= REMOTE_PLAN_MAX_BYTES,
   `remote self-upgrade plan must not exceed ${REMOTE_PLAN_MAX_BYTES} bytes`,
@@ -1440,6 +1475,7 @@ const remoteReceiptSchema = z.object({
   host: z.string().trim().min(1),
   target_ref: z.string().trim().min(1),
   target_evidence: remoteTargetEvidenceSchema,
+  toolchain_check: fleetConvergenceToolchainCheckSchema.optional(),
   status: z.enum(["succeeded", "failed"]),
   started_at: z.string().datetime({ offset: true }),
   completed_at: z.string().datetime({ offset: true }),
@@ -1479,20 +1515,31 @@ const remoteReceiptSchema = z.object({
   install: z.object({}).passthrough().optional(),
   rollback: z.object({}).passthrough().optional(),
   warnings: z.array(z.string()),
-  durability_issues: z.array(z.object({
-    scope: z.literal("final_receipt"),
-    code: z.literal("receipt_persist_failed"),
-    observed_at: z.string().datetime({ offset: true }),
-    message: z.string().trim().min(1),
-  }).strict()).optional(),
+  durability_issues: z.array(z.discriminatedUnion("scope", [
+    z.object({
+      scope: z.literal("final_receipt"),
+      code: z.literal("receipt_persist_failed"),
+      observed_at: z.string().datetime({ offset: true }),
+      message: z.string().trim().min(1),
+    }).strict(),
+  ])).optional(),
   error: z.string().optional(),
 }).passthrough();
-const remoteProjectionIssueSchema = z.object({
-  scope: z.enum(["status_stderr", "remote_phase_stderr", "lock_cleanup"]),
-  code: z.enum(["projection_unavailable", "cleanup_unavailable"]),
-  observed_at: z.string().datetime({ offset: true }),
-  message: z.string().trim().min(1).max(4_096),
-}).strip();
+const remoteProjectionIssueSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.enum(["status_stderr", "remote_phase_stderr", "operation_state", "lock_cleanup"]),
+    code: z.enum(["projection_unavailable", "cleanup_unavailable"]),
+    observed_at: z.string().datetime({ offset: true }),
+    message: z.string().trim().min(1).max(4_096),
+  }).strip(),
+  z.object({
+    scope: z.literal("operation_cleanup"),
+    code: z.literal("best_effort_cleanup"),
+    detail: z.enum(["residue", "inspection_unavailable"]),
+    observed_at: z.string().datetime({ offset: true }),
+    message: z.string().trim().min(1).max(4_096),
+  }).strip(),
+]);
 const remoteSelfUpgradeOutputSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("dry-run"),
@@ -1518,6 +1565,27 @@ const remoteSelfUpgradeOutputSchema = z.discriminatedUnion("status", [
   }).passthrough(),
 ]);
 
+class RemoteToolchainEnvelopeError extends Error {
+  constructor() {
+    super("Remote self-upgrade output has an invalid toolchain attestation.");
+    this.name = "RemoteToolchainEnvelopeError";
+  }
+}
+
+function parseRemoteSelfUpgradeAuthorityEnvelope(value: unknown): SelfUpgradeCommandJsonOutput {
+  const parsed = remoteSelfUpgradeOutputSchema.safeParse(value);
+  if (parsed.success) {
+    return parsed.data as unknown as SelfUpgradeCommandJsonOutput;
+  }
+  if (parsed.error.issues.some((issue) => issue.path.includes("toolchain_check"))) {
+    // A passed toolchain check is proof, not optional remote decoration. Keep
+    // the external failure class stable even when the stricter shared schema
+    // rejects the proof before the later host/target/window binding check.
+    throw new RemoteToolchainEnvelopeError();
+  }
+  throw parsed.error;
+}
+
 function parseSelfUpgradeJsonOutput(stdout: string): SelfUpgradeCommandJsonOutput | undefined {
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -1525,10 +1593,10 @@ function parseSelfUpgradeJsonOutput(stdout: string): SelfUpgradeCommandJsonOutpu
   }
   const decoded = JSON.parse(trimmed) as unknown;
   if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
-    return remoteSelfUpgradeOutputSchema.parse(decoded) as unknown as SelfUpgradeCommandJsonOutput;
+    return parseRemoteSelfUpgradeAuthorityEnvelope(decoded);
   }
   const { projection_issues: untrustedProjectionIssues, ...authorityEnvelope } = decoded as Record<string, unknown>;
-  const parsed = remoteSelfUpgradeOutputSchema.parse(authorityEnvelope) as unknown as SelfUpgradeCommandJsonOutput;
+  const parsed = parseRemoteSelfUpgradeAuthorityEnvelope(authorityEnvelope);
   // Projection diagnostics are additive, bounded, and fail-open. A future
   // remote issue scope/code must never invalidate the terminal authority
   // envelope or change the host verdict.
@@ -1633,6 +1701,101 @@ function assertRemoteSuccessSemantics(args: {
   if (Date.parse(receipt.completed_at) < Date.parse(receipt.started_at)) {
     throw new Error("Remote success receipt completed_at precedes started_at.");
   }
+  if (
+    receipt.toolchain_check?.status !== "pass"
+    || payload.plan.toolchain_check?.status !== "pass"
+    || JSON.stringify(receipt.toolchain_check) !== JSON.stringify(payload.plan.toolchain_check)
+  ) {
+    throw new Error("Remote success omitted the required matching passing toolchain attestation.");
+  }
+  assertRemoteToolchainCheckBinding({
+    host,
+    targetSha: targetEvidence.target_sha,
+    startedAt: receipt.started_at,
+    completedAt: receipt.completed_at,
+    expectedStatus: "pass",
+    check: receipt.toolchain_check,
+  });
+}
+
+function assertRemoteToolchainCheckBinding(args: {
+  host: string;
+  targetSha: string;
+  startedAt: string;
+  completedAt: string;
+  expectedStatus: "blocked" | "pass";
+  check: FleetConvergenceToolchainCheck;
+}): void {
+  const checkedAt = Date.parse(args.check.checked_at);
+  const expectedPnpm = args.check.expected.pnpm_version;
+  const nodeRange = args.check.expected.node_range;
+  const processNode = valid(args.check.observed.process_node_version ?? "");
+  const childNode = valid(args.check.observed.child_node.version ?? "");
+  const hasPassingSemanticBinding = args.expectedStatus !== "pass" || Boolean(
+    nodeRange
+    && validRange(nodeRange)
+    && expectedPnpm
+    && args.check.expected.package_manager === "pnpm"
+    && args.check.evidence.source === "self-upgrade-bootstrap-attestation"
+    && args.check.evidence.spawn_contract === "@polli-labs/calyx/self-upgrade-child-spawn@v1"
+    && args.check.observed.spawn_contract === "@polli-labs/calyx/self-upgrade-child-spawn@v1"
+    && args.check.observed.process_exec_path_realpath
+    && processNode
+    && childNode
+    && satisfies(processNode, nodeRange)
+    && satisfies(childNode, nodeRange)
+    && args.check.observed.child_pnpm.self_dispatched.version === expectedPnpm
+    && args.check.observed.child_pnpm.intrinsic.version === expectedPnpm
+    && args.check.observed.child_pnpm.nested.version === expectedPnpm,
+  );
+  if (
+    args.check.status !== args.expectedStatus
+    || args.check.freshness.status !== "current"
+    || args.check.freshness.observed_at !== args.check.checked_at
+    || normalizeHostAlias(args.check.host) !== normalizeHostAlias(args.host)
+    || args.check.target_bundle_identity.calyx_source_sha !== args.targetSha
+    || checkedAt < Date.parse(args.startedAt)
+    || checkedAt > Date.parse(args.completedAt)
+    || !hasPassingSemanticBinding
+  ) {
+    throw new Error(
+      `Remote ${args.expectedStatus} toolchain attestation is not current and bound to host ${args.host}, target ${args.targetSha}, and this receipt window, or its passing evidence is incomplete.`,
+    );
+  }
+}
+
+function assertRemoteToolchainFailureSemantics(args: {
+  host: string;
+  cloneRoot: string;
+  targetEvidence: SelfUpgradeTargetEvidence;
+  payload: SelfUpgradeCommandFailureOutput;
+  receipt: SelfUpgradeReceipt;
+}): void {
+  const { cloneRoot, host, payload, receipt, targetEvidence } = args;
+  if (!payload.plan || !payload.receipt_path) {
+    throw new Error("Remote toolchain failure omitted its plan or receipt locator.");
+  }
+  assertRemotePlanSemantics({ host, cloneRoot, targetEvidence, plan: payload.plan });
+  if (
+    normalizeHostAlias(receipt.host) !== normalizeHostAlias(host)
+    || receipt.status !== "failed"
+    || receipt.repo_root !== payload.plan.repo_root
+    || receipt.before_head !== payload.plan.current_head
+    || !targetEvidenceMatches(receipt.target_evidence, targetEvidence)
+    || receipt.toolchain_check?.status !== "blocked"
+    || payload.plan.toolchain_check?.status !== "blocked"
+    || JSON.stringify(receipt.toolchain_check) !== JSON.stringify(payload.plan.toolchain_check)
+  ) {
+    throw new Error("Remote failed receipt does not prove the current dispatch's blocked toolchain attestation.");
+  }
+  assertRemoteToolchainCheckBinding({
+    host,
+    targetSha: targetEvidence.target_sha,
+    startedAt: receipt.started_at,
+    completedAt: receipt.completed_at,
+    expectedStatus: "blocked",
+    check: receipt.toolchain_check,
+  });
 }
 
 /** Conductor-side callbacks for one host's relayed transitions. */
@@ -2410,6 +2573,27 @@ async function executeFleetHost(
       : {}),
     ...(settled.receipt?.after_head ? { after_head: settled.receipt.after_head } : {}),
     ...(settled.receipt_locator ? { receipt_locator: settled.receipt_locator } : {}),
+    ...(settled.receipt?.toolchain_check ?? settled.plan?.toolchain_check
+      ? { toolchain_check: settled.receipt?.toolchain_check ?? settled.plan!.toolchain_check }
+      : {}),
+    ...(settled.projected_receipt_path
+      ? { projected_receipt_path: settled.projected_receipt_path }
+      : {}),
+    ...(settled.projected_toolchain_check
+      ? { projected_toolchain_check: settled.projected_toolchain_check }
+      : {}),
+    ...(settled.receipt_verification?.status === "unavailable"
+      ? {
+          receipt_verification: {
+            status: "unavailable" as const,
+            code: settled.receipt_verification.code,
+            attempts: settled.receipt_verification.attempts,
+            ...(settled.receipt_verification.message
+              ? { message: settled.receipt_verification.message }
+              : {}),
+          },
+        }
+      : {}),
     ...(settled.error ? { error: settled.error } : {}),
   });
   return settled;
@@ -2526,10 +2710,15 @@ async function executeFleetHostRemote(
 
   let payload: SelfUpgradeCommandJsonOutput | undefined;
   let parseError: string | undefined;
+  let toolchainEnvelopeError = false;
   try {
     payload = parseSelfUpgradeJsonOutput(commandResult.stdout);
   } catch (error) {
-    parseError = error instanceof Error ? error.message : String(error);
+    if (error instanceof RemoteToolchainEnvelopeError) {
+      toolchainEnvelopeError = true;
+    } else {
+      parseError = error instanceof Error ? error.message : String(error);
+    }
   }
   const relayProjectionUnavailable = payload?.projection_issues?.some(
     (issue: SelfUpgradeProjectionIssue) =>
@@ -2546,6 +2735,7 @@ async function executeFleetHostRemote(
   const progressRelay = stream.relayReceipt();
   let successValidationError: string | undefined;
   let dryRunValidationError: string | undefined;
+  let toolchainFailureValidationError: string | undefined;
   let authoritativeReceipt: SelfUpgradeReceipt | undefined;
   let authoritativeReceiptLocator: SelfUpgradeReceiptLocator | undefined;
   let receiptVerification: SelfUpgradeFleetReceiptVerification | undefined;
@@ -2602,6 +2792,53 @@ async function executeFleetHostRemote(
       }
     }
   }
+  const projectedFailure = isFailureOutput(payload) ? payload : undefined;
+  const projectedToolchainFailure = projectedFailure
+    && projectedFailure.plan?.toolchain_check?.status === "blocked"
+    && projectedFailure.receipt?.toolchain_check?.status === "blocked"
+    && projectedFailure.receipt_path
+    ? projectedFailure
+    : undefined;
+  if (projectedToolchainFailure) {
+    try {
+      const verified = await deps.verifyRemoteReceipt(
+        host,
+        projectedToolchainFailure.receipt_path!,
+        projectedToolchainFailure.receipt!,
+        runServeUrl,
+        relay.operationId,
+      );
+      assertReceiptInvocationBinding({
+        host,
+        receiptPath: projectedToolchainFailure.receipt_path!,
+        receipt: verified.receipt,
+        expectedFleetOperationId: relay.operationId,
+        locator: verified.locator,
+        attempts: verified.attempts ?? 1,
+      });
+      assertRemoteToolchainFailureSemantics({
+        host,
+        cloneRoot,
+        targetEvidence: conductorTargetEvidence,
+        payload: projectedToolchainFailure,
+        receipt: verified.receipt,
+      });
+      authoritativeReceipt = verified.receipt;
+      authoritativeReceiptLocator = verified.locator;
+      receiptVerification = {
+        status: "verified",
+        code: "verified",
+        attempts: verified.attempts ?? 1,
+        locator: verified.locator,
+      };
+    } catch (error) {
+      if (error instanceof RemoteReceiptVerificationUnavailableError) {
+        receiptVerification = error.verification;
+      } else {
+        toolchainFailureValidationError = error instanceof Error ? error.message : String(error);
+      }
+    }
+  }
 
   if (commandResult.code === 0 && payload && payload.status === "dry-run" && !dryRunValidationError) {
     return {
@@ -2642,6 +2879,72 @@ async function executeFleetHostRemote(
   }
 
   if (
+    isFailureOutput(payload)
+    && payload.plan?.toolchain_check?.status === "blocked"
+    && authoritativeReceipt?.toolchain_check?.status === "blocked"
+    && receiptVerification?.status === "verified"
+    && !toolchainFailureValidationError
+  ) {
+    const stderrTail = tailText(stderrPartition.attributed);
+    return {
+      host,
+      status: "failed",
+      exit_code: payload.exit_code,
+      ...(artifacts.stdoutPath ? { stdout_path: artifacts.stdoutPath } : {}),
+      ...(artifacts.stderrPath ? { stderr_path: artifacts.stderrPath } : {}),
+      ...commandCaptureFields(commandResult),
+      progress_relay: progressRelay,
+      ...(artifacts.warnings.length > 0 ? { artifact_warnings: artifacts.warnings } : {}),
+      ...(stderrTail ? { stderr_tail: stderrTail } : {}),
+      ...(environmentNoise ? { remote_environment_noise: environmentNoise } : {}),
+      receipt_locator: authoritativeReceiptLocator!,
+      receipt_verification: receiptVerification,
+      receipt: authoritativeReceipt,
+      plan: payload.plan,
+      ...(payload.projection_issues?.length ? { projection_issues: payload.projection_issues } : {}),
+      error: payload.error,
+    };
+  }
+
+  const projectedReceiptPath = projectedToolchainFailure?.receipt_path;
+  const projectedToolchainCheck = projectedToolchainFailure?.plan?.toolchain_check;
+  if (
+    projectedToolchainFailure
+    && projectedReceiptPath
+    && projectedToolchainCheck
+    && receiptVerification?.status === "unavailable"
+    && !toolchainFailureValidationError
+  ) {
+    // The remote projection is useful diagnostic evidence, but it was never
+    // dereferenced from the host's canonical receipt endpoint. Preserve it
+    // under names that cannot be mistaken for authority: no `receipt`, no
+    // `plan`, and no canonical `receipt_locator` are emitted on this path.
+    return {
+      host,
+      status: "failed",
+      exit_code: projectedToolchainFailure.exit_code,
+      ...(artifacts.stdoutPath ? { stdout_path: artifacts.stdoutPath } : {}),
+      ...(artifacts.stderrPath ? { stderr_path: artifacts.stderrPath } : {}),
+      ...commandCaptureFields(commandResult),
+      progress_relay: progressRelay,
+      ...(artifacts.warnings.length > 0 ? { artifact_warnings: artifacts.warnings } : {}),
+      ...(environmentNoise ? { remote_environment_noise: environmentNoise } : {}),
+      projected_receipt_path: projectedReceiptPath,
+      projected_toolchain_check: projectedToolchainCheck,
+      receipt_verification: {
+        status: "unavailable",
+        code: receiptVerification.code,
+        attempts: receiptVerification.attempts,
+        ...(receiptVerification.message ? { message: receiptVerification.message } : {}),
+      },
+      ...(projectedToolchainFailure.projection_issues?.length
+        ? { projection_issues: projectedToolchainFailure.projection_issues }
+        : {}),
+      error: "Remote reported a blocked bootstrap-toolchain attestation, but its canonical receipt could not be reread.",
+    };
+  }
+
+  if (
     commandResult.code === 0
     && payload?.status === "succeeded"
     && !successValidationError
@@ -2668,6 +2971,10 @@ async function executeFleetHostRemote(
   const errorMessage = failure?.error
     ?? successValidationError
     ?? dryRunValidationError
+    ?? toolchainFailureValidationError
+    ?? (toolchainEnvelopeError
+      ? `Remote toolchain attestation is not current and bound to host ${host}, target ${conductorTargetEvidence.target_sha}, and this receipt window, or its passing evidence is incomplete.`
+      : undefined)
     ?? (parseError ? `Remote self upgrade JSON parse failed: ${parseError}` : undefined)
     ?? stderrTail
     ?? (commandResult.code !== 0 ? `ssh exited with code ${commandResult.code}` : "Remote self upgrade did not emit JSON output.");
@@ -3098,7 +3405,7 @@ async function executeFleetHostLocal(
     error: message,
   });
   const unverifiedLocalResult = (
-    verification: SelfUpgradeFleetReceiptVerification,
+    verification: Extract<SelfUpgradeFleetReceiptVerification, { status: "unavailable" }>,
   ): SelfUpgradeFleetHostResult => ({
     host,
     status: "unverified",
@@ -3186,16 +3493,29 @@ async function executeFleetHostLocal(
 
 async function resolveFleetTargets(
   options: SelfUpgradeFleetOptions,
-  deps: Required<Pick<SelfUpgradeFleetDependencies, "resolveAgentsInfraRoot" | "listRunServeHosts">>,
-): Promise<RunServeHostTarget[]> {
-  const agentsInfraRoot = await deps.resolveAgentsInfraRoot();
-  if (!agentsInfraRoot) {
-    throw createFleetUpgradeError("Unable to resolve agents-infra root for fleet self upgrade.", 6);
+  deps: Required<Pick<SelfUpgradeFleetDependencies, "resolveFleetTopology">>,
+): Promise<{ targets: SelfUpgradeFleetTarget[]; topology: FleetTopologyTargetsV1 }> {
+  let topology: FleetTopologyTargetsV1;
+  try {
+    topology = await deps.resolveFleetTopology("mutating");
+  } catch (error) {
+    throw createFleetUpgradeError(
+      error instanceof Error ? error.message : String(error),
+      6,
+    );
   }
 
-  const configuredTargets = await deps.listRunServeHosts(agentsInfraRoot);
+  const configuredTargets = topology.desired_active.map((target) => {
+    if (!target.run_serve_url) {
+      throw createFleetUpgradeError(
+        `Desired-active topology target ${target.host} has no run_serve_url.`,
+        6,
+      );
+    }
+    return { host: target.host, runServeUrl: target.run_serve_url };
+  });
   if (configuredTargets.length === 0) {
-    throw createFleetUpgradeError("No hosts with run_serve_url configured in fleet/truths/hosts.yaml.", 2);
+    throw createFleetUpgradeError("No desired-active hosts in the authoritative topology snapshot.", 2);
   }
   const normalizedTargets = configuredTargets.map((target) => ({
     ...target,
@@ -3213,7 +3533,7 @@ async function resolveFleetTargets(
         2,
       );
     }
-    return normalizedTargets;
+    return { targets: normalizedTargets, topology };
   }
 
   const configuredByHost = new Map(
@@ -3222,7 +3542,7 @@ async function resolveFleetTargets(
   const missingHosts = requestedHosts.filter((host) => !configuredByHost.has(host));
   if (missingHosts.length > 0) {
     throw createFleetUpgradeError(
-      `Requested host(s) missing run_serve_url in fleet/truths/hosts.yaml: ${missingHosts.join(", ")}.`,
+      `Requested host(s) are not desired-active in the topology snapshot: ${missingHosts.join(", ")}.`,
       2,
     );
   }
@@ -3234,7 +3554,7 @@ async function resolveFleetTargets(
       2,
     );
   }
-  return selected;
+  return { targets: selected, topology };
 }
 
 async function resolveConductorEventRoots(
@@ -3270,7 +3590,7 @@ function buildFleetStatusMap(results: Array<Pick<SelfUpgradeFleetHostResult, "ho
   );
 }
 
-function buildPendingStatusMap(targets: RunServeHostTarget[]): Record<string, { status: FleetHostStatus }> {
+function buildPendingStatusMap(targets: SelfUpgradeFleetTarget[]): Record<string, { status: FleetHostStatus }> {
   return Object.fromEntries(targets.map((target) => [target.host, { status: "pending" as const }]));
 }
 
@@ -3307,8 +3627,9 @@ function summarizeFleetAuthorityFailure(
   return undefined;
 }
 
-async function persistFleetUpgradePendingRows(args: {
+async function persistFleetUpgradeConvergenceRows(args: {
   perHost: readonly SelfUpgradeFleetHostResult[];
+  postflight?: SelfUpgradeFleetPostflight;
   targetRev: string | null;
   checkoutHead: string;
   checkedAt: string;
@@ -3322,7 +3643,24 @@ async function persistFleetUpgradePendingRows(args: {
   const pending = args.perHost.filter((result) =>
     result.status === "failed" || result.status === "unverified" || result.status === "skipped",
   );
-  if (pending.length === 0) {
+  const postflightByHost = new Map(
+    (args.postflight?.per_host ?? []).map((row) => [normalizeHostAlias(row.host), row] as const),
+  );
+  // A prior blocked same-target row is intentionally recalled by normal
+  // freshness/drift reads. It may only be superseded by the *new* host's
+  // verified canonical receipt and an independently fresh postflight bound to
+  // that exact upgrade target. A transport-unavailable "success" is not
+  // enough, and therefore cannot hide the old blocker.
+  const verifiedFresh = args.perHost.filter((result) => {
+    const postflight = postflightByHost.get(normalizeHostAlias(result.host));
+    const toolchainCheck = result.receipt?.toolchain_check ?? result.plan?.toolchain_check;
+    return result.status === "succeeded"
+      && result.receipt_verification?.status === "verified"
+      && Boolean(result.receipt_locator)
+      && toolchainCheck?.status === "pass"
+      && postflight?.freshness_verdict === "fresh";
+  });
+  if (pending.length === 0 && verifiedFresh.length === 0) {
     return;
   }
   const plan = await planStateMigrations();
@@ -3331,11 +3669,30 @@ async function persistFleetUpgradePendingRows(args: {
   }
   const opened = await openStateStore();
   try {
-    for (const result of pending) {
+    for (const result of [...pending, ...verifiedFresh]) {
       const promotedRev = result.receipt?.install?.git_head ?? result.plan?.promoted_build?.git_head ?? null;
       const runningRev = result.receipt?.after_builds.find((build) => build.build?.git_head)?.build?.git_head
         ?? result.plan?.current_head
         ?? null;
+      const passing = verifiedFresh.includes(result);
+      const toolchainCheck = result.receipt?.toolchain_check ?? result.plan?.toolchain_check ?? null;
+      const existing = readFleetConvergenceRow(opened.db, result.host, "daemon_build");
+      const existingCheck = fleetConvergenceToolchainCheckSchema.safeParse(
+        (existing?.payload as { toolchain_check?: unknown } | undefined)?.toolchain_check,
+      );
+      // Do not erase a same-target durable block with a later transport-
+      // unverified/failure projection that lacks a newly verified blocked
+      // attestation. The old block remains the truthful safety posture until
+      // this loop receives verified pass + fresh postflight above.
+      if (
+        !passing
+        && existing?.target_rev === args.targetRev
+        && existingCheck.success
+        && existingCheck.data.status === "blocked"
+        && toolchainCheck?.status !== "blocked"
+      ) {
+        continue;
+      }
       upsertFleetConvergenceRow(opened.db, {
         host: result.host,
         leg: "daemon_build",
@@ -3344,10 +3701,10 @@ async function persistFleetUpgradePendingRows(args: {
         converged_from: args.checkoutHead,
         policy: "auto",
         last_checked_at: args.checkedAt,
-        verdict: "pending",
+        verdict: passing ? "fresh" : "pending",
         receipt_path: args.receiptPath,
         receipt_id: path.basename(path.dirname(args.receiptPath)),
-        detail: result.error ?? null,
+        detail: passing ? null : result.error ?? null,
         payload: {
           source: "self-upgrade-fleet",
           target_ref: args.targetRef,
@@ -3356,6 +3713,7 @@ async function persistFleetUpgradePendingRows(args: {
           running_rev: runningRev,
           promoted_rev: promotedRev,
           receipt_locator: result.receipt_locator ?? null,
+          toolchain_check: toolchainCheck,
         },
       });
     }
@@ -3500,6 +3858,7 @@ function summarizeSettle(
 async function probeHostFreshnessUntilSettled(args: {
   host: string;
   targetSha: string;
+  toolchainCheck: FleetConvergenceToolchainCheck;
   authToken: string;
   windowMs: number;
   runFreshnessCommand: NonNullable<SelfUpgradeFleetDependencies["runFreshnessCommand"]>;
@@ -3564,7 +3923,18 @@ async function probeHostFreshnessUntilSettled(args: {
     try {
       freshness = await args.runFreshnessCommand(
         { host: args.host, against: args.targetSha, json: true },
-        { authToken: args.authToken },
+        {
+          authToken: args.authToken,
+          toolchainCheckForHost: async (request) => {
+            if (
+              normalizeHostAlias(request.host) !== normalizeHostAlias(args.host)
+              || request.targetSha !== args.targetSha
+            ) {
+              throw new Error("Fleet postflight requested toolchain evidence outside its upgraded host/target binding.");
+            }
+            return args.toolchainCheck;
+          },
+        },
       );
     } catch (error) {
       return failedResult(
@@ -3679,11 +4049,18 @@ async function collectFleetPostflight(args: {
     }
 
     let probed: PostflightHostProbeResult;
+    const toolchainCheck = upgrade.receipt?.toolchain_check ?? upgrade.plan?.toolchain_check;
+    if (!toolchainCheck || toolchainCheck.status !== "pass") {
+      rows.push(createPostflightHost(upgrade));
+      errors.push(`Postflight for ${upgrade.host} lacks the passing toolchain check required by its successful upgrade.`);
+      continue;
+    }
     const hostStartedMs = args.monotonicNowMs();
     try {
       probed = await probeHostFreshnessUntilSettled({
         host: upgrade.host,
         targetSha: args.targetSha,
+        toolchainCheck,
         authToken: args.authToken,
         windowMs: args.settleWindowMs,
         runFreshnessCommand: args.runFreshnessCommand,
@@ -3841,7 +4218,9 @@ function prepareAuthoritativeFleetReceipt(
   const minimalHost = (host: SelfUpgradeFleetHostResult): SelfUpgradeFleetHostResult => {
     const beforeHead = host.before_head ?? host.receipt?.before_head ?? host.plan?.current_head;
     const afterHead = host.after_head ?? host.receipt?.after_head;
-    const verificationMessage = boundedDiagnostic(host.receipt_verification?.message, 1_024);
+    const verificationMessage = host.receipt_verification?.status === "unavailable"
+      ? boundedDiagnostic(host.receipt_verification.message, 1_024)
+      : undefined;
     return {
       host: host.host,
       status: host.status,
@@ -3850,6 +4229,12 @@ function prepareAuthoritativeFleetReceipt(
       ...(afterHead ? { after_head: afterHead } : {}),
       ...(host.elapsed_ms !== undefined ? { elapsed_ms: host.elapsed_ms } : {}),
       ...(host.receipt_locator ? { receipt_locator: host.receipt_locator } : {}),
+      ...(host.projected_receipt_path
+        ? { projected_receipt_path: boundedDiagnostic(host.projected_receipt_path, 1_024)! }
+        : {}),
+      ...(host.projected_toolchain_check
+        ? { projected_toolchain_check: host.projected_toolchain_check }
+        : {}),
       ...(host.receipt_verification
         ? {
             receipt_verification: {
@@ -3973,6 +4358,7 @@ function formatFleetText(
   operationProjection: SelfUpgradeFleetResult["operation_projection"],
 ): string {
   const lines = [
+    formatFleetTopologyIdentity(receipt),
     `status: ${receipt.status}`,
     `operation_id: ${path.basename(receipt.aggregate_dir)}`,
     `operation_path: ${operationPath}`,
@@ -4007,6 +4393,9 @@ function formatFleetText(
     const detail = host.receipt_locator
       ? ` receipt=${host.receipt_locator.host}:${host.receipt_locator.route}`
       : "";
+    const projectedDetail = host.projected_receipt_path
+      ? ` projected_receipt_path=${host.projected_receipt_path}`
+      : "";
     const verificationReceiptLocator = host.receipt_verification?.locator;
     const verificationLocator = verificationReceiptLocator
       && (
@@ -4019,7 +4408,7 @@ function formatFleetText(
       ? ` verification=${host.receipt_verification.code}${verificationLocator}`
       : "";
     const error = host.error ? ` error=${host.error}` : "";
-    lines.push(`host: ${host.host} status=${host.status} exit_code=${host.exit_code}${detail}${verification}${error}`);
+    lines.push(`host: ${host.host} status=${host.status} exit_code=${host.exit_code}${detail}${projectedDetail}${verification}${error}`);
     if (host.status === "dry-run" && host.plan) {
       try {
         lines.push(formatSelfUpgradePlan(host.plan));
@@ -4094,6 +4483,10 @@ function formatFleetText(
 
   lines.push("final_hosts:");
   lines.push(formatFleetFinalTable(buildFleetFinalRows(receipt)));
+  lines.push(formatExcludedWithdrawn(receipt));
+  lines.push(
+    `topology_counts: desired_active_total=${receipt.desired_active_total} withdrawn_total=${receipt.withdrawn_total}`,
+  );
 
   return lines.join("\n");
 }
@@ -4108,11 +4501,13 @@ function formatFleetTextFailOpen(
     return formatFleetText(receipt, receiptPath, operationPath, operationProjection);
   } catch (error) {
     return [
+      formatFleetTopologyIdentity(receipt),
       `status: ${receipt.status}`,
       `operation_id: ${path.basename(receipt.aggregate_dir)}`,
       `operation_path: ${operationPath}`,
       `operation_projection: ${operationProjection}`,
       `aggregate_receipt: ${receiptPath}`,
+      formatExcludedWithdrawn(receipt),
       `render_warning: ${boundedDiagnostic(error instanceof Error ? error.message : String(error), 512)}`,
     ].join("\n");
   }
@@ -4167,7 +4562,10 @@ export async function runSelfUpgradeFleet(
     execFileAsync,
     resolveAgentsInfraRoot: resolveAgentsInfraRootDependency,
     resolveCurrentHostAlias: dependencies.resolveCurrentHostAlias ?? resolveCurrentHostAlias,
-    listRunServeHosts: dependencies.listRunServeHosts ?? listRunServeHosts,
+    resolveFleetTopology: dependencies.resolveFleetTopology ?? (async (intent) => {
+      const agentsInfraRoot = await resolveAgentsInfraRootDependency();
+      return resolveFleetTopologyForCommand(intent, agentsInfraRoot);
+    }),
     listDescriptors: dependencies.listDescriptors ?? listDescriptors,
     resolveConductorTargetEvidence:
       dependencies.resolveConductorTargetEvidence
@@ -4235,7 +4633,22 @@ export async function runSelfUpgradeFleet(
   const drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
   const startedAt = deps.now();
   const conductorHost = normalizeHostAlias(await deps.resolveCurrentHostAlias()) || "local";
-  const targets = await resolveFleetTargets(options, deps);
+  const resolvedFleet = await resolveFleetTargets(options, deps);
+  const targets = resolvedFleet.targets;
+  const topology = fleetTopologyOutput(resolvedFleet.topology);
+  const topologyCommit = topology.topology_snapshot.source.commit;
+  const topologyDigest = topology.topology_snapshot.projection_sha256;
+  if (!topologyCommit || !topologyDigest) {
+    throw createFleetUpgradeError(
+      "Authoritative fleet topology is missing the source commit or projection digest required to bind the operation.",
+      6,
+    );
+  }
+  const operationTopologySnapshot = {
+    schema_version: topology.topology_snapshot.schema_version,
+    source: { commit: topologyCommit },
+    projection_sha256: topologyDigest,
+  };
   const operationId = `fleet-${formatTimestampForFilename(startedAt)}-${randomUUID()}`;
   const writerId = `fleet-writer-${randomUUID()}`;
   const aggregateAnchor = await createFleetReceiptDirectory(
@@ -4263,6 +4676,7 @@ export async function runSelfUpgradeFleet(
         writerId,
         conductorHost,
         targetRef,
+        topologySnapshot: operationTopologySnapshot,
         hosts: targets.map((target) => target.host),
         dryRun,
         parallel,
@@ -4378,6 +4792,7 @@ export async function runSelfUpgradeFleet(
     const completedAt = deps.now();
     let receipt: SelfUpgradeFleetReceipt = {
       schema_version: "self-upgrade-fleet-receipt/v1",
+      ...topology,
       conductor_host: conductorHost,
       target_ref: targetRef,
       dry_run: dryRun,
@@ -4597,6 +5012,7 @@ export async function runSelfUpgradeFleet(
     || (postflight?.freshness_exit_code ?? 0) !== 0;
   let receipt: SelfUpgradeFleetReceipt = {
     schema_version: "self-upgrade-fleet-receipt/v1",
+    ...topology,
     conductor_host: conductorHost,
     target_ref: targetRef,
     dry_run: dryRun,
@@ -4687,8 +5103,9 @@ export async function runSelfUpgradeFleet(
       if (!conductorCheckoutSha) {
         throw new Error("Unable to resolve the conductor source checkout HEAD.");
       }
-      await persistFleetUpgradePendingRows({
+      await persistFleetUpgradeConvergenceRows({
         perHost,
+        ...(postflight ? { postflight } : {}),
         targetRev: conductorTargetEvidence.target_sha,
         checkoutHead: conductorCheckoutSha,
         checkedAt: completedAt,

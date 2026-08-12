@@ -121,6 +121,8 @@ not here. So:
 
 - [`../onboarding.md`](../onboarding.md) — setup + quickstart.
 - [`session-ingress.md`](session-ingress.md) — exact activity binding, pointer-only wakes, private IPC, and no-auto-ack law.
+- [`fleet-topology.md`](fleet-topology.md) — Git-backed enrolled-host snapshot identity, authority labels, and central target sets.
+- [`workload-admission.md`](workload-admission.md) — universal no-start fence, current-authority binding, and the explicit D1 interim opening rule.
 - [`../operator-runbook.md`](../operator-runbook.md) — daily operations.
 - [`../extension-sdk.md`](../extension-sdk.md) — the extension contract.
 - [`workflow-engine.md`](workflow-engine.md) — the caller-first durable

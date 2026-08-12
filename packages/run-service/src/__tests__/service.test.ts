@@ -38,6 +38,7 @@ import {
   RunIndexProjection,
   upsertRunnerLiveBinding,
   withSqliteMutex,
+  WorkloadAdmissionEvidenceError,
   type ApiProvenanceV1,
   type TaskManifest,
   type PredicateV1,
@@ -57,8 +58,10 @@ import {
   type HostProcessReceipt,
   RunAlreadyExistsError,
   RunExecutionSettlementPendingError,
+  WorkloadAdmissionBusyError,
+  WorkloadAdmissionFencedError,
   RunStore,
-  RunService,
+  RunService as ProductionRunService,
   type RunIntent,
   type RunRecord,
   type RecordedRunEvent,
@@ -66,6 +69,11 @@ import {
   type RunResourceAttributionObservation,
   type RunServiceDependencies,
 } from "../index.js";
+import {
+  RunService,
+  TEST_TOPOLOGY_PROJECTION_SHA256,
+  passingTestWorkloadAdmissionReconciler,
+} from "./support/test-run-service.js";
 import type { RunTerminalEvent } from "../types.js";
 import { createSingleFlightPoller } from "../kernel.js";
 import {
@@ -85,6 +93,7 @@ import {
 } from "../worker-supervisor.js";
 import {
   EventJournalCorruptionError,
+  issueRunCreationAdmission,
   legacyDeadSettlementAuthorityId,
   legacyResourceSettlementAuthorityId,
 } from "../store.js";
@@ -540,6 +549,31 @@ function makeStoredResumeRecord(args: {
   };
 }
 
+async function seedStoredResumeRecord(
+  store: RunStore,
+  record: RunRecord,
+): Promise<void> {
+  const created = await store.createRun(
+    issueRunCreationAdmission(),
+    record.intent,
+    {
+      launchMode: record.launch.mode,
+      acceptedAt: record.launch.accepted_at,
+    },
+  );
+  const incarnationId = created.launch.incarnation_id;
+  if (!incarnationId) throw new Error(`missing test incarnation for ${record.run_id}`);
+  await store.writeRunRecord(record.run_id, {
+    ...record,
+    launch: {
+      ...record.launch,
+      incarnation_id: incarnationId,
+      admission_identity: created.launch.admission_identity,
+      request_hash: created.launch.request_hash,
+    },
+  });
+}
+
 async function writeCodexInteractiveSession(args: {
   home: string;
   sessionId: string;
@@ -778,6 +812,598 @@ describe("RunService", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await rm(runsRoot, { recursive: true, force: true });
+  });
+
+  test("boots fenced and creates no run when admission evidence is missing", async () => {
+    const service = new ProductionRunService({ runsRoot, subscribers: [] }, buildDeps());
+    const intent = service.createIntent({
+      run_id: "run-fenced-boot",
+      host: "local",
+      prompt: "Must not start",
+      require_execplan: false,
+    });
+
+    expect(service.workloadAdmissionDecision()).toMatchObject({
+      admission: "fenced",
+      reason: "admission_evidence_missing",
+      failed_surface: "admission_evidence",
+    });
+    await expect(service.launch(intent, { detached: false })).rejects.toMatchObject({
+      code: "workload_admission_fenced",
+      reason: "admission_evidence_missing",
+      failedSurface: "admission_evidence",
+      nextAction: expect.stringContaining("Configure"),
+    });
+    await expect(service.getRunRecord(intent.run_id)).resolves.toBeUndefined();
+  });
+
+  test("opens only on the exact reduced gate receipt and binds fleet launches to its topology", async () => {
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: { reconcile: passingTestWorkloadAdmissionReconciler },
+    }, buildDeps());
+
+    expect(service.workloadAdmissionDecision().admission).toBe("fenced");
+    await expect(service.reconcileWorkloadAdmission()).resolves.toMatchObject({
+      admission: "open",
+      accepted_topology: { projection_sha256: TEST_TOPOLOGY_PROJECTION_SHA256 },
+      gate_receipt: {
+        profile: "d1-interim-topology-reachability-build-schema",
+        evaluated_surfaces: ["topology", "reachability", "running", "state_schema"],
+      },
+    });
+
+    const stale = service.createIntent({
+      run_id: "run-stale-topology",
+      host: "local",
+      prompt: "Stale conductor",
+      require_execplan: false,
+    });
+    await expect(service.launch(stale, {
+      detached: false,
+      plannedTopologyProjectionSha256: "d".repeat(64),
+    })).rejects.toBeInstanceOf(WorkloadAdmissionFencedError);
+    await expect(service.getRunRecord(stale.run_id)).resolves.toBeUndefined();
+    expect(service.workloadAdmissionDecision().admission).toBe("open");
+
+    // An unrelated upgrade/drain flag cannot affect this decision surface.
+    (service.options as RunService["options"] & { maintenance_mode: boolean }).maintenance_mode = true;
+    const current = service.createIntent({
+      run_id: "run-current-topology",
+      host: "local",
+      prompt: "Current conductor",
+      require_execplan: false,
+    });
+    await expect(service.launch(current, {
+      detached: false,
+      plannedTopologyProjectionSha256: TEST_TOPOLOGY_PROJECTION_SHA256,
+    })).resolves.toMatchObject({ state: "succeeded" });
+  });
+
+  test("runs the admission callback after durable creation and before execution dispatch", async () => {
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: { reconcile: passingTestWorkloadAdmissionReconciler },
+    }, buildDeps());
+    const intent = service.createIntent({
+      run_id: "run-admission-callback",
+      host: "local",
+      prompt: "Publish orchestration state after admission",
+      require_execplan: false,
+    });
+    const callbackError = new Error("admission publication failed");
+
+    await expect(service.launch(intent, {
+      detached: false,
+      onAdmitted: async (record) => {
+        expect(record).toMatchObject({ run_id: intent.run_id, state: "queued" });
+        await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+          run_id: intent.run_id,
+          state: "queued",
+          launch: { stage: "accepted" },
+        });
+        throw callbackError;
+      },
+    })).rejects.toBe(callbackError);
+    await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "queued",
+      launch: { stage: "accepted" },
+    });
+  });
+
+  test("does not publish first-execution admission when the queued-run recheck fences", async () => {
+    let reconciliationCount = 0;
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: {
+        reconcile: async (request) => {
+          reconciliationCount += 1;
+          if (reconciliationCount === 1) {
+            return passingTestWorkloadAdmissionReconciler(request);
+          }
+          throw new WorkloadAdmissionEvidenceError({
+            reason: "withdrawn",
+            failedSurface: "topology",
+            nextAction: "Reactivate this host through authoritative fleet lifecycle.",
+            message: "Host was withdrawn after durable run creation.",
+          });
+        },
+      },
+    }, buildDeps());
+    const intent = service.createIntent({
+      run_id: "run-execution-admission-fenced",
+      host: "local",
+      prompt: "Do not publish execution before its mandatory recheck",
+      require_execplan: false,
+    });
+    let durableAdmissions = 0;
+    let executionAdmissions = 0;
+
+    await expect(service.launch(intent, {
+      detached: false,
+      onAdmitted: async () => {
+        durableAdmissions += 1;
+      },
+      onExecutionAdmitted: async () => {
+        executionAdmissions += 1;
+      },
+    })).rejects.toMatchObject({
+      code: "workload_admission_fenced",
+      reason: "withdrawn",
+      failedSurface: "topology",
+    });
+
+    expect(durableAdmissions).toBe(1);
+    expect(executionAdmissions).toBe(0);
+    await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "queued",
+      launch: { stage: "accepted" },
+    });
+  });
+
+  test("first-execution admission runs after its recheck and can still prevent the effect", async () => {
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: { reconcile: passingTestWorkloadAdmissionReconciler },
+    }, buildDeps());
+    const intent = service.createIntent({
+      run_id: "run-execution-admission-callback",
+      host: "local",
+      prompt: "Publish only at the first-execution boundary",
+      require_execplan: false,
+    });
+    const callbackError = new Error("execution admission publication failed");
+    let durableAdmissions = 0;
+
+    await expect(service.launch(intent, {
+      detached: false,
+      onAdmitted: async () => {
+        durableAdmissions += 1;
+      },
+      onExecutionAdmitted: async (record) => {
+        expect(durableAdmissions).toBe(1);
+        expect(record).toMatchObject({ state: "queued", launch: { stage: "accepted" } });
+        throw callbackError;
+      },
+    })).rejects.toBe(callbackError);
+    await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "queued",
+      launch: { stage: "accepted" },
+    });
+  });
+
+  test("does not publish first-execution admission when the queued-run recheck is busy", async () => {
+    let holdReconciliation = false;
+    let evaluationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      evaluationStarted = resolve;
+    });
+    let releaseEvaluation!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseEvaluation = resolve;
+    });
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: {
+        acquireTimeoutMs: 5,
+        reconcile: async (request) => {
+          if (holdReconciliation) {
+            evaluationStarted();
+            await released;
+          }
+          return passingTestWorkloadAdmissionReconciler(request);
+        },
+      },
+    }, buildDeps());
+    const intent = service.createIntent({
+      run_id: "run-execution-admission-busy",
+      host: "local",
+      prompt: "Do not publish execution while its mandatory recheck is busy",
+      require_execplan: false,
+    });
+    let heldReconciliation: Promise<unknown> | undefined;
+    let executionAdmissions = 0;
+
+    const launch = service.launch(intent, {
+      detached: false,
+      onAdmitted: async () => {
+        holdReconciliation = true;
+        heldReconciliation = service.reconcileWorkloadAdmission();
+        await started;
+      },
+      onExecutionAdmitted: async () => {
+        executionAdmissions += 1;
+      },
+    });
+    await expect(launch).rejects.toMatchObject({
+      code: "workload_admission_busy",
+      acquireTimeoutMs: 5,
+    });
+    releaseEvaluation();
+    await heldReconciliation;
+
+    expect(executionAdmissions).toBe(0);
+    await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "queued",
+      launch: { stage: "accepted" },
+    });
+  });
+
+  test("detached worker publishes a typed fenced refusal and exact replay redispatches the queued run", async () => {
+    const resolveExecutionKernel = vi.fn(buildDeps().resolveExecutionKernel!);
+    const workerExecutions: Array<Promise<RunRecord>> = [];
+    let refusalEventStarted!: () => void;
+    const refusalEventStart = new Promise<void>((resolve) => {
+      refusalEventStarted = resolve;
+    });
+    let releaseRefusalEvent!: () => void;
+    const refusalEventRelease = new Promise<void>((resolve) => {
+      releaseRefusalEvent = resolve;
+    });
+    let dispatchCount = 0;
+    const spawnWorker = vi.fn(async (args: { runId: string }) => {
+      dispatchCount += 1;
+      const dispatchAttempt = dispatchCount;
+      const worker = new ProductionRunService({
+        runsRoot,
+        subscribers: [],
+        workloadAdmission: {
+          reconcile: dispatchAttempt === 1
+            ? async () => {
+                throw new WorkloadAdmissionEvidenceError({
+                  reason: "withdrawn",
+                  failedSurface: "topology",
+                  nextAction: "Reactivate this host through authoritative fleet lifecycle.",
+                  message: "Host was withdrawn after durable run creation.",
+                });
+              }
+            : passingTestWorkloadAdmissionReconciler,
+        },
+      }, { ...buildDeps(), resolveExecutionKernel });
+      if (dispatchAttempt === 1) {
+        const originalAppendEvent = worker.store.appendEvent.bind(worker.store);
+        vi.spyOn(worker.store, "appendEvent").mockImplementation((async (
+          runIdOrEvent: string | CalyxStreamEvent,
+          event?: RecordedRunEvent,
+        ): Promise<void | CalyxStreamEvent> => {
+          if (
+            typeof runIdOrEvent === "string"
+            && event !== undefined
+            && isRunServiceEvent(event)
+            && event.event === "execution_admission_refused"
+          ) {
+            refusalEventStarted();
+            await refusalEventRelease;
+          }
+          if (typeof runIdOrEvent === "string") {
+            if (event === undefined) throw new Error("missing run event");
+            await originalAppendEvent(runIdOrEvent, event);
+            return;
+          }
+          return originalAppendEvent(runIdOrEvent);
+        }) as typeof worker.store.appendEvent);
+      }
+      const execution = worker.executeStoredRun(args.runId);
+      workerExecutions.push(execution);
+      void execution.catch(() => undefined);
+      return { pid: 42_425 + dispatchCount, supervisor: "direct" as const };
+    });
+    const service = new ProductionRunService({
+      runsRoot,
+      workerEntrypoint: "/tmp/calyx-worker",
+      subscribers: [],
+      workloadAdmission: { reconcile: passingTestWorkloadAdmissionReconciler },
+    }, { ...buildDeps(), spawnWorker });
+    const intent = service.createIntent({
+      run_id: "run-detached-execution-admission-fenced",
+      host: "local",
+      prompt: "Refuse before effect and retry from the same durable claim",
+      require_execplan: false,
+    });
+
+    const startedAt = Date.now();
+    let firstSubmissionSettled = false;
+    const firstSubmission = service.submitDetached(intent).finally(() => {
+      firstSubmissionSettled = true;
+    });
+    void firstSubmission.catch(() => undefined);
+    await refusalEventStart;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(firstSubmissionSettled).toBe(false);
+    releaseRefusalEvent();
+    await expect(firstSubmission).rejects.toMatchObject({
+      code: "workload_admission_fenced",
+      reason: "withdrawn",
+      failedSurface: "topology",
+    });
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "queued",
+      launch: {
+        stage: "accepted",
+        dispatch_attempts: 1,
+        execution_admission_refusal: {
+          schema_version: "calyx.run-execution-admission-refusal/v1",
+          dispatch_attempt: 1,
+          code: "workload_admission_fenced",
+          reason: "withdrawn",
+          failed_surface: "topology",
+        },
+      },
+    });
+    expect(resolveExecutionKernel).not.toHaveBeenCalled();
+    expect((await service.readEvents(intent.run_id)).filter(isRunServiceEvent)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "execution_admission_refused",
+          payload: {
+            refusal: expect.objectContaining({
+              dispatch_attempt: 1,
+              code: "workload_admission_fenced",
+            }),
+          },
+        }),
+      ]),
+    );
+
+    const replay = await service.submitDetached(intent);
+    await expect(workerExecutions[0]).rejects.toBeInstanceOf(WorkloadAdmissionFencedError);
+    await expect(workerExecutions[1]).resolves.toMatchObject({ state: "succeeded" });
+    expect(replay.record).toMatchObject({
+      launch: { dispatch_attempts: 2 },
+    });
+    expect(replay.record.launch).not.toHaveProperty("execution_admission_refusal");
+    await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "succeeded",
+      launch: { dispatch_attempts: 2 },
+    });
+    expect(resolveExecutionKernel).toHaveBeenCalledTimes(1);
+    expect(spawnWorker).toHaveBeenCalledTimes(2);
+  });
+
+  test("detached worker publishes a typed busy refusal instead of timing out registration", async () => {
+    let holdWorkerAdmission = true;
+    let workerEvaluationStarted!: () => void;
+    const workerEvaluationStart = new Promise<void>((resolve) => {
+      workerEvaluationStarted = resolve;
+    });
+    let releaseWorkerEvaluation!: () => void;
+    const workerEvaluationRelease = new Promise<void>((resolve) => {
+      releaseWorkerEvaluation = resolve;
+    });
+    const worker = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: {
+        acquireTimeoutMs: 5,
+        reconcile: async (request) => {
+          if (holdWorkerAdmission) {
+            workerEvaluationStarted();
+            await workerEvaluationRelease;
+          }
+          return passingTestWorkloadAdmissionReconciler(request);
+        },
+      },
+    }, buildDeps());
+    let heldWorkerAdmission: Promise<unknown> | undefined;
+    let workerExecution: Promise<RunRecord> | undefined;
+    const spawnWorker = vi.fn(async (args: { runId: string }) => {
+      workerExecution = worker.executeStoredRun(args.runId);
+      void workerExecution.catch(() => undefined);
+      return { pid: 42_427, supervisor: "direct" as const };
+    });
+    const service = new ProductionRunService({
+      runsRoot,
+      workerEntrypoint: "/tmp/calyx-worker",
+      subscribers: [],
+      workloadAdmission: { reconcile: passingTestWorkloadAdmissionReconciler },
+    }, { ...buildDeps(), spawnWorker });
+    const intent = service.createIntent({
+      run_id: "run-detached-execution-admission-busy",
+      host: "local",
+      prompt: "Return the worker admission contention as typed retry truth",
+      require_execplan: false,
+    });
+
+    const startedAt = Date.now();
+    await expect(service.submitDetached(intent, {
+      onAdmitted: async () => {
+        heldWorkerAdmission = worker.reconcileWorkloadAdmission();
+        await workerEvaluationStart;
+      },
+    })).rejects.toMatchObject({
+      code: "workload_admission_busy",
+      acquireTimeoutMs: 5,
+    });
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    await expect(workerExecution).rejects.toBeInstanceOf(WorkloadAdmissionBusyError);
+    await expect(service.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "queued",
+      launch: {
+        stage: "accepted",
+        dispatch_attempts: 1,
+        execution_admission_refusal: {
+          dispatch_attempt: 1,
+          code: "workload_admission_busy",
+          acquire_timeout_ms: 5,
+        },
+      },
+    });
+
+    holdWorkerAdmission = false;
+    releaseWorkerEvaluation();
+    await heldWorkerAdmission;
+  });
+
+  test("rejects a receipt that claims any check set other than the named interim gate", async () => {
+    let valid = true;
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: {
+        reconcile: async (request) => {
+          const receipt = await passingTestWorkloadAdmissionReconciler(request);
+          if (valid) return receipt;
+          return {
+            ...receipt,
+            evaluated_surfaces: ["topology", "running", "reachability", "state_schema"],
+          } as unknown as typeof receipt;
+        },
+      },
+    }, buildDeps());
+
+    const accepted = await service.reconcileWorkloadAdmission();
+    expect(accepted).toMatchObject({ admission: "open" });
+    if (accepted.admission !== "open") throw new Error("expected open admission fixture");
+    valid = false;
+    await expect(service.reconcileWorkloadAdmission()).resolves.toMatchObject({
+      admission: "fenced",
+      reason: "admission_evidence_missing",
+      failed_surface: "admission_evidence",
+      last_accepted_topology: accepted.accepted_topology,
+      last_accepted_target_bundle: accepted.accepted_target_bundle,
+      last_gate_receipt: accepted.gate_receipt,
+    });
+  });
+
+  test("keeps the last decision published while evaluation is in flight", async () => {
+    let block = false;
+    let evaluationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      evaluationStarted = resolve;
+    });
+    let releaseEvaluation!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseEvaluation = resolve;
+    });
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: {
+        reconcile: async (request) => {
+          if (block) {
+            evaluationStarted();
+            await released;
+          }
+          return passingTestWorkloadAdmissionReconciler(request);
+        },
+      },
+    }, buildDeps());
+
+    await service.reconcileWorkloadAdmission();
+    block = true;
+    const evaluation = service.reconcileWorkloadAdmission();
+    await started;
+    expect(service.workloadAdmissionDecision()).toMatchObject({ admission: "open" });
+    expect(service.workloadAdmissionDecision()).not.toMatchObject({
+      admission: "fenced",
+      reason: "repair_in_progress",
+    });
+    releaseEvaluation();
+    await expect(evaluation).resolves.toMatchObject({ admission: "open" });
+  });
+
+  test("bounds admission-lock acquisition with a typed busy refusal", async () => {
+    let block = false;
+    let evaluationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      evaluationStarted = resolve;
+    });
+    let releaseEvaluation!: () => void;
+    const released = new Promise<void>((resolve) => {
+      releaseEvaluation = resolve;
+    });
+    const service = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: {
+        acquireTimeoutMs: 5,
+        reconcile: async (request) => {
+          if (block) {
+            evaluationStarted();
+            await released;
+          }
+          return passingTestWorkloadAdmissionReconciler(request);
+        },
+      },
+    }, buildDeps());
+
+    await service.reconcileWorkloadAdmission();
+    block = true;
+    const held = service.reconcileWorkloadAdmission();
+    await started;
+    await expect(service.reconcileWorkloadAdmission()).rejects.toMatchObject({
+      code: "workload_admission_busy",
+      reason: "admission_evidence_missing",
+      failedSurface: "admission_evidence",
+      acquireTimeoutMs: 5,
+    });
+    await expect(service.reconcileWorkloadAdmission()).rejects.toBeInstanceOf(
+      WorkloadAdmissionBusyError,
+    );
+    releaseEvaluation();
+    await held;
+  });
+
+  test("refuses first execution of a stored queued run after admission closes", async () => {
+    const seeder = new RunService({ runsRoot, subscribers: [] }, buildDeps());
+    const intent = seeder.createIntent({
+      run_id: "run-stored-execution-fenced",
+      host: "local",
+      prompt: "Do not start after withdrawal",
+      require_execplan: false,
+    });
+    await seeder.initializeRun(intent, { launchMode: "detached" });
+
+    const fenced = new ProductionRunService({
+      runsRoot,
+      subscribers: [],
+      workloadAdmission: {
+        reconcile: async () => {
+          throw new WorkloadAdmissionEvidenceError({
+            reason: "withdrawn",
+            failedSurface: "topology",
+            nextAction: "Reactivate this host through authoritative fleet lifecycle.",
+            message: "Host is withdrawn.",
+          });
+        },
+      },
+    }, buildDeps());
+
+    await expect(fenced.executeStoredRun(intent.run_id)).rejects.toMatchObject({
+      code: "workload_admission_fenced",
+      reason: "withdrawn",
+      failedSurface: "topology",
+    });
+    await expect(fenced.getRunRecord(intent.run_id)).resolves.toMatchObject({
+      state: "queued",
+      launch: { stage: "accepted" },
+    });
   });
 
   test("foreground launch writes dual-layer artifacts and subscriber drafts", async () => {
@@ -13068,13 +13694,13 @@ describe("RunService", () => {
     const sessionAWorktree = await mkdtemp(join(tmpdir(), "calyx-resume-sessionA-"));
     const sessionBWorktree = await mkdtemp(join(tmpdir(), "calyx-resume-sessionB-"));
 
-    await service.store.writeRunRecord("prior-run-A", makeStoredResumeRecord({
+    await seedStoredResumeRecord(service.store, makeStoredResumeRecord({
       runId: "prior-run-A",
       sessionId: "sess-A",
       worktreePath: sessionAWorktree,
       updatedAt: "2026-04-15T11:58:00.000Z",
     }));
-    await service.store.writeRunRecord("prior-run-B", makeStoredResumeRecord({
+    await seedStoredResumeRecord(service.store, makeStoredResumeRecord({
       runId: "prior-run-B",
       sessionId: "sess-B",
       worktreePath: sessionBWorktree,
@@ -13266,7 +13892,7 @@ describe("RunService", () => {
     const deletedWorktree = await mkdtemp(join(tmpdir(), "calyx-resume-deleted-"));
     await rm(deletedWorktree, { recursive: true, force: true });
 
-    await service.store.writeRunRecord("prior-deleted-worktree", makeStoredResumeRecord({
+    await seedStoredResumeRecord(service.store, makeStoredResumeRecord({
       runId: "prior-deleted-worktree",
       sessionId: "sess-gone",
       worktreePath: deletedWorktree,

@@ -38,8 +38,12 @@
     "calyx-ext-codex": "workspace:*",
     "calyx-ext-linear": "workspace:*",
     "commander": "^13.1.0",
+    "semver": "7.7.4",
     "yaml": "^2.9.0",
     "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/semver": "7.7.1"
   },
   "calyx": {
     "release": {

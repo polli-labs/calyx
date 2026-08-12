@@ -16,11 +16,12 @@ import {
 } from "@polli-labs/calyx-core";
 
 import {
+  issueRunCreationAdmission,
   RunIndexProjectionNotReadyError,
   RunListSnapshotChangedError,
   RunStore,
 } from "../store.js";
-import { RunService } from "../service.js";
+import { RunService } from "./support/test-run-service.js";
 import type {
   RunIntent,
   RunRecord,
@@ -110,7 +111,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const store = new RunStore(runsRoot, { runIndex: projection });
 
     const intent = buildIntent("run-write-1");
-    await store.createRun(intent);
+    await store.createRun(issueRunCreationAdmission(), intent);
     await writeCurrentClaimRecord(store, buildTerminalRecord(intent));
 
     // SQLite has the row.
@@ -141,8 +142,8 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
 
     const intentA = buildIntent("run-list-A");
     const intentB = buildIntent("run-list-B");
-    await store.createRun(intentA);
-    await store.createRun(intentB);
+    await store.createRun(issueRunCreationAdmission(), intentA);
+    await store.createRun(issueRunCreationAdmission(), intentB);
     await writeCurrentClaimRecord(store, buildTerminalRecord(intentA));
     await writeCurrentClaimRecord(store, buildTerminalRecord(intentB, { state: "running" }));
 
@@ -162,7 +163,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
       ["run-page-oldest", "2026-05-10T00:00:00.000Z"],
     ] as const) {
       const intent = buildIntent(runId, { created_at: createdAt });
-      await store.createRun(intent);
+      await store.createRun(issueRunCreationAdmission(), intent);
       await writeCurrentClaimRecord(store, buildTerminalRecord(intent));
     }
 
@@ -175,7 +176,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const backdated = buildIntent("run-page-backdated", {
       created_at: "2026-05-10T01:00:00.000Z",
     });
-    await store.createRun(backdated);
+    await store.createRun(issueRunCreationAdmission(), backdated);
     await writeCurrentClaimRecord(store, buildTerminalRecord(backdated));
 
     await expect(store.listRunsSnapshotPage({
@@ -199,7 +200,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
       created_at: "2026-05-10T01:00:00.000Z",
     });
     for (const intent of [newest, oldest]) {
-      await store.createRun(intent);
+      await store.createRun(issueRunCreationAdmission(), intent);
       await writeCurrentClaimRecord(store, buildTerminalRecord(intent, {
         updated_at: intent.created_at,
         completed_at: intent.created_at,
@@ -235,12 +236,12 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const crossing = buildIntent("run-filter-crossing", {
       created_at: "2026-05-10T01:00:00.000Z",
     });
-    await store.createRun(eligible);
+    await store.createRun(issueRunCreationAdmission(), eligible);
     await writeCurrentClaimRecord(store, buildTerminalRecord(eligible, {
       updated_at: "2026-05-10T03:00:00.000Z",
       completed_at: "2026-05-10T03:00:00.000Z",
     }));
-    await store.createRun(crossing);
+    await store.createRun(issueRunCreationAdmission(), crossing);
     await writeCurrentClaimRecord(store, buildTerminalRecord(crossing, {
       updated_at: "2026-05-10T02:00:00.000Z",
       completed_at: "2026-05-10T02:00:00.000Z",
@@ -271,7 +272,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
       ["run-parity-oldest", "2026-05-10T01:00:00.000Z"],
     ] as const) {
       const intent = buildIntent(runId, { created_at: createdAt });
-      await fileOnly.createRun(intent);
+      await fileOnly.createRun(issueRunCreationAdmission(), intent);
       await writeCurrentClaimRecord(fileOnly, buildTerminalRecord(intent));
     }
     const options = {
@@ -299,8 +300,8 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const fileOnlyStore = new RunStore(runsRoot);
     const intentA = buildIntent("run-rebuild-A");
     const intentB = buildIntent("run-rebuild-B");
-    await fileOnlyStore.createRun(intentA);
-    await fileOnlyStore.createRun(intentB);
+    await fileOnlyStore.createRun(issueRunCreationAdmission(), intentA);
+    await fileOnlyStore.createRun(issueRunCreationAdmission(), intentB);
     await writeCurrentClaimRecord(fileOnlyStore, buildTerminalRecord(intentA));
     await writeCurrentClaimRecord(fileOnlyStore, buildTerminalRecord(intentB));
 
@@ -342,7 +343,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const store = new RunStore(runsRoot, { runIndex: projection });
 
     const intent = buildIntent("run-rebuild-divergence");
-    await store.createRun(intent);
+    await store.createRun(issueRunCreationAdmission(), intent);
     await writeCurrentClaimRecord(store, buildTerminalRecord(intent));
 
     // Consume the one-time first-list backfill so subsequent direct
@@ -395,7 +396,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const oldIntent = buildIntent("run-explicit-rebuild-race-existing");
     {
       const fileOnly = new RunStore(runsRoot);
-      await fileOnly.createRun(oldIntent);
+      await fileOnly.createRun(issueRunCreationAdmission(), oldIntent);
       await writeCurrentClaimRecord(fileOnly, buildTerminalRecord(oldIntent, {
         state: "succeeded",
         summary: "stale explicit-rebuild scan",
@@ -419,7 +420,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const replaceSpy = vi.spyOn(projection, "replace").mockImplementation(async (rows) => {
       // rebuildRunIndex holds the projection mutex here. Both writers queue
       // behind the durable marker -> JSON -> projection publication boundary.
-      createPromise = store.createRun(concurrentIntent);
+      createPromise = store.createRun(issueRunCreationAdmission(), concurrentIntent);
       updatePromise = writeCurrentClaimRecord(store, newerExisting);
       return originalReplace(rows);
     });
@@ -446,7 +447,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const projection = new RunIndexProjection();
     const store = new RunStore(runsRoot, { runIndex: projection });
     const intent = buildIntent("run-explicit-rebuild-disabled");
-    await store.createRun(intent);
+    await store.createRun(issueRunCreationAdmission(), intent);
     vi.spyOn(projection, "replace").mockResolvedValue({
       status: "disabled",
       reason: "simulated projection failure",
@@ -477,7 +478,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const intent = buildIntent("run-projection-write-disabled");
 
-    await expect(store.createRun(intent)).resolves.toMatchObject({
+    await expect(store.createRun(issueRunCreationAdmission(), intent)).resolves.toMatchObject({
       run_id: intent.run_id,
       state: "queued",
     });
@@ -581,9 +582,9 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     //      so SQLite stays empty.
     {
       const fileOnly = new RunStore(runsRoot);
-      await fileOnly.createRun(intentOldA);
-      await fileOnly.createRun(intentOldB);
-      await fileOnly.createRun(intentOldActive);
+      await fileOnly.createRun(issueRunCreationAdmission(), intentOldA);
+      await fileOnly.createRun(issueRunCreationAdmission(), intentOldB);
+      await fileOnly.createRun(issueRunCreationAdmission(), intentOldActive);
       await writeCurrentClaimRecord(
         fileOnly,
         buildTerminalRecord(intentOldA),
@@ -623,7 +624,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const store = new RunStore(runsRoot, { runIndex: projection });
 
     const intentNew = buildIntent("run-post-mig-new");
-    await store.createRun(intentNew);
+    await store.createRun(issueRunCreationAdmission(), intentNew);
     await writeCurrentClaimRecord(store, buildTerminalRecord(intentNew));
 
     // Confirm the failure shape before the first list: SQLite has
@@ -682,7 +683,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const intentOldActive = buildIntent("run-pre-active-first");
     {
       const fileOnly = new RunStore(runsRoot);
-      await fileOnly.createRun(intentOldActive);
+      await fileOnly.createRun(issueRunCreationAdmission(), intentOldActive);
       await writeCurrentClaimRecord(
         fileOnly,
         buildTerminalRecord(intentOldActive, {
@@ -696,7 +697,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const store = new RunStore(runsRoot, { runIndex: projection });
 
     const intentNew = buildIntent("run-post-mig-new-active");
-    await store.createRun(intentNew);
+    await store.createRun(issueRunCreationAdmission(), intentNew);
     await writeCurrentClaimRecord(store, buildTerminalRecord(intentNew));
 
     const active = await store.listActiveRuns();
@@ -733,7 +734,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const oldIntent = buildIntent("run-backfill-race-existing");
     {
       const fileOnly = new RunStore(runsRoot);
-      await fileOnly.createRun(oldIntent);
+      await fileOnly.createRun(issueRunCreationAdmission(), oldIntent);
       await writeCurrentClaimRecord(
         fileOnly,
         buildTerminalRecord(oldIntent, {
@@ -757,7 +758,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
       .mockImplementation(async (rows, now) => {
         if (!injected) {
           injected = true;
-          await store.createRun(concurrentIntent);
+          await store.createRun(issueRunCreationAdmission(), concurrentIntent);
           await writeCurrentClaimRecord(
             store,
             buildTerminalRecord(concurrentIntent, {
@@ -816,7 +817,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
       buildIntent(`run-concurrent-${i.toString().padStart(3, "0")}`),
     );
     for (const intent of intents) {
-      await store.createRun(intent);
+      await store.createRun(issueRunCreationAdmission(), intent);
     }
 
     // Fire all writeRunRecord calls in parallel. SQLite's serialized
@@ -860,8 +861,8 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     // and seed SQLite with stale state.
     const intentA = buildIntent("run-svc-reconcile-A");
     const intentB = buildIntent("run-svc-reconcile-B");
-    await service.store.createRun(intentA);
-    await service.store.createRun(intentB);
+    await service.store.createRun(issueRunCreationAdmission(), intentA);
+    await service.store.createRun(issueRunCreationAdmission(), intentB);
     await writeCurrentClaimRecord(service.store, buildTerminalRecord(intentA, {
       launch: {
         ...buildTerminalRecord(intentA).launch,
@@ -924,7 +925,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     // `index.jsonl` upsert is gone — it is never written either way.
     const store = new RunStore(runsRoot);
     const intent = buildIntent("run-no-projection");
-    await store.createRun(intent);
+    await store.createRun(issueRunCreationAdmission(), intent);
     await writeCurrentClaimRecord(store, buildTerminalRecord(intent));
 
     const runs = await store.listRuns();
@@ -947,7 +948,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const intentOldA = buildIntent("run-marker-pre-A");
     {
       const fileOnly = new RunStore(runsRoot);
-      await fileOnly.createRun(intentOldA);
+      await fileOnly.createRun(issueRunCreationAdmission(), intentOldA);
       await writeCurrentClaimRecord(fileOnly, buildTerminalRecord(intentOldA));
     }
 
@@ -989,7 +990,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const intentDiskOnly = buildIntent("run-marker-disk-only");
     {
       const fileOnly = new RunStore(runsRoot);
-      await fileOnly.createRun(intentDiskOnly);
+      await fileOnly.createRun(issueRunCreationAdmission(), intentDiskOnly);
       await writeCurrentClaimRecord(fileOnly, buildTerminalRecord(intentDiskOnly));
     }
 
@@ -1038,7 +1039,7 @@ describe("RunStore SQLite run_index (wave 2.2)", () => {
     const intent = buildIntent("run-reconcile-after-marker");
     {
       const fileOnly = new RunStore(runsRoot);
-      await fileOnly.createRun(intent);
+      await fileOnly.createRun(issueRunCreationAdmission(), intent);
       await writeCurrentClaimRecord(fileOnly, buildTerminalRecord(intent));
     }
 

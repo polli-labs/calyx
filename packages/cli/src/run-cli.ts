@@ -38,8 +38,10 @@ import {
 import {
   collectSelfDriftReports,
   formatSelfDriftTable,
+  runSelfDriftFleetCommand,
   toSelfDriftJsonResults,
   type ExecFileAsync,
+  type SelfDriftDependencies,
 } from "./self-drift.js";
 import {
   formatSelfFreshnessText,
@@ -51,6 +53,16 @@ import {
   serializeSelfUpgradeOperationStatusJson,
 } from "./self-upgrade-operation-status.js";
 import type { LinearGraphqlRequester } from "./linear-graphql-requester.js";
+import {
+  fleetTopologyOutput,
+  formatFleetTopologyIdentity,
+  resolveFleetTopologyForCommand,
+  summarizeFleetRead,
+  type FleetEffectiveState,
+  type FleetReadSummary,
+  type FleetTopologyOutput,
+  type ResolveFleetTopology,
+} from "./fleet-topology.js";
 
 const __cliDir = dirname(fileURLToPath(import.meta.url));
 const cliPkg = JSON.parse(readFileSync(join(__cliDir, "..", "package.json"), "utf-8")) as { version: string };
@@ -158,6 +170,7 @@ import {
   ACTIVITY_MARK_TARGET_KINDS,
   RuntimeConfigApplyInProgressError,
   applyStateMigrations,
+  createInterimWorkloadAdmissionReconciler,
   ackMonitorWake,
   ackMessage,
   cancelMonitor,
@@ -491,6 +504,7 @@ import {
 } from "@polli-labs/calyx-run-service";
 import {
   detectTailscaleHost,
+  loadServerBuildInfo,
   startRunServer,
   validateOperationRequest,
 } from "@polli-labs/calyx-server";
@@ -552,6 +566,7 @@ import {
   toSelfUpgradeProgressTransition,
 } from "./self-upgrade-progress.js";
 import { createFailOpenProjectionWriter } from "./self-upgrade-stream-io.js";
+import { createProductionToolchainCheckForHost } from "./self-upgrade-toolchain.js";
 
 interface CompileCommandOptions {
   fleet: string;
@@ -1750,14 +1765,39 @@ interface FleetStatusLeg {
 interface FleetStatusHost {
   host: string;
   verdict: FleetStatusVerdict;
+  owner: string;
+  roles: readonly string[];
+  desired_membership: "active";
+  effective_state: Exclude<FleetEffectiveState, "withdrawn">;
   legs: FleetStatusLeg[];
 }
 
+interface FleetStatusSummary extends FleetReadSummary {
+  fresh: number;
+  pending: number;
+  structural: number;
+  missing: number;
+}
+
 interface FleetStatusResult {
-  schema_version: "fleet-convergence-status/v1";
+  schema_version: "fleet-convergence-status/v2";
   checked_at: string;
+  topology_snapshot: FleetTopologyOutput["topology_snapshot"];
+  topology_authority: FleetTopologyOutput["topology_authority"];
+  can_emit_green_verdict: boolean;
+  desired_active_total: number;
+  withdrawn_total: number;
   hosts: FleetStatusHost[];
-  summary: Record<FleetStatusVerdict, number>;
+  excluded_withdrawn: Array<{
+    host: string;
+    owner: string;
+    roles: readonly string[];
+    desired_membership: "withdrawn";
+    effective_state: "withdrawn";
+    verdict: FleetStatusVerdict;
+    legs: FleetStatusLeg[];
+  }>;
+  summary: FleetStatusSummary;
 }
 
 interface SelfHealthCommandOptions {
@@ -2030,8 +2070,10 @@ export interface RunCliDependencies {
   linearGraphql?: LinearGraphqlRequester;
   execFileAsync?: ExecFileAsync;
   agentsInfraRoot?: string;
+  resolveFleetTopology?: ResolveFleetTopology;
   repoRoot?: string;
   currentHostAlias?: string;
+  toolchainCheckForHost?: SelfDriftDependencies["toolchainCheckForHost"];
   resolveCurrentHostAlias?: typeof resolveCurrentHostAlias;
   hostname?: () => string;
   now?: () => Date;
@@ -2892,10 +2934,20 @@ function fleetStatusHostVerdict(rows: readonly FleetConvergenceRow[]): FleetStat
 
 async function readFleetStatus(options: FleetStatusCommandOptions, deps: RunCliDependencies): Promise<FleetStatusResult> {
   const checkedAt = (deps.now?.() ?? new Date()).toISOString();
+  const topologyTargets = await (deps.resolveFleetTopology
+    ?? ((intent) => resolveFleetTopologyForCommand(intent, deps.agentsInfraRoot)))("read_only");
+  const topology = fleetTopologyOutput(topologyTargets);
+  const requestedHost = options.host?.trim().toLowerCase().split(".")[0];
+  const enrolledTargets = requestedHost
+    ? topologyTargets.all_enrolled.filter((target) => target.host === requestedHost)
+    : topologyTargets.all_enrolled;
+  if (requestedHost && enrolledTargets.length === 0) {
+    throw new Error(`Host ${requestedHost} is not enrolled in topology snapshot ${topology.topology_snapshot.projection_sha256 ?? "unavailable"}.`);
+  }
   const opened = await openStateStore();
   try {
     const rows = listFleetConvergenceRows(opened.db, {
-      ...(options.host ? { host: options.host } : {}),
+      ...(requestedHost ? { host: requestedHost } : {}),
     });
     const byHost = new Map<string, FleetConvergenceRow[]>();
     for (const row of rows) {
@@ -2903,17 +2955,9 @@ async function readFleetStatus(options: FleetStatusCommandOptions, deps: RunCliD
       existing.push(row);
       byHost.set(row.host, existing);
     }
-    if (options.host && !byHost.has(options.host)) {
-      byHost.set(options.host, []);
-    }
-    const hosts: FleetStatusHost[] = [...byHost.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([host, hostRows]) => ({
-        host,
-        verdict: fleetStatusHostVerdict(hostRows),
-        legs: hostRows
-          .sort((a, b) => a.leg.localeCompare(b.leg))
-          .map((row) => ({
+    const toLegs = (hostRows: FleetConvergenceRow[]): FleetStatusLeg[] => hostRows
+      .sort((a, b) => a.leg.localeCompare(b.leg))
+      .map((row) => ({
             leg: row.leg,
             verdict: row.verdict,
             policy: row.policy,
@@ -2924,21 +2968,64 @@ async function readFleetStatus(options: FleetStatusCommandOptions, deps: RunCliD
             ...(row.receipt_path !== null ? { receipt_path: row.receipt_path } : {}),
             ...(row.receipt_id !== null ? { receipt_id: row.receipt_id } : {}),
             ...(row.detail !== null ? { detail: row.detail } : {}),
-          })),
-      }));
-    const summary: Record<FleetStatusVerdict, number> = {
-      fresh: 0,
-      pending: 0,
-      structural: 0,
-      missing: 0,
-    };
-    for (const host of hosts) {
-      summary[host.verdict] += 1;
-    }
+          }));
+    const hosts: FleetStatusHost[] = enrolledTargets
+      .filter((target) => target.desired_membership === "active")
+      .map((target) => {
+        const hostRows = byHost.get(target.host) ?? [];
+        const verdict = fleetStatusHostVerdict(hostRows);
+        return {
+          host: target.host,
+          owner: target.owner,
+          roles: target.roles,
+          desired_membership: "active" as const,
+          effective_state: verdict === "fresh"
+            ? "active" as const
+            : verdict === "missing"
+              ? "unavailable" as const
+              : "repair" as const,
+          verdict,
+          legs: toLegs(hostRows),
+        };
+      });
+    const excludedWithdrawn = enrolledTargets
+      .filter((target) => target.desired_membership === "withdrawn")
+      .map((target) => {
+        const hostRows = byHost.get(target.host) ?? [];
+        return {
+          host: target.host,
+          owner: target.owner,
+          roles: target.roles,
+          desired_membership: "withdrawn" as const,
+          effective_state: "withdrawn" as const,
+          verdict: fleetStatusHostVerdict(hostRows),
+          legs: toLegs(hostRows),
+        };
+      });
+    const effectiveSummary = summarizeFleetRead(
+      {
+        ...topology,
+        desired_active_total: hosts.length,
+        withdrawn_total: excludedWithdrawn.length,
+      },
+      hosts.map((host) => host.effective_state),
+    );
+    const convergenceCounts = hosts.reduce<Record<FleetStatusVerdict, number>>(
+      (counts, host) => {
+        counts[host.verdict] += 1;
+        return counts;
+      },
+      { fresh: 0, pending: 0, structural: 0, missing: 0 },
+    );
+    const summary: FleetStatusSummary = { ...effectiveSummary, ...convergenceCounts };
     return {
-      schema_version: "fleet-convergence-status/v1",
+      schema_version: "fleet-convergence-status/v2",
       checked_at: checkedAt,
+      ...topology,
+      desired_active_total: hosts.length,
+      withdrawn_total: excludedWithdrawn.length,
       hosts,
+      excluded_withdrawn: excludedWithdrawn,
       summary,
     };
   } finally {
@@ -2947,7 +3034,10 @@ async function readFleetStatus(options: FleetStatusCommandOptions, deps: RunCliD
 }
 
 function formatFleetStatusText(result: FleetStatusResult): string {
-  const lines = ["host | verdict | legs | last_checked"];
+  const lines = [
+    formatFleetTopologyIdentity(result),
+    "host | desired | effective | convergence | legs | last_checked",
+  ];
   for (const host of result.hosts) {
     const lastChecked = host.legs
       .map((leg) => leg.last_checked_at)
@@ -2956,10 +3046,26 @@ function formatFleetStatusText(result: FleetStatusResult): string {
     const legs = host.legs.length === 0
       ? "-"
       : host.legs.map((leg) => `${leg.leg}:${leg.verdict}`).join(",");
-    lines.push([host.host, host.verdict, legs, lastChecked].join(" | "));
+    lines.push([
+      host.host,
+      host.desired_membership,
+      host.effective_state,
+      host.verdict,
+      legs,
+      lastChecked,
+    ].join(" | "));
   }
+  lines.push("excluded_withdrawn:");
+  for (const host of result.excluded_withdrawn) {
+    const lastChecked = host.legs.map((leg) => leg.last_checked_at).sort().at(-1) ?? "-";
+    const legs = host.legs.length === 0
+      ? "-"
+      : host.legs.map((leg) => `${leg.leg}:${leg.verdict}`).join(",");
+    lines.push(`  ${host.host} | withdrawn | withdrawn | ${host.verdict} | ${legs} | ${lastChecked}`);
+  }
+  if (result.excluded_withdrawn.length === 0) lines.push("  none");
   lines.push(
-    `summary fresh=${result.summary.fresh} pending=${result.summary.pending} structural=${result.summary.structural} missing=${result.summary.missing}`,
+    `summary fresh=${result.summary.fresh} pending=${result.summary.pending} structural=${result.summary.structural} missing=${result.summary.missing} active=${result.summary.active} repair=${result.summary.repair} unavailable=${result.summary.unavailable} desired_active_total=${result.summary.desired_active_total} withdrawn_total=${result.summary.withdrawn_total} green=${String(result.summary.green)}`,
   );
   return lines.join("\n");
 }
@@ -5985,6 +6091,36 @@ function usesRemoteRunServer(host: string, explicitServerUrl?: string): boolean 
   return !isLocalRunTarget(host, { hostname: () => systemHostname() });
 }
 
+async function planRemoteRunTopology(
+  requestedHost: string,
+  deps: RunCliDependencies,
+): Promise<string> {
+  const targets = await (deps.resolveFleetTopology
+    ?? ((intent) => resolveFleetTopologyForCommand(intent, deps.agentsInfraRoot)))("mutating");
+  const host = requestedHost.trim().toLowerCase() === "local"
+    ? deps.currentHostAlias
+      ?? await (deps.resolveCurrentHostAlias ?? resolveCurrentHostAlias)(undefined, deps.agentsInfraRoot)
+    : requestedHost.trim().toLowerCase().split(".")[0]!;
+  const target = targets.desired_active.find((candidate) => candidate.host === host);
+  if (!target) {
+    const withdrawn = targets.withdrawn.some((candidate) => candidate.host === host);
+    throw createCliError(
+      withdrawn
+        ? `Remote run launch refused: ${host} is withdrawn in the current topology. Re-plan for a desired-active host.`
+        : `Remote run launch refused: ${host} is not desired-active in the current topology. Refresh topology and re-plan.`,
+      6,
+    );
+  }
+  const digest = targets.snapshot.projection_sha256;
+  if (!digest) {
+    throw createCliError(
+      "Remote run launch refused: authoritative topology has no projection digest. Repair topology authority and re-plan.",
+      6,
+    );
+  }
+  return digest;
+}
+
 function buildOrchestrationLedgerIngest(): RunServiceOptions["eventLogIngest"] {
   // The sink lazy-initializes on first event and disables itself when
   // migration 0002 is not yet applied. JSON/JSONL receipts remain
@@ -6025,6 +6161,13 @@ function createLocalRunService(
     exitClassifierPipeline: options.exitClassifierPipeline,
     eventLogIngest: buildOrchestrationLedgerIngest(),
     runIndex: buildRunIndexProjection(),
+    workloadAdmission: {
+      reconcile: createInterimWorkloadAdmissionReconciler({
+        build: loadServerBuildInfo(),
+        reachability: "in_process_composition",
+        ...(deps.agentsInfraRoot ? { agentsInfraRoot: deps.agentsInfraRoot } : {}),
+      }),
+    },
   });
 }
 
@@ -6039,6 +6182,9 @@ function createConcreteRunService(options: {
   activityTailer?: RunServiceOptions["activityTailer"];
   messageOutbox?: RunServiceOptions["messageOutbox"];
   detachedWorkerRedactedEnvNames?: readonly string[];
+  workloadAdmissionReachability?: "daemon_listener" | "in_process_composition";
+  hostname?: string;
+  agentsInfraRoot?: string;
 }): RunService {
   return new RunService({
     ...(options.runsRoot ? { runsRoot: options.runsRoot } : {}),
@@ -6048,6 +6194,14 @@ function createConcreteRunService(options: {
     exitClassifierPipeline: options.exitClassifierPipeline,
     eventLogIngest: buildOrchestrationLedgerIngest(),
     runIndex: buildRunIndexProjection(),
+    ...(options.hostname ? { hostname: options.hostname } : {}),
+    workloadAdmission: {
+      reconcile: createInterimWorkloadAdmissionReconciler({
+        build: loadServerBuildInfo(),
+        reachability: options.workloadAdmissionReachability ?? "in_process_composition",
+        ...(options.agentsInfraRoot ? { agentsInfraRoot: options.agentsInfraRoot } : {}),
+      }),
+    },
     ...(options.monitorEvaluator ? { monitorEvaluator: options.monitorEvaluator } : {}),
     ...(options.activityTailer ? { activityTailer: options.activityTailer } : {}),
     ...(options.messageOutbox ? { messageOutbox: options.messageOutbox } : {}),
@@ -7444,6 +7598,7 @@ async function launchRunCommandWithIntent(
     if (refusal) {
       throw createCliError(refusal.message, 6);
     }
+    const topologyProjectionSha256 = await planRemoteRunTopology(intent.host, deps);
     const result = await submitRemoteRun(deps, {
       serverUrl,
       token,
@@ -7451,6 +7606,7 @@ async function launchRunCommandWithIntent(
         schema_version: "calyx.run-launch-request/v1",
         intent,
         idempotency_key: options.idempotencyKey?.trim() || `run-launch:${intent.run_id}`,
+        topology_projection_sha256: topologyProjectionSha256,
       } satisfies RunLaunchRequest,
     });
     return { intent, result };
@@ -8054,6 +8210,7 @@ async function resumeRunCommand(
         schema_version: "calyx.run-launch-request/v1",
         intent,
         idempotency_key: options.idempotencyKey?.trim() || `run-launch:${intent.run_id}`,
+        topology_projection_sha256: await planRemoteRunTopology(intent.host, deps),
       } satisfies RunLaunchRequest,
     });
   }
@@ -15505,6 +15662,12 @@ function hookDomainCommand(cmd: Command, domain: HookDomain): void {
  */
 export function buildProgram(options: BuildProgramOptions = {}): Command {
   const runCliDeps = options.runCli ?? {};
+  const toolchainCheckForHost = runCliDeps.toolchainCheckForHost
+    ?? createProductionToolchainCheckForHost({
+      currentHostAlias: runCliDeps.currentHostAlias
+        ?? runCliDeps.hostname?.()
+        ?? systemHostname(),
+    });
 
   const program = new Command();
   program.name("calyx").description("Calyx control plane CLI").version(cliPkg.version);
@@ -19650,6 +19813,9 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
           intervalMs: monitorIntervalMs,
           assignedHost: advertisedHost ?? systemHostname(),
         },
+        hostname: advertisedHost,
+        agentsInfraRoot,
+        workloadAdmissionReachability: "daemon_listener",
         ...(activityTailerEnabled
           ? {
               activityTailer: {
@@ -21947,9 +22113,9 @@ Examples:
 
   fleet
     .command("status")
-    .description("Read persisted per-host convergence rows from the local state store")
+    .description("Read topology-scoped per-host convergence rows from the local state store")
     .option("--host <host>", "Filter to one host alias")
-    .option("--json", "Print machine-readable fleet-convergence-status/v1 output")
+    .option("--json", "Print machine-readable fleet-convergence-status/v2 output")
     .action(async (options: FleetStatusCommandOptions) => {
       let result: FleetStatusResult;
       try {
@@ -21959,9 +22125,12 @@ Examples:
       }
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
-        return;
+      } else {
+        console.log(formatFleetStatusText(result));
       }
-      console.log(formatFleetStatusText(result));
+      if (!result.summary.green) {
+        throw createCliError("Fleet convergence status is not green.", 6);
+      }
     });
 
   // calyx bundle build — extension bundle build
@@ -22046,7 +22215,7 @@ Examples:
     .command("drift")
     .description("Compare daemon /v1/admin/health build heads against a target ref")
     .option("--host <h>", "Single host (default: local)")
-    .option("--fleet", "Iterate all hosts")
+    .option("--fleet", "Inspect desired-active hosts from the fleet topology snapshot")
     .option("--against <ref>", "Target ref (default: origin/main)", "origin/main")
     .option("--json", "Print machine-readable summary")
     .action(async (options: SelfDriftCommandOptions) => {
@@ -22055,34 +22224,45 @@ Examples:
       }
 
       let reports;
+      let fleetResult: Awaited<ReturnType<typeof runSelfDriftFleetCommand>> | undefined;
       try {
-        reports = await collectSelfDriftReports(
-          {
-            ...(options.host ? { host: options.host } : {}),
-            fleet: Boolean(options.fleet),
-            ...(options.against ? { against: options.against } : {}),
-          },
-          {
-            ...(runCliDeps.createAdminClient ? { createAdminClient: runCliDeps.createAdminClient } : {}),
-            ...(runCliDeps.execFileAsync ? { execFileAsync: runCliDeps.execFileAsync } : {}),
-            ...(runCliDeps.agentsInfraRoot ? { agentsInfraRoot: runCliDeps.agentsInfraRoot } : {}),
-            ...(runCliDeps.repoRoot ? { repoRoot: runCliDeps.repoRoot } : {}),
-            ...(runCliDeps.currentHostAlias ? { currentHostAlias: runCliDeps.currentHostAlias } : {}),
-            accessForHost: (host) => resolveRunServerAccess({ host }, runCliDeps),
-          },
-        );
+        const driftDeps = {
+          ...(runCliDeps.createAdminClient ? { createAdminClient: runCliDeps.createAdminClient } : {}),
+          ...(runCliDeps.execFileAsync ? { execFileAsync: runCliDeps.execFileAsync } : {}),
+          ...(runCliDeps.agentsInfraRoot ? { agentsInfraRoot: runCliDeps.agentsInfraRoot } : {}),
+          ...(runCliDeps.repoRoot ? { repoRoot: runCliDeps.repoRoot } : {}),
+          ...(runCliDeps.currentHostAlias ? { currentHostAlias: runCliDeps.currentHostAlias } : {}),
+          ...(runCliDeps.resolveFleetTopology ? { resolveFleetTopology: runCliDeps.resolveFleetTopology } : {}),
+          accessForHost: (host: string) => resolveRunServerAccess({ host }, runCliDeps),
+          toolchainCheckForHost,
+        };
+        if (options.fleet) {
+          fleetResult = await runSelfDriftFleetCommand(
+            { ...(options.against ? { against: options.against } : {}) },
+            driftDeps,
+          );
+          reports = fleetResult.reports;
+        } else {
+          reports = await collectSelfDriftReports(
+            {
+              ...(options.host ? { host: options.host } : {}),
+              ...(options.against ? { against: options.against } : {}),
+            },
+            driftDeps,
+          );
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw createCliError(message, 6);
       }
 
       if (options.json) {
-        console.log(JSON.stringify(toSelfDriftJsonResults(reports), null, 2));
+        console.log(JSON.stringify(fleetResult?.result ?? toSelfDriftJsonResults(reports), null, 2));
       } else {
-        console.log(formatSelfDriftTable(reports));
+        console.log(fleetResult?.text ?? formatSelfDriftTable(reports));
       }
 
-      if (reports.some((report) => report.drift !== "current")) {
+      if (fleetResult ? !fleetResult.result.summary.green : reports.some((report) => report.drift !== "current")) {
         throw createCliError("Self drift detected.", 1);
       }
     });
@@ -22090,7 +22270,7 @@ Examples:
   self
     .command("nudge")
     .description("File or reconcile one standing Linear drift issue per host")
-    .option("--fleet", "Iterate all hosts")
+    .option("--fleet", "Inspect desired-active hosts from the fleet topology snapshot")
     .option("--project <slug>", "Linear project slug or name")
     .option("--dry-run", "Print intended Linear mutations; do not write to Linear")
     .option("--json", "Print machine-readable summary")
@@ -22110,7 +22290,9 @@ Examples:
             ...(runCliDeps.agentsInfraRoot ? { agentsInfraRoot: runCliDeps.agentsInfraRoot } : {}),
             ...(runCliDeps.repoRoot ? { repoRoot: runCliDeps.repoRoot } : {}),
             ...(runCliDeps.currentHostAlias ? { currentHostAlias: runCliDeps.currentHostAlias } : {}),
+            ...(runCliDeps.resolveFleetTopology ? { resolveFleetTopology: runCliDeps.resolveFleetTopology } : {}),
             accessForHost: (host) => resolveRunServerAccess({ host }, runCliDeps),
+            toolchainCheckForHost,
             ...(runCliDeps.now ? { now: runCliDeps.now } : {}),
           },
         );
@@ -22130,7 +22312,7 @@ Examples:
     .command("freshness")
     .description("Summarize daemon freshness from health, drift, capabilities, and active-run state")
     .option("--host <h>", "Single host alias from fleet/truths/hosts.yaml")
-    .option("--fleet", "Iterate all hosts with run_serve_url configured in fleet/truths/hosts.yaml")
+    .option("--fleet", "Inspect desired-active hosts from the fleet topology snapshot")
     .option("--against <ref>", "Target ref for drift comparison (default: origin/main)", "origin/main")
     .option("--json", "Print machine-readable output")
     .action(async (options: SelfFreshnessCommandOptions) => {
@@ -22153,9 +22335,11 @@ Examples:
             ...(runCliDeps.repoRoot ? { repoRoot: runCliDeps.repoRoot } : {}),
             ...(runCliDeps.currentHostAlias ? { currentHostAlias: runCliDeps.currentHostAlias } : {}),
             ...(runCliDeps.tokenForHost ? { tokenForHost: runCliDeps.tokenForHost } : {}),
+            ...(runCliDeps.resolveFleetTopology ? { resolveFleetTopology: runCliDeps.resolveFleetTopology } : {}),
             accessForHost: (host) => resolveRunServerAccess({ host }, runCliDeps),
             ...(runCliDeps.now ? { now: runCliDeps.now } : {}),
             persistConvergence: true,
+            toolchainCheckForHost,
           },
         );
       } catch (error) {
@@ -22176,9 +22360,9 @@ Examples:
 
   self
     .command("health")
-    .description("Probe authenticated run-server /v1/admin/health for the local host, one host, or the configured fleet")
+    .description("Probe authenticated run-server /v1/admin/health for the local host, one host, or the desired-active topology set")
     .option("--host <h>", "Single host alias from fleet/truths/hosts.yaml")
-    .option("--fleet", "Iterate all hosts with run_serve_url configured in fleet/truths/hosts.yaml")
+    .option("--fleet", "Probe desired-active hosts from the fleet topology snapshot")
     .option("--json", "Print machine-readable output")
     .action(async (options: SelfHealthCommandOptions) => {
       if (options.fleet && options.host?.trim()) {
@@ -22188,11 +22372,13 @@ Examples:
       const result = await runSelfHealthCommand(options, {
         ...(runCliDeps.createAdminClient ? { createAdminClient: runCliDeps.createAdminClient } : {}),
         ...(runCliDeps.now ? { now: runCliDeps.now } : {}),
+        ...(runCliDeps.agentsInfraRoot ? { agentsInfraRoot: runCliDeps.agentsInfraRoot } : {}),
+        ...(runCliDeps.resolveFleetTopology ? { resolveFleetTopology: runCliDeps.resolveFleetTopology } : {}),
         ...(runCliDeps.tokenForHost ? { tokenForHost: runCliDeps.tokenForHost } : {}),
       });
 
       if (options.json) {
-        console.log(JSON.stringify(result.results, null, 2));
+        console.log(JSON.stringify(result.fleet ?? result.results, null, 2));
       } else {
         console.log(result.text);
       }
@@ -22206,7 +22392,7 @@ Examples:
     .command("upgrade")
     .description("Plan/apply transparent daemon updates: preserve proven-safe runs by default only with run.readopt_on_boot/v1 + run.detached_worker_isolation/v1, drain healthy unproven runs, refuse blockers; --drain-all overrides. Emits operation IDs, automatic rollback, receipts under ~/.calyx/self-upgrade-receipts, and recoverable status --watch.")
     .option("--host <host>", "Host alias to upgrade (required unless --fleet)")
-    .option("--fleet", "Iterate all hosts with run_serve_url configured in fleet/truths/hosts.yaml")
+    .option("--fleet", "Upgrade desired-active hosts from an authoritative fleet topology snapshot")
     .option("--to <ref>", "Git ref to pull before rebuilding", "origin/main")
     .option(
       "--target-sha <sha>",
@@ -22220,7 +22406,7 @@ Examples:
     .option("--target-fetch-ref <ref>", "Internal normalized source fetch ref supplied by a fleet conductor")
     .option("--dry-run", "Print the planned upgrade and exit without mutating", false)
     .option("--parallel", "Run fleet hosts in parallel instead of serial order", false)
-    .option("--hosts <csv>", "Comma-separated fleet subset instead of all configured run_serve_url hosts")
+    .option("--hosts <csv>", "Comma-separated subset of desired-active topology hosts")
     .option("--fail-fast", "Stop serial fleet execution after the first host failure", false)
     .option("--yes", "Assume yes for self-maintenance confirmation flows", false)
     .option("--json", "Print machine-readable output")
@@ -22326,6 +22512,7 @@ Examples:
             ...(runCliDeps.execFileAsync ? { execFileAsync: runCliDeps.execFileAsync } : {}),
             ...(runCliDeps.agentsInfraRoot ? { resolveAgentsInfraRoot: async () => runCliDeps.agentsInfraRoot } : {}),
             ...(runCliDeps.currentHostAlias ? { resolveCurrentHostAlias: async () => runCliDeps.currentHostAlias! } : {}),
+            ...(runCliDeps.resolveFleetTopology ? { resolveFleetTopology: runCliDeps.resolveFleetTopology } : {}),
             persistConvergence: true,
           });
         } catch (error) {
@@ -22412,6 +22599,8 @@ Examples:
             ...(runCliDeps.execFileAsync ? { execFileAsync: runCliDeps.execFileAsync } : {}),
             ...(runCliDeps.agentsInfraRoot ? { resolveAgentsInfraRoot: async () => runCliDeps.agentsInfraRoot } : {}),
             resolveCurrentHostAlias: async () => currentHostAlias,
+            ...(runCliDeps.resolveFleetTopology ? { resolveFleetTopology: runCliDeps.resolveFleetTopology } : {}),
+            persistConvergence: true,
           });
         } catch (error) {
           const exitCode = error && typeof error === "object" && "exitCode" in error && typeof (error as { exitCode?: unknown }).exitCode === "number"
@@ -22450,10 +22639,11 @@ Examples:
         if (!relayTerminal || relayProjectionIssues.length === 0) return;
         const existing = relayTerminal.projection_issues ?? [];
         relayTerminal.projection_issues = [...existing, ...relayProjectionIssues].filter(
-          (issue, index, values) => values.findIndex((candidate) =>
-            candidate.scope === issue.scope
-            && candidate.code === issue.code
-            && candidate.message === issue.message) === index,
+          (issue, index, values) => issue.scope === "operation_cleanup"
+            || values.findIndex((candidate) =>
+              candidate.scope === issue.scope
+              && candidate.code === issue.code
+              && candidate.message === issue.message) === index,
         );
       };
       const relayWriter = relayEnabled

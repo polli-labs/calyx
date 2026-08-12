@@ -4,15 +4,23 @@ import path from "node:path";
 import { createCalyxAdminClient } from "@polli-labs/calyx-client/admin";
 import { describe, expect, test, vi } from "vitest";
 import { buildProgram } from "../run-cli";
-import { STATE_MIGRATIONS } from "@polli-labs/calyx-core";
+import { createUnobservedToolchainCheck } from "../self-upgrade-toolchain.js";
+import { STATE_MIGRATIONS, type FleetConvergenceToolchainCheck } from "@polli-labs/calyx-core";
 import {
   collectSelfDriftReports,
   formatSelfDriftTable,
   toSelfDriftJsonResults,
   type ExecFileAsync,
+  type SelfDriftFleetResult,
   type SelfDriftJsonResult,
   type SelfDriftReport,
 } from "../self-drift.js";
+import {
+  makeFleetTopologyTarget,
+  makeFleetTopologyTargets,
+  TEST_TOPOLOGY_COMMIT,
+  TEST_TOPOLOGY_DIGEST,
+} from "./fleet-topology-fixture.js";
 
 const TARGET_HEAD = "ed6e1fa000000000000000000000000000000000";
 const CURRENT_HEAD = TARGET_HEAD;
@@ -22,6 +30,43 @@ const AGE_MAJOR_HEAD = "5806e87200000000000000000000000000000000";
 const CRITICAL_HEAD = "5806e87300000000000000000000000000000000";
 const MISSING_HEAD = "1234567000000000000000000000000000000000";
 const TEST_REPO_ROOT = "/tmp/calyx-compare";
+
+function blockedMbaToolchainCheck(): FleetConvergenceToolchainCheck {
+  return {
+    schema_version: "fleet-convergence-check/v1",
+    surface: "toolchain",
+    status: "blocked",
+    host: "mba",
+    expected: { node_range: ">=22.13.0", package_manager: "pnpm", pnpm_version: "10.34.1" },
+    observed: {
+      process_exec_path_realpath: "/usr/local/bin/node",
+      process_node_version: "v22.23.1",
+      child_node: { executable_realpath: "/opt/homebrew/bin/node", version: "v26.5.0", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/opt/homebrew/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "11.17.0", exit_code: 0, probe: "with-current" },
+        nested: { version: "11.17.0", exit_code: 0 },
+      },
+      bootstrap_cwd: "/Users/caleb/dev/calyx/dev",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1",
+      path_resolution: { observer: "parent_diagnostic", total_entries: 2, truncated: false, entries: [{ index: 0, directory: "/opt/homebrew/bin" }] },
+    },
+    failures: [
+      { code: "child_pnpm_intrinsic_version_mismatch", message: "Bootstrap child pnpm is intrinsically 11.17.0." },
+      { code: "nested_pnpm_version_mismatch", message: "Nested pnpm 11.17.0 does not match pnpm@10.34.1." },
+    ],
+    checked_at: "2026-08-02T00:00:00.000Z",
+    evidence: { source: "self-upgrade-bootstrap-attestation", spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1" },
+    freshness: { status: "current", observed_at: "2026-08-02T00:00:00.000Z" },
+    repair_owner: "fleet_ops",
+    next_action: { kind: "repair_toolchain", description: "Repair mba's bootstrap toolchain." },
+    topology_identity: { status: "not_bound" },
+    target_bundle_identity: { calyx_source_sha: TARGET_HEAD },
+  };
+}
 
 function makeHealth(gitHead: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -247,6 +292,78 @@ describe("collectSelfDriftReports", () => {
       drift: "minor",
       commitsBehind: 2,
       missingOperationalFixes: [],
+    });
+  });
+
+  test("keeps an operation-cleanup observation diagnostic without changing drift or toolchain verdict", async () => {
+    const reports = await collectSelfDriftReports(
+      { host: "blade", authToken: "secret-token" },
+      {
+        currentHostAlias: "blade",
+        agentsInfraRoot: "/tmp/unused-agents-infra",
+        repoRoot: TEST_REPO_ROOT,
+        execFileAsync: createGitStub({
+          "rev-parse origin/main": `${TARGET_HEAD}\n`,
+        }),
+        createAdminClient: createAdminClientFactory(vi.fn(async () => jsonResponse(makeHealth(CURRENT_HEAD)))),
+        toolchainCheckForHost: async (args) => ({
+          check: await createUnobservedToolchainCheck(args),
+          diagnostics: [{
+            kind: "operation_cleanup" as const,
+            severity: "warning" as const,
+            detail: "inspection_unavailable" as const,
+            message: "Best-effort local self-upgrade cleanup could not prove root absence; no recovery authority was recorded.",
+            actions: [],
+          }],
+        }),
+      },
+    );
+
+    expect(reports[0]).toMatchObject({
+      host: "blade",
+      drift: "current",
+      diagnostics: [{
+        kind: "operation_cleanup",
+        severity: "warning",
+        detail: "inspection_unavailable",
+      }],
+    });
+    expect(toSelfDriftJsonResults(reports)[0]).toMatchObject({
+      drift: "current",
+      diagnostics: [{ kind: "operation_cleanup", detail: "inspection_unavailable" }],
+    });
+  });
+
+  test("classifies mba as blocked/toolchain rather than minor source drift", async () => {
+    const reports = await collectSelfDriftReports(
+      { host: "mba", authToken: "secret-token" },
+      {
+        currentHostAlias: "blade",
+        agentsInfraRoot: "/tmp/unused-agents-infra",
+        repoRoot: TEST_REPO_ROOT,
+        execFileAsync: createGitStub({
+          "rev-parse origin/main": `${TARGET_HEAD}\n`,
+          [`log --format=%H ${MINOR_HEAD}..${TARGET_HEAD}`]: "1111111\n2222222\n",
+        }),
+        createAdminClient: createAdminClientFactory(vi.fn(async () => jsonResponse(makeHealth(MINOR_HEAD)))),
+        toolchainCheckForHost: async () => blockedMbaToolchainCheck(),
+      },
+    );
+
+    expect(reports[0]).toMatchObject({
+      host: "mba",
+      drift: "blocked",
+      commitsBehind: 2,
+      summary: expect.stringContaining("blocked/toolchain"),
+      toolchain_check: {
+        schema_version: "fleet-convergence-check/v1",
+        surface: "toolchain",
+        status: "blocked",
+      },
+    });
+    expect(toSelfDriftJsonResults(reports)[0]).toMatchObject({
+      drift: "blocked",
+      toolchain_check: { status: "blocked" },
     });
   });
 
@@ -568,6 +685,7 @@ describe("calyx self drift command", () => {
       const program = buildProgram({
         runCli: {
           currentHostAlias: "blade",
+          toolchainCheckForHost: createUnobservedToolchainCheck,
           agentsInfraRoot,
           repoRoot: TEST_REPO_ROOT,
           execFileAsync: createGitStub({
@@ -617,7 +735,7 @@ describe("calyx self drift command", () => {
     }
   });
 
-  test("--fleet carries each exact fleet-truth URL with its matching host credential", async () => {
+  test("--fleet uses desired-active topology targets and excludes withdrawn hosts", async () => {
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     const agentsInfraRoot = await createAgentsInfraRoot(
       ["blade", "worm"],
@@ -640,6 +758,7 @@ describe("calyx self drift command", () => {
       const program = buildProgram({
         runCli: {
           currentHostAlias: "blade",
+          toolchainCheckForHost: createUnobservedToolchainCheck,
           agentsInfraRoot,
           repoRoot: TEST_REPO_ROOT,
           execFileAsync: createGitStub({
@@ -648,6 +767,13 @@ describe("calyx self drift command", () => {
           }),
           createAdminClient: createAdminClientFactory(fetchImpl),
           tokenForHost: () => "secret-token",
+          resolveFleetTopology: async () => makeFleetTopologyTargets({
+            active: [
+              makeFleetTopologyTarget("blade", "active", "http://127.0.0.1:8740"),
+              makeFleetTopologyTarget("worm", "active", "https://worm.internal:9443"),
+            ],
+            withdrawn: [makeFleetTopologyTarget("mba", "withdrawn", "http://mba:8740")],
+          }),
         },
       });
 
@@ -662,11 +788,15 @@ describe("calyx self drift command", () => {
         ]),
       ).rejects.toMatchObject({ exitCode: 1 });
 
-      const payload = JSON.parse(String(out.mock.calls[0]?.[0])) as SelfDriftJsonResult[];
-      expect(payload.map((entry) => entry.host)).toEqual(["blade", "worm"]);
-      expect(payload).toMatchObject([
+      const payload = JSON.parse(String(out.mock.calls[0]?.[0])) as SelfDriftFleetResult;
+      expect(payload.topology_snapshot.source.commit).toBe(TEST_TOPOLOGY_COMMIT);
+      expect(payload.topology_snapshot.projection_sha256).toBe(TEST_TOPOLOGY_DIGEST);
+      expect(payload.hosts.map((entry) => entry.host)).toEqual(["blade", "worm"]);
+      expect(payload.hosts).toMatchObject([
         {
           host: "blade",
+          desired_membership: "active",
+          effective_state: "active",
           drift: "current",
           daemon_head: "ed6e1fa",
           target_head: "ed6e1fa",
@@ -676,6 +806,8 @@ describe("calyx self drift command", () => {
         },
         {
           host: "worm",
+          desired_membership: "active",
+          effective_state: "repair",
           drift: "major",
           daemon_head: "5806e87",
           target_head: "ed6e1fa",
@@ -690,6 +822,17 @@ describe("calyx self drift command", () => {
           diagnostics: [],
         },
       ]);
+      expect(payload.excluded_withdrawn).toMatchObject([
+        { host: "mba", desired_membership: "withdrawn", effective_state: "withdrawn" },
+      ]);
+      expect(payload.summary).toMatchObject({
+        desired_active_total: 2,
+        withdrawn_total: 1,
+        active: 1,
+        repair: 1,
+        unavailable: 0,
+        green: false,
+      });
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     } finally {
       await rm(agentsInfraRoot, { recursive: true, force: true });

@@ -2,12 +2,15 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCalyxAdminClient } from "@polli-labs/calyx-client/admin";
+import type { FleetConvergenceToolchainCheck } from "@polli-labs/calyx-core";
 import { describe, expect, test, vi, afterEach } from "vitest";
-import { buildProgram } from "../run-cli";
+import { buildProgram as buildProgramImpl, type BuildProgramOptions } from "../run-cli";
 import { createLinearGraphqlRequester } from "../linear-graphql-requester.js";
 import type { ExecFileAsync } from "../self-drift.js";
+import { createUnobservedToolchainCheck } from "../self-upgrade-toolchain.js";
 
 const TARGET_HEAD = "ed6e1fa000000000000000000000000000000000";
+const MINOR_HEAD = "5806e87000000000000000000000000000000000";
 const MAJOR_HEAD = "5806e87100000000000000000000000000000000";
 const MISSING_HEAD = "1234567000000000000000000000000000000000";
 const TEST_REPO_ROOT = "/tmp/calyx-compare";
@@ -16,6 +19,16 @@ const originalLinearApiKey = process.env["LINEAR_API_KEY"];
 const originalLinearTeam = process.env["LINEAR_TEAM"];
 const originalLinearProject = process.env["LINEAR_PROJECT"];
 const tempRoots: string[] = [];
+
+function buildProgram(options: BuildProgramOptions): ReturnType<typeof buildProgramImpl> {
+  return buildProgramImpl({
+    ...options,
+    runCli: {
+      toolchainCheckForHost: createUnobservedToolchainCheck,
+      ...options.runCli,
+    },
+  });
+}
 
 async function createAgentsInfraRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "calyx-self-nudge-"));
@@ -51,6 +64,50 @@ function makeHealth(gitHead: string): Record<string, unknown> {
     active_runs: 0,
     maintenance_mode: false,
     supports_features: [],
+  };
+}
+
+function blockedToolchainCheck(): FleetConvergenceToolchainCheck {
+  const checkedAt = "2026-04-20T12:00:00.000Z";
+  return {
+    schema_version: "fleet-convergence-check/v1",
+    surface: "toolchain",
+    status: "blocked",
+    host: "blade",
+    expected: { node_range: ">=22.13.0", package_manager: "pnpm", pnpm_version: "10.34.1" },
+    observed: {
+      child_node: { executable_realpath: "/usr/bin/node", version: "v22.23.1", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/opt/homebrew/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "11.17.0", exit_code: 0, probe: "with-current" },
+        nested: { version: "11.17.0", exit_code: 0 },
+      },
+      bootstrap_cwd: "/home/caleb/dev/calyx/dev",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1",
+      path_resolution: {
+        observer: "parent_diagnostic",
+        total_entries: 1,
+        truncated: false,
+        entries: [{ index: 0, directory: "/opt/homebrew/bin" }],
+      },
+    },
+    failures: [{
+      code: "child_pnpm_intrinsic_version_mismatch",
+      message: "pnpm 11.17.0 does not match 10.34.1.",
+    }],
+    checked_at: checkedAt,
+    evidence: {
+      source: "self-upgrade-bootstrap-attestation",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+    },
+    freshness: { status: "current", observed_at: checkedAt },
+    repair_owner: "fleet_ops",
+    next_action: { kind: "repair_toolchain", description: "Repair blade's bootstrap toolchain." },
+    topology_identity: { status: "not_bound" },
+    target_bundle_identity: { calyx_source_sha: TARGET_HEAD },
   };
 }
 
@@ -163,7 +220,7 @@ afterEach(async () => {
 });
 
 describe("calyx self nudge command", () => {
-  test("creates a standing Linear issue for a drifted host", async () => {
+  test("files a standing repair issue when toolchain proof promotes minor drift to blocked", async () => {
     const agentsInfraRoot = await createAgentsInfraRoot();
     process.env["LINEAR_API_KEY"] = "linear-token";
     process.env["LINEAR_TEAM"] = "Polli Labs";
@@ -172,7 +229,7 @@ describe("calyx self nudge command", () => {
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     const seenOperations: string[] = [];
     const fetchImpl = createFetchStub({
-      healthPayload: makeHealth(MAJOR_HEAD),
+      healthPayload: makeHealth(MINOR_HEAD),
       seenOperations,
       graphql: {
         CalyxSelfNudgeTeams: () => ({
@@ -209,7 +266,7 @@ describe("calyx self nudge command", () => {
         CalyxSelfNudgeIssueCreate: (variables) => {
           expect(variables).toMatchObject({
             input: {
-              title: "calyx daemon drift — blade (major)",
+              title: "calyx daemon drift — blade (blocked)",
               teamId: "team-1",
               projectId: "project-1",
               labelIds: ["label-1"],
@@ -221,7 +278,7 @@ describe("calyx self nudge command", () => {
               issue: {
                 id: "issue-1",
                 identifier: "POL-2000",
-                title: "calyx daemon drift — blade (major)",
+                title: "calyx daemon drift — blade (blocked)",
                 description: String((variables.input as { description?: unknown }).description ?? ""),
                 url: "https://linear.app/polli-labs/issue/POL-2000",
                 updatedAt: "2026-04-20T12:00:00.000Z",
@@ -240,12 +297,13 @@ describe("calyx self nudge command", () => {
     const program = buildProgram({
       runCli: {
         currentHostAlias: "blade",
+        toolchainCheckForHost: async () => blockedToolchainCheck(),
         agentsInfraRoot,
         tokenForHost: () => "run-token",
         repoRoot: TEST_REPO_ROOT,
         execFileAsync: createGitStub({
           "rev-parse origin/main": `${TARGET_HEAD}\n`,
-          [`log --format=%H ${MAJOR_HEAD}..${TARGET_HEAD}`]: "f636ca9\n",
+          [`log --format=%H ${MINOR_HEAD}..${TARGET_HEAD}`]: "unregistered-commit\n",
         }),
         createAdminClient: createAdminClientFactory(fetchImpl),
         linearGraphql: createLinearGraphqlRequester({ apiKey: "linear-token", fetchImpl }),
@@ -263,10 +321,11 @@ describe("calyx self nudge command", () => {
       {
         action: "create",
         issue_identifier: "POL-2000",
-        title: "calyx daemon drift — blade (major)",
+        title: "calyx daemon drift — blade (blocked)",
       },
     ]);
-    expect(payload.actions[0]?.description).toContain("calyx self upgrade --host blade");
+    expect(payload.actions[0]?.description).toContain("Repair blade's bootstrap toolchain.");
+    expect(payload.actions[0]?.description).not.toContain("calyx self upgrade --host blade");
     expect(seenOperations).toEqual([
       "CalyxSelfNudgeTeams",
       "CalyxSelfNudgeProjects",

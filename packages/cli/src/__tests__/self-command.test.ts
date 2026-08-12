@@ -4,6 +4,13 @@ import path from "node:path";
 import { createCalyxAdminClient } from "@polli-labs/calyx-client/admin";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { buildProgram } from "../run-cli";
+import {
+  makeFleetTopologyTarget,
+  makeFleetTopologyTargets,
+  TEST_TOPOLOGY_COMMIT,
+  TEST_TOPOLOGY_DIGEST,
+} from "./fleet-topology-fixture";
+import { passingTestWorkloadAdmissionDecision } from "./support/test-run-service";
 
 const tempRoots: string[] = [];
 const originalHome = process.env["HOME"];
@@ -107,6 +114,7 @@ function makeHealthPayload(overrides: Partial<Record<string, unknown>> = {}) {
       inherited_path: "/srv/bin:/usr/bin",
     },
     active_runs: 2,
+    workload_admission: passingTestWorkloadAdmissionDecision("blade"),
     maintenance_mode: false,
     supports_features: ["run.default_path_injection/v1", "run.detached_worker_diagnostics/v1"],
     ...overrides,
@@ -187,8 +195,8 @@ describe("self command", () => {
     await program.parseAsync(["node", "calyx", "self", "health"]);
 
     const rendered = String(out.mock.calls[0]?.[0]);
-    expect(rendered).toContain("host | daemon_kind | uptime | running_build | promoted_build | clone_head | state_schema | built_at | active_runs | features | maintenance");
-    expect(rendered).toContain("blade | run-service | 1h2m | ed6e1fa | ed6e1fa | ed6e1fa | 0034 | 2h ago | 2 | 2 | no");
+    expect(rendered).toContain("host | daemon_kind | uptime | running_build | promoted_build | clone_head | state_schema | built_at | active_runs | features | admission | maintenance");
+    expect(rendered).toContain("blade | run-service | 1h2m | ed6e1fa | ed6e1fa | ed6e1fa | 0034 | 2h ago | 2 | 2 | open@aaaaaaa | no");
   });
 
   test("self health --host queries a named host using truth-store token fallback", async () => {
@@ -427,7 +435,7 @@ describe("self command", () => {
     expect(payload[0]?.error?.["kind"]).not.toBe("unreachable");
   });
 
-  test("self health --fleet skips hosts without configured URLs and aggregates partial failures", async () => {
+  test("self health --fleet keeps unavailable desired-active hosts in the denominator and excludes withdrawn hosts", async () => {
     const fixture = await createAgentsInfraFixture({
       hosts: {
         blade: {
@@ -468,6 +476,13 @@ describe("self command", () => {
       runCli: {
         createAdminClient: createAdminClientFactory(fetchImpl),
         tokenForHost: () => "env-token",
+        resolveFleetTopology: async () => makeFleetTopologyTargets({
+          active: [
+            makeFleetTopologyTarget("blade"),
+            makeFleetTopologyTarget("worm"),
+          ],
+          withdrawn: [makeFleetTopologyTarget("carbon", "withdrawn")],
+        }),
       },
     });
 
@@ -475,40 +490,80 @@ describe("self command", () => {
       program.parseAsync(["node", "calyx", "self", "health", "--fleet", "--json"]),
     ).rejects.toMatchObject({ exitCode: 6 });
 
-    const payload = JSON.parse(String(out.mock.calls[0]?.[0])) as Array<{
-      host: string;
-      ok: boolean;
-      error?: { kind: string; message: string };
-    }>;
-    expect(payload).toHaveLength(2);
-    expect(payload[0]).toMatchObject({ host: "blade", ok: true });
-    expect(payload[1]).toMatchObject({
+    const payload = JSON.parse(String(out.mock.calls[0]?.[0])) as {
+      topology_snapshot: { commit: string; digest: string };
+      hosts: Array<{
+        host: string;
+        ok: boolean;
+        effective_state: string;
+        error?: { kind: string; message: string };
+      }>;
+      excluded_withdrawn: Array<{ host: string; effective_state: string }>;
+      summary: Record<string, unknown>;
+    };
+    expect(payload.topology_snapshot).toMatchObject({
+      source: { commit: TEST_TOPOLOGY_COMMIT },
+      projection_sha256: TEST_TOPOLOGY_DIGEST,
+    });
+    expect(payload.hosts).toHaveLength(2);
+    expect(payload.hosts[0]).toMatchObject({
+      host: "blade",
+      ok: true,
+      effective_state: "active",
+    });
+    expect(payload.hosts[1]).toMatchObject({
       host: "worm",
       ok: false,
+      effective_state: "unavailable",
       error: {
         kind: "unreachable",
         message: "Network request failed before response headers.",
       },
     });
-    expect(payload.some((entry) => entry.host === "carbon")).toBe(false);
+    expect(payload.excluded_withdrawn).toEqual([
+      expect.objectContaining({ host: "carbon", effective_state: "withdrawn" }),
+    ]);
+    expect(payload.summary).toMatchObject({
+      active: 1,
+      unavailable: 1,
+      desired_active_total: 2,
+      withdrawn_total: 1,
+      green: false,
+    });
+    expect(fetchImpl.mock.calls.map(([input]) => String(input))).not.toContain(
+      "http://carbon:8740/v1/admin/health",
+    );
   });
 
-  test("self health --fleet returns an empty array when no hosts have configured URLs", async () => {
-    const fixture = await createAgentsInfraFixture({
-      hosts: {
-        blade: { home: "/home/caleb" },
-        worm: { home: "/home/caleb" },
-      },
-    });
-    process.env["CALYX_AGENTS_INFRA_ROOT"] = fixture.root;
-
+  test("self health --fleet keeps a withdrawn-only snapshot outside the active denominator", async () => {
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchImpl = vi.fn();
     const program = buildProgram({
-      runCli: { createAdminClient: createAdminClientFactory(vi.fn()) },
+      runCli: {
+        createAdminClient: createAdminClientFactory(fetchImpl),
+        resolveFleetTopology: async () => makeFleetTopologyTargets({
+          active: [],
+          withdrawn: [makeFleetTopologyTarget("worm", "withdrawn")],
+        }),
+      },
     });
 
     await program.parseAsync(["node", "calyx", "self", "health", "--fleet", "--json"]);
 
-    expect(JSON.parse(String(out.mock.calls[0]?.[0]))).toEqual([]);
+    expect(JSON.parse(String(out.mock.calls[0]?.[0]))).toMatchObject({
+      topology_snapshot: {
+        source: { commit: TEST_TOPOLOGY_COMMIT },
+        projection_sha256: TEST_TOPOLOGY_DIGEST,
+      },
+      hosts: [],
+      excluded_withdrawn: [expect.objectContaining({ host: "worm" })],
+      summary: {
+        desired_active_total: 0,
+        withdrawn_total: 1,
+        green: true,
+      },
+      exit_code: 0,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

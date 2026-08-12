@@ -17,7 +17,8 @@ import {
   listSessionWakeDeliveries,
 } from "@polli-labs/calyx-core";
 import { createCalyxAdminClient } from "@polli-labs/calyx-client/admin";
-import { RunService, startSessionIngressReceiver, type RunActivityEntry } from "@polli-labs/calyx-run-service";
+import { startSessionIngressReceiver, type RunActivityEntry } from "@polli-labs/calyx-run-service";
+import { RunService } from "./support/test-run-service.js";
 import { startRunServer } from "@polli-labs/calyx-server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 

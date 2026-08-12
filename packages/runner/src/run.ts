@@ -113,6 +113,19 @@ export interface RunDeps {
   }) => Promise<TurnInput | null> | TurnInput | null;
 }
 
+function captureWorkspaceMutation(spec: RunSpec): "forbidden" | undefined {
+  if (!spec.output_capture) {
+    return undefined;
+  }
+  const agentDefinition = spec.metadata?.["agent_definition"];
+  if (!agentDefinition || typeof agentDefinition !== "object" || Array.isArray(agentDefinition)) {
+    return undefined;
+  }
+  return (agentDefinition as Record<string, unknown>)["workspace_mutation"] === "forbidden"
+    ? "forbidden"
+    : undefined;
+}
+
 /** Result of executeRun — includes final state, receipt, and all events. */
 export interface RunResult {
   receipt: RunReceipt;
@@ -1087,6 +1100,7 @@ export async function executeRun(
   const backendOptions = spec.output_capture
     ? spec.backend_options
     : mergeBackendOptionsWithCalyxRunMetadataEnv(spec.backend_options, calyxMetadataEnv);
+  const workspaceMutation = captureWorkspaceMutation(spec);
   const startOpts: AdapterStartOptions = {
     run_id: ctx.run_id,
     cwd: wtResult.path,
@@ -1126,6 +1140,7 @@ export async function executeRun(
     ...(spec.output_capture && deps.backendEnvironmentRedactions
       ? { environment_redactions: deps.backendEnvironmentRedactions }
       : {}),
+    ...(workspaceMutation ? { workspace_mutation: workspaceMutation } : {}),
   };
   if (backendOptions !== undefined) {
     startOpts.backend_options = backendOptions;

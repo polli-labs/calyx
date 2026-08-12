@@ -19,6 +19,7 @@ function observation(args: {
   ownerLiveness?: SelfUpgradeOperationObservation["owner_liveness"];
   terminal?: boolean;
   revision?: number;
+  topology?: boolean;
 } = {}): SelfUpgradeOperationObservation {
   const hosts = args.hosts ?? ["blade"];
   let operation = createSelfUpgradeOperation({
@@ -26,6 +27,15 @@ function observation(args: {
     writerId: "writer-status-test",
     conductorHost: "blade",
     targetRef: "origin/main",
+    ...(args.topology
+      ? {
+          topologySnapshot: {
+            schema_version: "fleet-topology-snapshot/v1" as const,
+            source: { commit: "a".repeat(40) },
+            projection_sha256: "b".repeat(64),
+          },
+        }
+      : {}),
     hosts,
     dryRun: false,
     parallel: hosts.length > 1,
@@ -92,7 +102,7 @@ describe("self upgrade operation status", () => {
     ["fleet", ["blade", "worm"]],
   ] as const)("projects bounded typed %s output without transition history", (_label, hosts) => {
     const result = projectSelfUpgradeOperationStatus(
-      observation({ hosts: [...hosts], terminal: true }),
+      observation({ hosts: [...hosts], terminal: true, topology: hosts.length > 1 }),
       "explicit",
     );
 
@@ -112,6 +122,15 @@ describe("self upgrade operation status", () => {
       },
     });
     expect(result.hosts).toHaveLength(hosts.length);
+    if (hosts.length > 1) {
+      expect(result.operation.topology_snapshot).toEqual({
+        schema_version: "fleet-topology-snapshot/v1",
+        source: { commit: "a".repeat(40) },
+        projection_sha256: "b".repeat(64),
+      });
+      expect(formatSelfUpgradeOperationStatusText(result))
+        .toContain(`topology: commit=${"a".repeat(40)} digest=${"b".repeat(64)}`);
+    }
     expect(JSON.stringify(result)).not.toContain("\"transitions\"");
     expect(Buffer.byteLength(`${serializeSelfUpgradeOperationStatusJson(result)}\n`, "utf8"))
       .toBeLessThanOrEqual(SELF_UPGRADE_OPERATION_STATUS_MAX_JSON_BYTES);

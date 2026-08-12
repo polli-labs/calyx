@@ -343,11 +343,13 @@ describe("CodexAdapter contract", () => {
       },
       backend_options: { sandbox: "read-only" },
       environment_redactions: ["OPENAI_API_KEY", "CALYX_SERVER_TOKEN"],
+      workspace_mutation: "forbidden",
     });
 
     expect(spawn.calls[0]?.env).toEqual({
       OPENAI_API_KEY: undefined,
       CALYX_SERVER_TOKEN: undefined,
+      CALYX_AGENT_WORKSPACE_MUTATION: "forbidden",
     });
   });
 
@@ -573,6 +575,7 @@ describe("CodexAdapter contract", () => {
     const shimPath = join(binDir, "codex");
     const capturePath = join(tmp, "codex-argv.json");
     const originalPath = process.env.PATH;
+    const originalCodexBin = process.env.CALYX_CODEX_BIN;
 
     try {
       await mkdir(binDir, { recursive: true });
@@ -586,6 +589,9 @@ writeFileSync(process.env.CODEX_CAPTURE_PATH, JSON.stringify({ argv: process.arg
       );
       await chmod(shimPath, 0o755);
       process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+      // Darwin intentionally prefers a known-good Homebrew binary over PATH.
+      // Bind the resolver to this test-owned executable on every platform.
+      process.env.CALYX_CODEX_BIN = shimPath;
 
       const adapter = new CodexAdapter();
       await adapter.spawn({
@@ -608,6 +614,8 @@ writeFileSync(process.env.CODEX_CAPTURE_PATH, JSON.stringify({ argv: process.arg
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
+      if (originalCodexBin === undefined) delete process.env.CALYX_CODEX_BIN;
+      else process.env.CALYX_CODEX_BIN = originalCodexBin;
       await rm(tmp, { recursive: true, force: true });
     }
   });

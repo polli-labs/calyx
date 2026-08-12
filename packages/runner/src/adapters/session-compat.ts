@@ -70,6 +70,7 @@ export function createSpawnCompatibilitySession(
           ...(start.environment_redactions
             ? { environment_redactions: start.environment_redactions }
             : {}),
+          ...(start.workspace_mutation ? { workspace_mutation: start.workspace_mutation } : {}),
           ...(start.system_prompt ? { system_prompt: start.system_prompt } : {}),
           ...(start.append_system_prompt ? { append_system_prompt: start.append_system_prompt } : {}),
           ...(start.onEvent ? { onEvent: start.onEvent } : {}),

@@ -43,11 +43,6 @@ export interface HostsTruthFile {
   hosts?: Record<string, HostTruthEntry>;
 }
 
-export interface RunServeHostTarget {
-  host: string;
-  runServeUrl: string;
-}
-
 export interface RepoRegistryDoctorOptions {
   agentsInfraRoot?: string;
   host?: string;
@@ -618,19 +613,6 @@ export async function doctorRepoRegistry(
     roots,
     ...(aliasCollisions.length > 0 ? { alias_collisions: aliasCollisions } : {}),
   };
-}
-
-export async function listRunServeHosts(agentsInfraRoot: string): Promise<RunServeHostTarget[]> {
-  const hostsTruth = await readHostsTruth(agentsInfraRoot);
-  return Object.entries(hostsTruth.hosts ?? {})
-    .flatMap(([host, entry]) => {
-      const runServeUrl = entry.run_serve_url?.trim();
-      if (!runServeUrl) {
-        return [];
-      }
-      return [{ host, runServeUrl }];
-    })
-    .sort((left, right) => left.host.localeCompare(right.host));
 }
 
 function normalizeHostAlias(host: string): string {

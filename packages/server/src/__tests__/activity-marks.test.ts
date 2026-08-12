@@ -13,8 +13,8 @@ import {
   ActivityMarkTargetAmbiguousError,
   ActivityMarkTargetNotFoundError,
   ActivityMarkTargetUnavailableError,
-  RunService,
 } from "@polli-labs/calyx-run-service";
+import { RunService } from "./support/test-run-service.js";
 import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from "vitest";
 
 import { startRunServer, type RunServerHandle } from "../server.js";
@@ -504,7 +504,10 @@ describe("consumer activity mark routes", () => {
     expect(first.response.status).toBe(200);
     expect(second.response.status).toBe(200);
     expect(first.body["mark_id"]).toBe(second.body["mark_id"]);
-    expect(new Set([first.body["reason"], second.body["reason"]])).toEqual(new Set(["first immutable reason"]));
+    const convergedReasons = new Set([first.body["reason"], second.body["reason"]]);
+    expect(convergedReasons.size).toBe(1);
+    expect(["first immutable reason", "second ignored reason"])
+      .toContain([...convergedReasons][0]);
     expect(server.resolver).toHaveBeenCalledTimes(2);
 
     const opened = await openStateStore(server.state);

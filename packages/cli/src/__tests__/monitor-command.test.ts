@@ -20,7 +20,8 @@ import {
   recordMonitorEvaluation,
   runnerSupervisionPredicate,
 } from "@polli-labs/calyx-core";
-import { RunService, type RunRecord } from "@polli-labs/calyx-run-service";
+import type { RunRecord } from "@polli-labs/calyx-run-service";
+import { RunService } from "./support/test-run-service.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { startRunServer } from "@polli-labs/calyx-server";

@@ -7,7 +7,6 @@ import YAML from "yaml";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   doctorRepoRegistry,
-  listRunServeHosts,
   resolveRepo,
   resolveRepoIdentity,
   resolveRepoClone,
@@ -773,27 +772,6 @@ describe("resolveRepoClone", () => {
     await mkdir(path.join(legacyBaseClone, ".git"), { recursive: true });
 
     await expect(resolveRepoClone("polli-labs/linnaeus-dev")).resolves.toBe(legacyBaseClone);
-  });
-});
-
-describe("listRunServeHosts", () => {
-  const roots = new Set<string>();
-
-  afterEach(async () => {
-    for (const root of roots) {
-      await rm(root, { recursive: true, force: true });
-    }
-    roots.clear();
-  });
-
-  test("returns only hosts with configured run-serve URLs in stable host order", async () => {
-    const fixture = await createAgentsInfraFixture();
-    roots.add(fixture.root);
-
-    await expect(listRunServeHosts(fixture.root)).resolves.toEqual([
-      { host: "blade", runServeUrl: "http://blade:8740" },
-      { host: "carbon", runServeUrl: "http://carbon:8740" },
-    ]);
   });
 });
 

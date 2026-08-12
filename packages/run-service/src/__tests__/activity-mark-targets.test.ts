@@ -12,8 +12,8 @@ import {
   ActivityMarkTargetAmbiguousError,
   ActivityMarkTargetNotFoundError,
   ActivityMarkTargetUnavailableError,
-  RunService,
 } from "../service.js";
+import { RunService } from "./support/test-run-service.js";
 import type { RunRecord } from "../types.js";
 
 const created: string[] = [];

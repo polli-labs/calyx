@@ -9,6 +9,7 @@ import {
   CALYX_DAEMON_HEALTH_PROTOCOL_EPOCH,
   CALYX_HTTP_SSE_MAX_FRAME_BYTES,
 } from "@polli-labs/calyx-core";
+import type { FleetTopologyTargetsV1 } from "@polli-labs/calyx-core";
 import type {
   ExecuteStoredRunOptions,
   RecordedRunEvent,
@@ -25,12 +26,17 @@ import type {
   RunRecord,
 } from "@polli-labs/calyx-run-service";
 import { HOST_PROCESS_RECEIPT_SCHEMA_VERSION, resolveRunIntent } from "@polli-labs/calyx-run-service";
+import { runSpecSchema } from "@polli-labs/calyx-runner";
 import {
   buildProgram,
   isRunReconciliationIncomplete,
   type RunCliDependencies,
 } from "../run-cli";
 import { openClientRecoveryCustody } from "../client-recovery-custody.js";
+import {
+  TEST_TOPOLOGY_PROJECTION_SHA256,
+  passingTestWorkloadAdmissionDecision,
+} from "./support/test-run-service.js";
 
 const GENERATED_ERROR_BODY_MAX_BYTES = 1024 * 1024;
 
@@ -338,6 +344,7 @@ function makeHealthPayload(overrides?: Record<string, unknown>) {
       package_version: "0.2.0",
     },
     active_runs: 0,
+    workload_admission: passingTestWorkloadAdmissionDecision("blade"),
     maintenance_mode: false,
     supports_features: [
       CALYX_DAEMON_FEATURES.healthV1,
@@ -349,8 +356,48 @@ function makeHealthPayload(overrides?: Record<string, unknown>) {
       CALYX_DAEMON_FEATURES.systemPromptV1,
       CALYX_DAEMON_FEATURES.backendReasoningEffortV1,
       CALYX_DAEMON_FEATURES.agentRunnerActivityV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
     ],
     ...overrides,
+  };
+}
+
+function makeRunLaunchTopologyTargets(): FleetTopologyTargetsV1 {
+  const target = {
+    host: "blade",
+    owner: "caleb",
+    desired_membership: "active" as const,
+    roles: ["gpu"],
+    expected_surface_profile: "full",
+    expected_surfaces: [
+      "topology", "reachability", "toolchain", "clone", "promoted", "running",
+      "daemon", "state_schema", "config", "skills", "hot_instruction",
+    ] as const,
+    run_serve_url: "http://blade:8740",
+    catch_up_policy: "required_before_start" as const,
+  };
+  return {
+    schema_version: "fleet-topology-targets/v1",
+    intent: "mutating",
+    snapshot: {
+      schema_version: "fleet-topology-snapshot/v1",
+      source: {
+        repository: "polli-labs/agents-infra",
+        root: "/tmp/agents-infra",
+        path: "/tmp/agents-infra/fleet/truths/hosts.yaml",
+        ref: "refs/remotes/origin/main",
+        commit: "b".repeat(40),
+        dirty: false,
+      },
+      projection_sha256: TEST_TOPOLOGY_PROJECTION_SHA256,
+      resolved_at: "2026-08-02T12:00:00.000Z",
+      resolver: "@polli-labs/calyx-core/fleet-topology-resolver@v1",
+    },
+    authority: { status: "authoritative", reasons: [], label: "origin/main" },
+    can_emit_green_verdict: true,
+    desired_active: [{ ...target, expected_surfaces: [...target.expected_surfaces] }],
+    withdrawn: [],
+    all_enrolled: [{ ...target, expected_surfaces: [...target.expected_surfaces] }],
   };
 }
 
@@ -543,6 +590,7 @@ function buildRunCliDeps(args?: {
   tokenForHost?: RunCliDependencies["tokenForHost"];
   openRecoveryCustody?: RunCliDependencies["openRecoveryCustody"];
   watchRunChanges?: RunCliDependencies["watchRunChanges"];
+  resolveFleetTopology?: RunCliDependencies["resolveFleetTopology"];
 }) {
   const launchSpy = vi.fn(async () => args?.launchResult ?? makeLaunchResult(makeRecord({ state: "queued" }), "background"));
   const resolveResumeWorktreePathSpy = vi.fn(
@@ -654,6 +702,8 @@ function buildRunCliDeps(args?: {
       })),
       executeStoredRun: vi.fn(args?.executeStoredRun ?? (async () => makeRecord({ state: "succeeded", exitCode: 0 }))),
     }),
+    resolveFleetTopology: args?.resolveFleetTopology
+      ?? (async (intent) => ({ ...makeRunLaunchTopologyTargets(), intent })),
     ...(args?.fetchSpy ? {
       createAdminClient: createAdminClientFactory((async (...fetchArgs: Parameters<typeof fetch>) => {
         const [input, init] = fetchArgs;
@@ -1294,6 +1344,10 @@ describe("run command", () => {
       "branch=feature/pol-1799",
       "--var",
       "base=main",
+      "--worktree-mode",
+      "existing",
+      "--worktree-path",
+      fixture.repo,
       "--json",
     ]);
 
@@ -1314,9 +1368,14 @@ describe("run command", () => {
       required: true,
     });
     expect(intentArg.backend_options).toMatchObject({ sandbox: "read-only" });
+    expect(intentArg.backend_options).not.toHaveProperty("env");
     expect(intentArg.metadata?.["agent_definition"]).toMatchObject({
       output_capture: expect.objectContaining({ name: "findings.json" }),
+      workspace_mutation: "forbidden",
     });
+
+    const resolvedSpec = await resolveRunIntent(intentArg);
+    expect(() => runSpecSchema.parse(resolvedSpec)).not.toThrow();
   });
 
   test("review dry-run compiles reviewer launch and returns conduct receipt without launching", async () => {
@@ -1921,6 +1980,7 @@ describe("run command", () => {
     const remoteHealth = makeHealthPayload({
       supports_features: [
         CALYX_DAEMON_FEATURES.healthV1,
+        CALYX_DAEMON_FEATURES.workloadAdmissionV1,
         CALYX_DAEMON_FEATURES.agentRunnerV1,
         CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
         CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -2890,6 +2950,7 @@ describe("run command", () => {
     expect(JSON.parse(String(launchInit.body))).toMatchObject({
       schema_version: "calyx.run-launch-request/v1",
       idempotency_key: "run-launch:generated-run-id",
+      topology_projection_sha256: TEST_TOPOLOGY_PROJECTION_SHA256,
       intent: {
         kernel: "agent_runner",
         host: "blade",
@@ -2897,6 +2958,7 @@ describe("run command", () => {
         require_execplan: false,
         required_features: [
           CALYX_DAEMON_FEATURES.healthV1,
+          CALYX_DAEMON_FEATURES.workloadAdmissionV1,
           CALYX_DAEMON_FEATURES.agentRunnerV1,
           CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
           CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -3481,6 +3543,7 @@ describe("run command", () => {
     expect(JSON.parse(launchBodies[0]!)).toMatchObject({
       schema_version: "calyx.run-launch-request/v1",
       idempotency_key: "launch-retry-42",
+      topology_projection_sha256: TEST_TOPOLOGY_PROJECTION_SHA256,
       intent: { run_id: "run-retry-stable" },
     });
     expect(JSON.parse(String(out.mock.calls.at(-1)?.[0]))).toMatchObject({

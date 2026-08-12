@@ -50,12 +50,18 @@ JSON envelope:
 
 ```json
 {
-  "schema_version": "fleet-convergence-status/v1",
+  "schema_version": "fleet-convergence-status/v2",
   "checked_at": "2026-06-10T20:00:00.000Z",
+  "topology_snapshot": {
+    "source": { "commit": "14f1ce31..." },
+    "projection_sha256": "9ad0..."
+  },
   "hosts": [
     {
       "host": "mba",
       "verdict": "pending",
+      "desired_membership": "active",
+      "effective_state": "repair",
       "legs": [
         {
           "leg": "daemon_build",
@@ -70,14 +76,23 @@ JSON envelope:
       ]
     }
   ],
+  "excluded_withdrawn": [],
   "summary": {
     "fresh": 0,
     "pending": 1,
     "structural": 0,
-    "missing": 0
+    "missing": 0,
+    "unavailable": 0,
+    "desired_active_total": 1,
+    "withdrawn_total": 0,
+    "green": false
   }
 }
 ```
 
-The command does not reach out to hosts. It reads the local state store only.
-Freshness and upgrade remain the observation/write-through surfaces.
+The command does not reach out to hosts. It resolves `all_enrolled` from the
+topology snapshot, then projects local state-store rows over that membership.
+A desired-active host without rows is `missing`/`unavailable` and fails the
+aggregate. Withdrawn hosts are listed under `excluded_withdrawn` and remain
+outside the active denominator. Freshness and upgrade remain the
+observation/write-through surfaces.

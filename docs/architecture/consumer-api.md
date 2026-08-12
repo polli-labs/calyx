@@ -276,6 +276,16 @@ while `truncated: false` forbids it. Redundant `returned_turns` and
 `returned_messages` integers are absent because their relationship to the page
 arrays cannot be expressed or checked by generated OpenAPI clients.
 
+Activity message and turn pages accept one closed ordering dimension:
+`order=oldest_first|newest_first`. Omission is `oldest_first`.
+`newest_first` returns the newest authorized rows first and its opaque
+`next_cursor` continues toward older rows. The cursor binds the normalized
+filter set and order, so it cannot be replayed under the opposite direction.
+This is seek pagination, not an admin `first`/`last` selector: authorization
+and visibility classification still happen before counts, ordering, limits,
+and cursor construction, and the consumer surface exposes no `tail`, `latest`,
+raw, hidden, or tool-bearing variant.
+
 Interactive activity-list observations add only the presentation facts earned
 by current consumer recall callers. `attention_state` is the closed
 `working|awaiting|idle|unknown` projection: the latest consumer-visible turn's

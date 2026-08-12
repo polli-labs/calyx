@@ -21,6 +21,7 @@ describe("requiredFeaturesForIntent", () => {
   test("applies the agent_runner kernel baseline by default", () => {
     expect(requiredFeaturesForIntent({})).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
       CALYX_DAEMON_FEATURES.agentRunnerV1,
       CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
       CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -31,6 +32,7 @@ describe("requiredFeaturesForIntent", () => {
   test("keeps host_process on the health-only baseline", () => {
     expect(requiredFeaturesForIntent({ kernel: "host_process" })).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
     ]);
   });
 
@@ -40,6 +42,7 @@ describe("requiredFeaturesForIntent", () => {
       repo: "calyx",
     })).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
       CALYX_DAEMON_FEATURES.agentRunnerV1,
       CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
       CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -61,6 +64,7 @@ describe("requiredFeaturesForIntent", () => {
       prompt_ref: string;
     })).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
       CALYX_DAEMON_FEATURES.agentRunnerV1,
       CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
       CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -75,6 +79,7 @@ describe("requiredFeaturesForIntent", () => {
     );
     expect(requiredFeaturesForIntent({ system_prompt: "Replace defaults." })).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
       CALYX_DAEMON_FEATURES.agentRunnerV1,
       CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
       CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -116,6 +121,7 @@ describe("requiredFeaturesForIntent", () => {
       backend_options: { reasoning_effort: "xhigh" },
     })).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
       CALYX_DAEMON_FEATURES.agentRunnerV1,
       CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
       CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -133,6 +139,7 @@ describe("requiredFeaturesForIntent", () => {
       backend_options: { model: "opus" },
     })).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
       CALYX_DAEMON_FEATURES.agentRunnerV1,
       CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
       CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,
@@ -164,6 +171,7 @@ describe("requiredFeaturesForIntent", () => {
       backend_options: { agent_activity: { stale_after_ms: 600000 } },
     })).toEqual([
       CALYX_DAEMON_FEATURES.healthV1,
+      CALYX_DAEMON_FEATURES.workloadAdmissionV1,
       CALYX_DAEMON_FEATURES.agentRunnerV1,
       CALYX_DAEMON_FEATURES.defaultPathInjectionV1,
       CALYX_DAEMON_FEATURES.detachedWorkerDiagnosticsV1,

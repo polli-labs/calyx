@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { toCalyxAdminReconcileResult, type ActivityMarkListPage, type ActivityMarkRow } from "@polli-labs/calyx-core";
 import { isCalyxRunEvent } from "@polli-labs/calyx-run-service";
+import { passingTestWorkloadAdmissionDecision } from "./support/test-run-service.js";
 
 import {
   adminReconcileResultSchema,
@@ -333,6 +334,7 @@ describe("consumer DTO positive construction", () => {
         pending: 0,
         error: "private state path /tmp/secret/calyx.db",
       },
+      workload_admission: passingTestWorkloadAdmissionDecision("blade"),
       active_runs: 2,
       active_run_ids: ["run-secret-1", "run-secret-2"],
       maintenance_mode: false,

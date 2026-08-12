@@ -24,6 +24,7 @@ import {
   validateApiProvenance,
   withSqliteBusyRetry,
   withSqliteMutex,
+  WORKLOAD_ADMISSION_FENCE_REASONS,
 } from "@polli-labs/calyx-core";
 import type { StateDriverDatabase } from "@polli-labs/calyx-core";
 import type {
@@ -62,6 +63,38 @@ export const EVENTS_INDEX_FILENAME = "events.index.jsonl";
  */
 export const EVENT_JOURNAL_MAX_LINE_BYTES = CALYX_HTTP_DEFAULT_JSON_RESPONSE_MAX_BYTES;
 const LEGACY_GLOBAL_PROJECTION_TAIL_MAX_BYTES = 8 * 1024 * 1024;
+
+declare const runCreationAdmissionBrand: unique symbol;
+
+/**
+ * One-shot capability minted only by RunService after current admission has
+ * passed. It is intentionally absent from the package root export surface.
+ */
+export interface RunCreationAdmission {
+  readonly [runCreationAdmissionBrand]: true;
+}
+
+const issuedRunCreationAdmissions = new WeakSet<object>();
+
+/** @internal RunService composition seam; do not export from package index. */
+export function issueRunCreationAdmission(): RunCreationAdmission {
+  const admission = Object.freeze({});
+  issuedRunCreationAdmissions.add(admission);
+  return admission as RunCreationAdmission;
+}
+
+export class RunCreationAdmissionRequiredError extends Error {
+  constructor() {
+    super("Run-record creation requires a fresh RunService workload-admission capability.");
+    this.name = "RunCreationAdmissionRequiredError";
+  }
+}
+
+function consumeRunCreationAdmission(admission: RunCreationAdmission): void {
+  if (!issuedRunCreationAdmissions.delete(admission)) {
+    throw new RunCreationAdmissionRequiredError();
+  }
+}
 
 const agentProgressSignalSchema = z.object({
   source: z.enum(["claude_stream", "adapter_activity"]),
@@ -628,6 +661,7 @@ const runServiceJournalEventSchema = z.object({
     "launch_result",
     "spec_persisted",
     "launch_dispatched",
+    "execution_admission_refused",
     "launch_started",
     "launch_completed",
     "integration_started",
@@ -792,6 +826,41 @@ function isRunLaunchStage(value: unknown): value is RunRecord["launch"]["stage"]
   return value === "accepted" || value === "dispatching" || value === "executing";
 }
 
+function isRunExecutionAdmissionRefusal(
+  value: unknown,
+): value is NonNullable<RunRecord["launch"]["execution_admission_refusal"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const decision = candidate["decision"];
+  if (!decision || typeof decision !== "object" || Array.isArray(decision)) return false;
+  const typedDecision = decision as Record<string, unknown>;
+  const reason = candidate["reason"];
+  const failedSurface = candidate["failed_surface"];
+  const nextAction = candidate["next_action"];
+  const common = candidate["schema_version"] === "calyx.run-execution-admission-refusal/v1"
+    && isNonNegativeInteger(candidate["dispatch_attempt"])
+    && isIsoTimestamp(candidate["refused_at"])
+    && typeof reason === "string"
+    && WORKLOAD_ADMISSION_FENCE_REASONS.some((candidateReason) => candidateReason === reason)
+    && isNonEmptyString(failedSurface)
+    && isNonEmptyString(nextAction)
+    && typedDecision["schema_version"] === "calyx.workload-admission-decision/v1"
+    && isIsoTimestamp(typedDecision["decided_at"]);
+  if (!common) return false;
+  return (
+    candidate["code"] === "workload_admission_fenced"
+    && typedDecision["admission"] === "fenced"
+    && typedDecision["reason"] === reason
+    && typedDecision["failed_surface"] === failedSurface
+    && typedDecision["next_action"] === nextAction
+  )
+    || (
+      candidate["code"] === "workload_admission_busy"
+      && (typedDecision["admission"] === "open" || typedDecision["admission"] === "fenced")
+      && isNonNegativeInteger(candidate["acquire_timeout_ms"])
+    );
+}
+
 function isHostProcessExecutionBinding(
   value: unknown,
   executionId: string | undefined,
@@ -821,6 +890,10 @@ function isCompleteRunLaunchState(
     && (launch.last_dispatch_at === undefined || isIsoTimestamp(launch.last_dispatch_at))
     && (launch.execution_id === undefined || isNonEmptyString(launch.execution_id))
     && (launch.execution_started_at === undefined || isIsoTimestamp(launch.execution_started_at))
+    && (
+      launch.execution_admission_refusal === undefined
+      || isRunExecutionAdmissionRefusal(launch.execution_admission_refusal)
+    )
     && (
       launch.host_process_execution_binding === undefined
       || isHostProcessExecutionBinding(
@@ -1123,6 +1196,11 @@ export class RunStore {
     return path.join(this.root, ".mutexes", "reconcile-preserving.sqlite3");
   }
 
+  /** Cross-process serialization authority for current workload admission. */
+  workloadAdmissionMutexPath(): string {
+    return path.join(this.root, ".mutexes", "workload-admission.sqlite3");
+  }
+
   eventsIndexPath(): string {
     return path.join(this.root, EVENTS_INDEX_FILENAME);
   }
@@ -1132,6 +1210,7 @@ export class RunStore {
   }
 
   async createRun(
+    admission: RunCreationAdmission,
     intent: RunIntent,
     options: {
       creationProvenance?: ApiProvenanceV1 | undefined;
@@ -1141,6 +1220,7 @@ export class RunStore {
       acceptedAt?: string | undefined;
     } = {},
   ): Promise<RunRecord> {
+    consumeRunCreationAdmission(admission);
     const requestHash = options.requestHash ?? hashCanonicalJcs(intent);
     const admissionIdentity = options.admissionIdentity ?? hashCanonicalJcs({
       domain: "calyx.local-run-launch/v1",
@@ -1251,6 +1331,9 @@ export class RunStore {
     // instances and sibling writers. Legacy claims without an id remain
     // legacy; only a guarded reap-and-create path may mint a new incarnation.
     const authoritativeRecord = await readJsonFile<RunRecord>(this.paths(runId).runRecordPath);
+    if (!authoritativeRecord) {
+      throw new RunCreationAdmissionRequiredError();
+    }
     if (authoritativeRecord
       && authoritativeRecord.launch?.incarnation_id !== next.launch?.incarnation_id) {
       throw new Error(`Run ${runId} launch.incarnation_id is immutable for an extant claim.`);
@@ -1463,6 +1546,9 @@ export class RunStore {
             : {}),
           ...(isIsoTimestamp(existingLaunch?.execution_started_at)
             ? { execution_started_at: existingLaunch.execution_started_at }
+            : {}),
+          ...(isRunExecutionAdmissionRefusal(existingLaunch?.execution_admission_refusal)
+            ? { execution_admission_refusal: existingLaunch.execution_admission_refusal }
             : {}),
           ...(isHostProcessExecutionBinding(
             existingLaunch?.host_process_execution_binding,

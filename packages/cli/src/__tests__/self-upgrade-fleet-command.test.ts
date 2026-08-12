@@ -13,6 +13,7 @@ import {
   encodeSelfUpgradeOperationTransition,
   listFleetConvergenceRows,
   openStateStore,
+  upsertFleetConvergenceRow,
   readSelfUpgradeOperation,
   SELF_UPGRADE_OPERATION_MAX_HOSTS,
   SELF_UPGRADE_OPERATION_MAX_PHASE_TRANSITIONS_PER_HOST,
@@ -39,11 +40,19 @@ import {
   serializeSelfUpgradeReceipt,
   type SelfUpgradeOptions,
   type SelfUpgradePlan,
+  type SelfUpgradeProjectionIssue,
   type SelfUpgradeReceipt,
 } from "../commands/self-upgrade";
 import type { SelfFreshnessHostResult, SelfFreshnessResult } from "../self-freshness";
 import { buildTargetStartupContractPayload } from "../self-upgrade-startup-contract";
 import { execSelfUpgradeStreaming } from "../self-upgrade-stream-io";
+import { createProductionToolchainCheckForHost } from "../self-upgrade-toolchain";
+import {
+  makeFleetTopologyTarget,
+  makeFleetTopologyTargets,
+  TEST_TOPOLOGY_COMMIT,
+  TEST_TOPOLOGY_DIGEST,
+} from "./fleet-topology-fixture";
 
 const execFile = promisify(execFileCallback);
 
@@ -148,7 +157,116 @@ function makePlan(
     blockers: [],
     warnings: [],
     diagnostics: [],
+    toolchain_check: makePassingToolchainCheck(host, targetSha),
   };
+}
+
+function makePassingToolchainCheck(
+  host: string,
+  targetSha: string,
+): NonNullable<SelfUpgradePlan["toolchain_check"]> {
+  const checkedAt = "2026-04-20T12:00:30.000Z";
+  return {
+    schema_version: "fleet-convergence-check/v1",
+    surface: "toolchain",
+    status: "pass",
+    host,
+    expected: { node_range: ">=22.13.0", package_manager: "pnpm", pnpm_version: "10.34.1" },
+    observed: {
+      process_exec_path_realpath: "/usr/bin/node",
+      process_node_version: "v22.23.1",
+      child_node: { executable_realpath: "/usr/bin/node", version: "v22.23.1", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/usr/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: {
+          version: "10.34.1",
+          exit_code: 0,
+          probe: "manage-package-manager-versions-disabled",
+        },
+        nested: { version: "10.34.1", exit_code: 0 },
+      },
+      bootstrap_cwd: `/srv/${host}/calyx`,
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1",
+      path_resolution: {
+        observer: "parent_diagnostic",
+        total_entries: 1,
+        truncated: false,
+        entries: [{ index: 0, directory: "/usr/bin" }],
+      },
+    },
+    failures: [],
+    checked_at: checkedAt,
+    evidence: {
+      source: "self-upgrade-bootstrap-attestation",
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+    },
+    freshness: { status: "current", observed_at: checkedAt },
+    topology_identity: { status: "not_bound" },
+    target_bundle_identity: { calyx_source_sha: targetSha },
+  };
+}
+
+function makeBlockedToolchainCheck(
+  host: string,
+  targetSha = STABLE_TARGET_SHA,
+): NonNullable<SelfUpgradePlan["toolchain_check"]> {
+  const checkedAt = "2026-04-20T12:00:30.000Z";
+  return {
+    schema_version: "fleet-convergence-check/v1",
+    surface: "toolchain",
+    status: "blocked",
+    host,
+    expected: { node_range: ">=22.13.0", package_manager: "pnpm", pnpm_version: "10.34.1" },
+    observed: {
+      child_node: { executable_realpath: "/opt/homebrew/bin/node", version: "v26.5.0", exit_code: 0 },
+      child_pnpm: {
+        executable_realpath: "/opt/homebrew/bin/pnpm",
+        resolution_source: "pnpm-exec-node-path",
+        self_dispatched: { version: "10.34.1", exit_code: 0 },
+        intrinsic: { version: "11.17.0", exit_code: 0, probe: "with-current" },
+        nested: { version: "11.17.0", exit_code: 0 },
+      },
+      bootstrap_cwd: `/srv/${host}/calyx`,
+      spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1",
+      environment_contract: "self-upgrade-bootstrap-isolated-env/v1",
+      path_resolution: { observer: "parent_diagnostic", total_entries: 1, truncated: false, entries: [{ index: 0, directory: "/opt/homebrew/bin" }] },
+    },
+    failures: [{ code: "child_pnpm_intrinsic_version_mismatch", message: "pnpm 11.17.0 does not match 10.34.1." }],
+    checked_at: checkedAt,
+    evidence: { source: "self-upgrade-bootstrap-attestation", spawn_contract: "@polli-labs/calyx/self-upgrade-child-spawn@v1" },
+    freshness: { status: "current", observed_at: checkedAt },
+    repair_owner: "fleet_ops",
+    next_action: { kind: "repair_toolchain", description: `Repair ${host}'s bootstrap toolchain.` },
+    topology_identity: { status: "not_bound" },
+    target_bundle_identity: { calyx_source_sha: targetSha },
+  };
+}
+
+function blockedToolchainFailureJson(host: string): string {
+  const toolchainCheck = makeBlockedToolchainCheck(host);
+  const plan = {
+    ...makePlan(host),
+    toolchain_check: toolchainCheck,
+    blockers: ["blocked/toolchain: pnpm 11.17.0 does not match 10.34.1."],
+  };
+  return `${JSON.stringify({
+    status: "failed",
+    error: plan.blockers[0],
+    exit_code: 1,
+    plan,
+    receipt_path: `/home/${host}/.calyx/self-upgrade-receipts/${host}.json`,
+    receipt: {
+      ...makeReceipt(host),
+      status: "failed",
+      after_head: CHECKOUT_HEAD,
+      commit_list: [],
+      toolchain_check: toolchainCheck,
+      error: plan.blockers[0],
+    },
+  })}\n`;
 }
 
 function makeReceipt(
@@ -177,6 +295,7 @@ function makeReceipt(
     drain_duration_ms: 0,
     daemons_restarted: [],
     warnings: [],
+    toolchain_check: makePassingToolchainCheck(host, targetSha),
   };
 }
 
@@ -211,12 +330,7 @@ function bindCanonicalReceipt(
 
 function makeBoundLocalSuccess(
   options: SelfUpgradeOptions,
-  projectionIssues?: Array<{
-    scope: "status_stderr" | "remote_phase_stderr" | "lock_cleanup";
-    code: "projection_unavailable" | "cleanup_unavailable";
-    observed_at: string;
-    message: string;
-  }>,
+  projectionIssues?: SelfUpgradeProjectionIssue[],
 ) {
   const host = options.host;
   const receiptPath = `/home/${host}/.calyx/self-upgrade-receipts/${host}.json`;
@@ -525,8 +639,27 @@ async function makeTempRoot(): Promise<string> {
   return root;
 }
 
+interface UpgradeTopologyTestTarget {
+  host: string;
+  runServeUrl: string;
+}
+
+function fleetTopologyFromUpgradeTargets(
+  targets: readonly UpgradeTopologyTestTarget[],
+) {
+  return makeFleetTopologyTargets({
+    intent: "mutating",
+    active: targets.map((target) => makeFleetTopologyTarget(
+      target.host,
+      "active",
+      target.runServeUrl,
+    )),
+  });
+}
+
 type SelfUpgradeFleetTestDependencies = SelfUpgradeFleetDependencies & {
   resolveConductorTargetSha?: (targetRef: string, conductorHost: string) => Promise<string | undefined>;
+  fleetTargets?: () => Promise<readonly UpgradeTopologyTestTarget[]>;
 };
 
 function testTargetEvidence(targetRef: string, targetSha: string) {
@@ -543,7 +676,7 @@ function runSelfUpgradeFleet(
   options: SelfUpgradeFleetOptions,
   dependencies: SelfUpgradeFleetTestDependencies = {},
 ) {
-  const { resolveConductorTargetSha, ...typedDependencies } = dependencies;
+  const { fleetTargets, resolveConductorTargetSha, ...typedDependencies } = dependencies;
   return runSelfUpgradeFleetCommand(options, {
     // Dispatch/receipt tests must not fall through to the real freshness
     // collector, nor spend real wall time in the POL-1933 settle window. Tests
@@ -554,6 +687,8 @@ function runSelfUpgradeFleet(
     // test deliberately breaks it.
     resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
     ...typedDependencies,
+    resolveFleetTopology: dependencies.resolveFleetTopology
+      ?? (async () => fleetTopologyFromUpgradeTargets(await fleetTargets?.() ?? [])),
     resolveConductorTargetEvidence: async (targetRef, conductorHost, explicitTargetSha) => {
       const supplied = await resolveConductorTargetSha?.(targetRef, conductorHost);
       return testTargetEvidence(targetRef, explicitTargetSha ?? supplied ?? STABLE_TARGET_SHA);
@@ -665,7 +800,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -737,7 +872,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         execFileAsync: vi.fn(async () => ({ stdout: dryRunJson("blade"), stderr: "" })),
       },
@@ -769,7 +904,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         execFileAsync: vi.fn(async () => ({ stdout: dryRunJson("blade"), stderr: "" })),
         durableDirectoryOpenOptions: {
@@ -808,7 +943,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         execFileAsync: vi.fn(async () => ({ stdout: dryRunJson("blade"), stderr: "" })),
       },
@@ -837,7 +972,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         execFileAsync,
         durableDirectoryOpenOptions: { descriptorPathCandidates: () => [] },
@@ -875,7 +1010,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         execFileAsync,
       },
@@ -896,7 +1031,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -964,7 +1099,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -1017,7 +1152,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -1074,7 +1209,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
           { host: "carbon", runServeUrl: "http://carbon:8740" },
@@ -1152,7 +1287,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "carbon", runServeUrl: "http://carbon:8740" },
         ],
@@ -1193,7 +1328,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "carbon", runServeUrl: "http://carbon:8740" },
         ],
@@ -1221,7 +1356,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "carbon", runServeUrl: "http://carbon:8740" },
         ],
         listDescriptors: async () => [],
@@ -1251,7 +1386,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -1267,8 +1402,13 @@ describe("runSelfUpgradeFleet", () => {
 
   test("records a real fleet postflight from self freshness after successful upgrades", async () => {
     const homeRoot = await makeTempRoot();
-    const runFreshnessCommand = vi.fn(async (options) =>
-      freshnessJson(options.host ?? "unknown", options.host === "worm" ? "usable_with_warnings" : "fresh"));
+    const runFreshnessCommand = vi.fn(async (
+      options: Parameters<NonNullable<SelfUpgradeFleetDependencies["runFreshnessCommand"]>>[0],
+      _deps?: Parameters<NonNullable<SelfUpgradeFleetDependencies["runFreshnessCommand"]>>[1],
+    ) => freshnessJson(
+      options.host ?? "unknown",
+      options.host === "worm" ? "usable_with_warnings" : "fresh",
+    ));
 
     const result = await runSelfUpgradeFleet(
       {},
@@ -1277,7 +1417,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -1297,8 +1437,33 @@ describe("runSelfUpgradeFleet", () => {
       { host: "blade", against: STABLE_TARGET_SHA, json: true },
       { host: "worm", against: STABLE_TARGET_SHA, json: true },
     ]);
-    expect(runFreshnessCommand).toHaveBeenNthCalledWith(1, { host: "blade", against: STABLE_TARGET_SHA, json: true }, { authToken: "secret-token" });
-    expect(runFreshnessCommand).toHaveBeenNthCalledWith(2, { host: "worm", against: STABLE_TARGET_SHA, json: true }, { authToken: "secret-token" });
+    expect(runFreshnessCommand).toHaveBeenNthCalledWith(
+      1,
+      { host: "blade", against: STABLE_TARGET_SHA, json: true },
+      expect.objectContaining({
+        authToken: "secret-token",
+        toolchainCheckForHost: expect.any(Function),
+      }),
+    );
+    expect(runFreshnessCommand).toHaveBeenNthCalledWith(
+      2,
+      { host: "worm", against: STABLE_TARGET_SHA, json: true },
+      expect.objectContaining({
+        authToken: "secret-token",
+        toolchainCheckForHost: expect.any(Function),
+      }),
+    );
+    const bladeToolchainCheckForHost = runFreshnessCommand.mock.calls[0]?.[1]?.toolchainCheckForHost;
+    expect(await bladeToolchainCheckForHost?.({
+      host: "blade",
+      repoRoot: "/unused",
+      targetSha: STABLE_TARGET_SHA,
+      checkedAt: "2026-04-20T12:03:00.000Z",
+    })).toMatchObject({
+      host: "blade",
+      status: "pass",
+      target_bundle_identity: { calyx_source_sha: STABLE_TARGET_SHA },
+    });
     expect(result.receipt.postflight).toMatchObject({
       schema_version: "self-upgrade-fleet-postflight/v1",
       status: "completed",
@@ -1363,7 +1528,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -1499,7 +1664,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
           { host: "raven", runServeUrl: "http://raven:8740" },
@@ -1636,7 +1801,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         runFreshnessCommand,
         sleep,
@@ -1732,7 +1897,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => causes.map((host) => ({
+        fleetTargets: async () => causes.map((host) => ({
           host,
           runServeUrl: `http://${host}:8740`,
         })),
@@ -1856,7 +2021,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         runFreshnessCommand,
         sleep,
@@ -1903,7 +2068,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -1991,7 +2156,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
           { host: "raven", runServeUrl: "http://raven:8740" },
@@ -2060,7 +2225,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -2098,7 +2263,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -2150,7 +2315,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -2198,7 +2363,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -2295,7 +2460,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -2391,7 +2556,7 @@ describe("runSelfUpgradeFleet", () => {
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
           resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
             { host: "mba", runServeUrl: "http://mba:8740" },
@@ -2409,6 +2574,7 @@ describe("runSelfUpgradeFleet", () => {
       try {
         const rows = listFleetConvergenceRows(opened.db);
         expect(rows.map((row) => [row.host, row.leg, row.verdict])).toEqual([
+          ["blade", "daemon_build", "fresh"],
           ["mba", "daemon_build", "pending"],
           ["worm", "daemon_build", "pending"],
         ]);
@@ -2425,6 +2591,163 @@ describe("runSelfUpgradeFleet", () => {
         expect(rows.find((row) => row.host === "mba")?.detail).toContain("Skipped because --fail-fast");
       } finally {
         opened.db.close();
+      }
+    } finally {
+      for (const key of ENV_KEYS) {
+        const value = previousEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  test("verified fresh postflight supersedes a stale same-target blocked toolchain row, while production recall no longer re-blocks", async () => {
+    const homeRoot = await makeTempRoot();
+    const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]] as const));
+    process.env.CALYX_STATE_HOME = path.join(homeRoot, "state");
+    delete process.env.CALYX_STATE_DB;
+    await applyStateMigrations();
+    try {
+      const opened = await openStateStore();
+      try {
+        upsertFleetConvergenceRow(opened.db, {
+          host: "blade",
+          leg: "daemon_build",
+          target_rev: STABLE_TARGET_SHA,
+          observed_rev: CHECKOUT_HEAD,
+          converged_from: CHECKOUT_HEAD,
+          policy: "auto",
+          last_checked_at: "2026-08-02T00:00:00.000Z",
+          verdict: "pending",
+          receipt_path: "/tmp/old-blocked-fleet-receipt.json",
+          receipt_id: "old-blocked",
+          detail: "bootstrap pnpm is blocked",
+          payload: {
+            source: "self-upgrade-fleet",
+            toolchain_check: makeBlockedToolchainCheck("blade"),
+          },
+        });
+      } finally {
+        opened.db.close();
+      }
+
+      const result = await runSelfUpgradeFleet(
+        { hosts: ["blade"] },
+        {
+          homeDir: () => homeRoot,
+          now: vi.fn()
+            .mockReturnValueOnce("2026-08-03T00:00:00.000Z")
+            .mockReturnValue("2026-08-03T00:05:00.000Z"),
+          resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+          resolveCurrentHostAlias: async () => "conductor",
+          resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          listDescriptors: async () => [],
+          resolveConductorCheckoutSha: async () => CHECKOUT_HEAD,
+          persistConvergence: true,
+          execFileAsync: vi.fn(async () => ({ stdout: successJson("blade"), stderr: "" })),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const persisted = await openStateStore();
+      try {
+        const row = listFleetConvergenceRows(persisted.db, { host: "blade", leg: "daemon_build" })[0];
+        expect(row).toMatchObject({
+          target_rev: STABLE_TARGET_SHA,
+          verdict: "fresh",
+          detail: null,
+          payload: {
+            host_status: "succeeded",
+            toolchain_check: { status: "pass" },
+          },
+        });
+      } finally {
+        persisted.db.close();
+      }
+
+      const productionCheck = createProductionToolchainCheckForHost({ currentHostAlias: "conductor" });
+      const recalled = await productionCheck({
+        host: "blade",
+        repoRoot: homeRoot,
+        targetSha: STABLE_TARGET_SHA,
+        checkedAt: "2026-08-03T00:06:00.000Z",
+      });
+      expect(recalled.check.status).toBe("unknown");
+      expect(recalled.check.freshness.status).toBe("unobserved");
+      expect(recalled.diagnostics).toEqual([]);
+    } finally {
+      for (const key of ENV_KEYS) {
+        const value = previousEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  test("unverified success cannot erase a stale same-target blocked toolchain row", async () => {
+    const homeRoot = await makeTempRoot();
+    const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]] as const));
+    process.env.CALYX_STATE_HOME = path.join(homeRoot, "state");
+    delete process.env.CALYX_STATE_DB;
+    await applyStateMigrations();
+    try {
+      const opened = await openStateStore();
+      try {
+        upsertFleetConvergenceRow(opened.db, {
+          host: "blade",
+          leg: "daemon_build",
+          target_rev: STABLE_TARGET_SHA,
+          observed_rev: CHECKOUT_HEAD,
+          converged_from: CHECKOUT_HEAD,
+          policy: "auto",
+          last_checked_at: "2026-08-02T00:00:00.000Z",
+          verdict: "pending",
+          receipt_path: "/tmp/old-blocked-fleet-receipt.json",
+          receipt_id: "old-blocked",
+          detail: "bootstrap pnpm is blocked",
+          payload: {
+            source: "self-upgrade-fleet",
+            toolchain_check: makeBlockedToolchainCheck("blade"),
+          },
+        });
+      } finally {
+        opened.db.close();
+      }
+
+      const result = await runSelfUpgradeFleet(
+        { hosts: ["blade"] },
+        {
+          homeDir: () => homeRoot,
+          resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+          resolveCurrentHostAlias: async () => "conductor",
+          resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          listDescriptors: async () => [],
+          resolveConductorCheckoutSha: async () => CHECKOUT_HEAD,
+          persistConvergence: true,
+          verifyRemoteReceipt: async (host, receiptPath, receipt) => ({
+            receipt,
+            locator: {
+              host,
+              route: `/v1/admin/self-upgrade-receipts/${path.posix.basename(receiptPath, ".json")}`,
+            },
+          }),
+          execFileAsync: vi.fn(async () => ({ stdout: successJson("blade"), stderr: "" })),
+        },
+      );
+
+      expect(result.receipt.per_host[0]).toMatchObject({ status: "unverified" });
+      const persisted = await openStateStore();
+      try {
+        const row = listFleetConvergenceRows(persisted.db, { host: "blade", leg: "daemon_build" })[0];
+        expect(row).toMatchObject({
+          verdict: "pending",
+          receipt_path: "/tmp/old-blocked-fleet-receipt.json",
+          payload: { toolchain_check: { status: "blocked" } },
+        });
+      } finally {
+        persisted.db.close();
       }
     } finally {
       for (const key of ENV_KEYS) {
@@ -2469,7 +2792,7 @@ describe("runSelfUpgradeFleet", () => {
           resolveCurrentHostAlias: async () => "conductor",
           resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
           resolveConductorCheckoutSha: async () => CHECKOUT_HEAD,
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "worm", runServeUrl: "http://worm:8740" },
             { host: "mba", runServeUrl: "http://mba:8740" },
           ],
@@ -2527,7 +2850,7 @@ describe("runSelfUpgradeFleet", () => {
           resolveCurrentHostAlias: async () => "conductor",
           resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
           resolveConductorCheckoutSha: async () => CHECKOUT_HEAD,
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
             { host: "mba", runServeUrl: "http://mba:8740" },
@@ -2568,7 +2891,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
           { host: "carbon", runServeUrl: "http://carbon:8740" },
@@ -2606,7 +2929,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
           { host: "carbon", runServeUrl: "http://carbon:8740" },
@@ -2625,8 +2948,48 @@ describe("runSelfUpgradeFleet", () => {
     ]);
   });
 
-  test("rejects requested hosts that lack a configured run_serve_url", async () => {
+  test("targets desired-active hosts, records withdrawn exclusions, and rejects a withdrawn subset", async () => {
     const homeRoot = await makeTempRoot();
+    const topology = makeFleetTopologyTargets({
+      intent: "mutating",
+      active: [
+        makeFleetTopologyTarget("blade"),
+        makeFleetTopologyTarget("worm"),
+      ],
+      withdrawn: [makeFleetTopologyTarget("carbon", "withdrawn")],
+    });
+    const execFileAsync = vi.fn(async (_file, args) => ({
+      stdout: dryRunJson(extractSshHost(args)),
+      stderr: "",
+    }));
+
+    const result = await runSelfUpgradeFleet(
+      { dryRun: true },
+      {
+        homeDir: () => homeRoot,
+        resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+        resolveCurrentHostAlias: async () => "conductor",
+        resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
+        resolveFleetTopology: async () => topology,
+        listDescriptors: async () => [],
+        execFileAsync,
+      },
+    );
+
+    expect(result.receipt.topology_snapshot).toMatchObject({
+      source: { commit: TEST_TOPOLOGY_COMMIT },
+      projection_sha256: TEST_TOPOLOGY_DIGEST,
+    });
+    expect(result.operation.topology_snapshot).toEqual({
+      schema_version: "fleet-topology-snapshot/v1",
+      source: { commit: TEST_TOPOLOGY_COMMIT },
+      projection_sha256: TEST_TOPOLOGY_DIGEST,
+    });
+    expect(result.receipt.per_host.map((host) => host.host)).toEqual(["blade", "worm"]);
+    expect(result.receipt.excluded_withdrawn).toEqual([
+      expect.objectContaining({ host: "carbon", effective_state: "withdrawn" }),
+    ]);
+    expect(execFileAsync).toHaveBeenCalledTimes(2);
 
     await expect(
       runSelfUpgradeFleet(
@@ -2638,15 +3001,13 @@ describe("runSelfUpgradeFleet", () => {
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
           resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
-          listRunServeHosts: async () => [
-            { host: "blade", runServeUrl: "http://blade:8740" },
-            { host: "worm", runServeUrl: "http://worm:8740" },
-          ],
+          resolveFleetTopology: async () => topology,
           listDescriptors: async () => [],
           execFileAsync: vi.fn(),
         },
       ),
-    ).rejects.toThrow("missing run_serve_url");
+    ).rejects.toThrow("not desired-active in the topology snapshot: carbon");
+    expect(execFileAsync).toHaveBeenCalledTimes(2);
   });
 
   test.each(["../../escape", "blade/../../escape", "\\\\server\\share", ".", ".."])(
@@ -2660,7 +3021,7 @@ describe("runSelfUpgradeFleet", () => {
           homeDir: () => homeRoot,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: unsafeHost, runServeUrl: "http://invalid:8740" }],
+          fleetTargets: async () => [{ host: unsafeHost, runServeUrl: "http://invalid:8740" }],
           listDescriptors: async () => [],
           execFileAsync,
         },
@@ -2683,7 +3044,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => targets,
+        fleetTargets: async () => targets,
         listDescriptors: async () => [],
         execFileAsync,
       },
@@ -2703,7 +3064,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -2755,7 +3116,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => STABLE_TARGET_SHA,
         resolveConductorStartupContractPayload: async () => payload,
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -2807,7 +3168,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -2840,7 +3201,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
         listDescriptors: async () => [],
@@ -2914,7 +3275,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
           { host: "worm", runServeUrl: "http://worm:8740" },
         ],
@@ -2945,7 +3306,7 @@ describe("runSelfUpgradeFleet", () => {
         homeDir: () => homeRoot,
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [
+        fleetTargets: async () => [
           { host: "blade", runServeUrl: "http://blade:8740" },
         ],
         listDescriptors: async () => [],
@@ -3024,7 +3385,7 @@ describe("runSelfUpgradeFleet", () => {
         resolveCurrentHostAlias: async () => "conductor",
         resolveConductorTargetSha: async () => resolved,
         resolveConductorStartupContractPayload: async () => payload,
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
         listDescriptors: async () => [],
         runFreshnessCommand,
         execFileAsync: vi.fn(async () => ({ stdout: successJson("blade", remoteTip, "main"), stderr: "" })),
@@ -3033,7 +3394,10 @@ describe("runSelfUpgradeFleet", () => {
     expect(fleet.receipt.target_evidence).toMatchObject({ status: "resolved", target_sha: remoteTip });
     expect(runFreshnessCommand).toHaveBeenCalledWith(
       { host: "blade", against: remoteTip, json: true },
-      { authToken: "" },
+      expect.objectContaining({
+        authToken: "",
+        toolchainCheckForHost: expect.any(Function),
+      }),
     );
   });
 
@@ -3087,7 +3451,9 @@ describe("runSelfUpgradeFleet", () => {
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+            { host: "blade", runServeUrl: "http://blade:8740" },
+          ]),
           listDescriptors: async () => [],
           resolveConductorTargetEvidence: async () => evidence,
           resolveConductorStartupContractPayload: async () => validStartupContractPayload(remoteTip),
@@ -3142,9 +3508,9 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [
+        resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
           { host: "blade", runServeUrl: "http://blade:8740" },
-        ],
+        ]),
         listDescriptors: async () => [],
         resolveConductorTargetEvidence: async () => undefined,
         resolveConductorStartupContractPayload: async () => {
@@ -3183,7 +3549,9 @@ describe("runSelfUpgradeFleet", () => {
         resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
         resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
         resolveCurrentHostAlias: async () => "conductor",
-        listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+        resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+          { host: "blade", runServeUrl: "http://blade:8740" },
+        ]),
         listDescriptors: async () => [],
         resolveConductorTargetEvidence: async (targetRef) => testTargetEvidence(targetRef, STABLE_TARGET_SHA),
         resolveConductorStartupContractPayload: async () => "not-base64url-json",
@@ -3247,7 +3615,9 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: (chunk) => progress.push(chunk),
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+            { host: "blade", runServeUrl: "http://blade:8740" },
+          ]),
           listDescriptors: async () => [],
           runFreshnessCommand: async () => freshnessJson("blade"),
           execFileAsync: vi.fn(async (_file, _args, options) => {
@@ -3301,7 +3671,7 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: (chunk) => progress.push(chunk),
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async (_file, _args, options) => {
             const operationId = (JSON.parse(progress[0]!) as { operation_id: string }).operation_id;
@@ -3344,7 +3714,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({
             stdout: successJson("blade"),
@@ -3398,7 +3768,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: `${JSON.stringify(payload)}\n`, stderr: "" })),
         },
@@ -3409,6 +3779,50 @@ describe("runSelfUpgradeFleet", () => {
         host: "blade",
         status: "dry-run",
         projection_issues: [retainedProjectionIssue],
+      });
+    });
+
+    test.each(
+      (["dry-run", "succeeded", "failed"] as const).flatMap((status) =>
+        (["residue", "inspection_unavailable"] as const).map((detail) => ({ status, detail })),
+      ),
+    )("preserves $detail cleanup truth from a remote $status terminal envelope", async ({ status, detail }) => {
+      const homeRoot = await makeTempRoot();
+      const payload = JSON.parse(
+        status === "dry-run"
+          ? dryRunJson("blade")
+          : status === "succeeded"
+            ? successJson("blade")
+            : failureJson("blade"),
+      ) as Record<string, unknown>;
+      const issue = {
+        scope: "operation_cleanup" as const,
+        code: "best_effort_cleanup" as const,
+        detail,
+        observed_at: fixedNow,
+        message: `remote bootstrap cleanup ended with ${detail}`,
+      };
+      payload["projection_issues"] = [issue];
+
+      const result = await runSelfUpgradeFleet(
+        { hosts: ["blade"], ...(status === "dry-run" ? { dryRun: true } : {}) },
+        {
+          homeDir: () => homeRoot,
+          now: () => fixedNow,
+          heartbeatIntervalMs: 0,
+          resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+          resolveCurrentHostAlias: async () => "conductor",
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          listDescriptors: async () => [],
+          execFileAsync: vi.fn(async () => ({ stdout: `${JSON.stringify(payload)}\n`, stderr: "" })),
+        },
+      );
+
+      expect(result.exitCode).toBe(status === "failed" ? 1 : 0);
+      expect(result.receipt.per_host[0]).toMatchObject({
+        host: "blade",
+        status,
+        projection_issues: [issue],
       });
     });
 
@@ -3427,7 +3841,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: `${JSON.stringify(payload)}\n`, stderr: "" })),
         },
@@ -3456,7 +3870,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: `${JSON.stringify(payload)}\n`, stderr: "" })),
         },
@@ -3522,7 +3936,7 @@ describe("runSelfUpgradeFleet", () => {
           claimOperation,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async (_file, _args, options) => {
             const fleetOperationId = (JSON.parse(progress[0]!) as { operation_id: string }).operation_id;
@@ -3583,7 +3997,7 @@ describe("runSelfUpgradeFleet", () => {
             appendEventProjection: async () => {},
             resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
             resolveCurrentHostAlias: async () => "conductor",
-            listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+            fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
             listDescriptors: async () => [],
             execFileAsync: vi.fn(async (_file, _args, options) => {
               const operationId = (JSON.parse(progress[0]!) as { operation_id: string }).operation_id;
@@ -3657,7 +4071,7 @@ describe("runSelfUpgradeFleet", () => {
           },
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async (_file, _args, options) => {
             const operationId = (JSON.parse(progress[0]!) as { operation_id: string }).operation_id;
@@ -3707,7 +4121,7 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: (chunk) => progress.push(chunk),
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -3771,7 +4185,7 @@ describe("runSelfUpgradeFleet", () => {
           writeArtifact,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: successJson("blade"), stderr: "diagnostic" })),
         },
@@ -3830,7 +4244,7 @@ describe("runSelfUpgradeFleet", () => {
           claimOperation,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -3893,7 +4307,7 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: (chunk) => progress.push(chunk),
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -3951,7 +4365,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           verifyRemoteReceipt: verifyMalformed,
           execFileAsync: vi.fn(async () => ({
@@ -3999,7 +4413,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           verifyRemoteReceipt: verifySemantic,
           execFileAsync: vi.fn(async () => ({
@@ -4017,7 +4431,178 @@ describe("runSelfUpgradeFleet", () => {
       expect(verifySemantic).toHaveBeenCalledTimes(1);
     });
 
-    test("accepts the exact POL-2099 worm receipt through the strict contract and fleet aggregate", async () => {
+    test.each([
+      ["wrong host", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({ ...check, host: "worm" })],
+      ["wrong target", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        target_bundle_identity: { calyx_source_sha: CHECKOUT_HEAD },
+      })],
+      ["outside receipt window", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        checked_at: "2026-04-20T11:59:59.000Z",
+        freshness: { status: "current" as const, observed_at: "2026-04-20T11:59:59.000Z" },
+      })],
+      ["recalled rather than current", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        freshness: { status: "recalled" as const, observed_at: check.checked_at },
+      })],
+    ])("rejects a successful receipt whose toolchain proof is %s", async (_case, mutate) => {
+      const homeRoot = await makeTempRoot();
+      const payload = JSON.parse(successJson("blade")) as {
+        plan: SelfUpgradePlan;
+        receipt: SelfUpgradeReceipt;
+      };
+      const mutated = mutate(payload.plan.toolchain_check!) as NonNullable<SelfUpgradePlan["toolchain_check"]>;
+      payload.plan.toolchain_check = mutated;
+      payload.receipt.toolchain_check = mutated;
+      const result = await runSelfUpgradeFleet(
+        { hosts: ["blade"] },
+        {
+          homeDir: () => homeRoot,
+          resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+          resolveCurrentHostAlias: async () => "conductor",
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          listDescriptors: async () => [],
+          verifyRemoteReceipt: async (host, receiptPath, receipt, _runServeUrl, fleetOperationId) => ({
+            receipt: bindCanonicalReceipt(receipt, receiptPath, fleetOperationId),
+            locator: {
+              host,
+              route: `/v1/admin/self-upgrade-receipts/${path.posix.basename(receiptPath, ".json")}`,
+            },
+          }),
+          execFileAsync: vi.fn(async () => ({
+            stdout: `${JSON.stringify(payload)}\n`,
+            stderr: "",
+          })),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.receipt.per_host[0]).toMatchObject({
+        status: "failed",
+        error: expect.stringContaining("toolchain attestation is not current and bound"),
+      });
+      expect(result.receipt.per_host[0]?.error).not.toContain("JSON parse failed");
+    });
+
+    test.each([
+      ["unobserved source", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        evidence: { ...check.evidence, source: "unobserved" },
+      })],
+      ["missing declared Node range", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        expected: { ...check.expected, node_range: null },
+      })],
+      ["an invalid declared Node range", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        expected: { ...check.expected, node_range: ">=not-a-node-version" },
+      })],
+      ["a missing declared package manager", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        expected: { ...check.expected, package_manager: undefined },
+      })],
+      ["an invalid declared pnpm pin", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        expected: { ...check.expected, pnpm_version: "not-a-pnpm-version" },
+      })],
+      ["a mismatched evidence spawn contract", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        evidence: { ...check.evidence, spawn_contract: "wrong-contract" },
+      })],
+      ["mismatched spawn contract", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: { ...check.observed, spawn_contract: "wrong-contract" },
+      })],
+      ["missing target identity", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        target_bundle_identity: { calyx_source_sha: null },
+      })],
+      ["missing process executable identity", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: { ...check.observed, process_exec_path_realpath: undefined },
+      })],
+      ["missing process Node identity", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: { ...check.observed, process_node_version: undefined },
+      })],
+      ["process Node outside its declared range", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: { ...check.observed, process_node_version: "v20.0.0" },
+      })],
+      ["child Node outside its declared range", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: {
+          ...check.observed,
+          child_node: { ...check.observed.child_node, version: "v20.0.0" },
+        },
+      })],
+      ["a self-dispatched pnpm not equal to the declared pin", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: {
+          ...check.observed,
+          child_pnpm: {
+            ...check.observed.child_pnpm,
+            self_dispatched: { ...check.observed.child_pnpm.self_dispatched, version: "11.17.0" },
+          },
+        },
+      })],
+      ["an intrinsic pnpm not equal to the declared pin", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: {
+          ...check.observed,
+          child_pnpm: {
+            ...check.observed.child_pnpm,
+            intrinsic: { ...check.observed.child_pnpm.intrinsic, version: "11.17.0" },
+          },
+        },
+      })],
+      ["a nested pnpm not equal to the declared pin", (check: NonNullable<SelfUpgradePlan["toolchain_check"]>) => ({
+        ...check,
+        observed: {
+          ...check.observed,
+          child_pnpm: {
+            ...check.observed.child_pnpm,
+            nested: { ...check.observed.child_pnpm.nested, version: "11.17.0" },
+          },
+        },
+      })],
+    ])("rejects a successful receipt whose purported passing toolchain evidence has %s", async (_case, mutate) => {
+      const homeRoot = await makeTempRoot();
+      const payload = JSON.parse(successJson("blade")) as {
+        plan: SelfUpgradePlan;
+        receipt: SelfUpgradeReceipt;
+      };
+      const mutated = mutate(payload.plan.toolchain_check!) as NonNullable<SelfUpgradePlan["toolchain_check"]>;
+      payload.plan.toolchain_check = mutated;
+      payload.receipt.toolchain_check = mutated;
+      const result = await runSelfUpgradeFleet(
+        { hosts: ["blade"] },
+        {
+          homeDir: () => homeRoot,
+          resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+          resolveCurrentHostAlias: async () => "conductor",
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          listDescriptors: async () => [],
+          verifyRemoteReceipt: async (host, receiptPath, receipt, _runServeUrl, fleetOperationId) => ({
+            receipt: bindCanonicalReceipt(receipt, receiptPath, fleetOperationId),
+            locator: {
+              host,
+              route: `/v1/admin/self-upgrade-receipts/${path.posix.basename(receiptPath, ".json")}`,
+            },
+          }),
+          execFileAsync: vi.fn(async () => ({
+            stdout: `${JSON.stringify(payload)}\n`,
+            stderr: "",
+          })),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.receipt.per_host[0]).toMatchObject({ status: "failed" });
+    });
+
+    test("classifies the exact pre-C1 POL-2099 success as failed when toolchain proof is absent", async () => {
       const homeRoot = await makeTempRoot();
       const fixtureRaw = await readFile(
         new URL("./fixtures/pol-2099-worm-self-upgrade.stdout.json", import.meta.url),
@@ -4066,7 +4651,7 @@ describe("runSelfUpgradeFleet", () => {
           resolveRemoteCloneRoot: async () => fixture.plan.repo_root,
           resolveConductorTargetSha: async () => fixture.plan.target_head,
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "worm", runServeUrl: "http://worm:8740" }],
+          fleetTargets: async () => [{ host: "worm", runServeUrl: "http://worm:8740" }],
           listDescriptors: async () => [],
           verifyRemoteReceipt,
           execFileAsync: vi.fn(async () => ({ stdout: fixtureRaw, stderr: "" })),
@@ -4074,25 +4659,12 @@ describe("runSelfUpgradeFleet", () => {
       );
 
       expect(verifyRemoteReceipt).toHaveBeenCalledTimes(1);
-      expect(result.exitCode).toBe(0);
-      expect(result.receipt.status).toBe("succeeded");
+      expect(result.exitCode).toBe(1);
+      expect(result.receipt.status).toBe("failed");
       expect(result.receipt.per_host[0]).toMatchObject({
         host: "worm",
-        status: "succeeded",
-        exit_code: 0,
-        receipt: {
-          schema_version: "self-upgrade-receipt/v1",
-          status: "succeeded",
-          target_acceptance: { status: "accepted" },
-          target_state_readiness: { status: "ready" },
-          target_state_migrated: { status: "migrated" },
-          target_state_applied: { status: "applied" },
-          state_snapshot: { status: "snapshotted" },
-          supervisor_readiness: { status: "unchanged" },
-          supervisor_install: { status: "unchanged" },
-          maintenance_disposition: { status: "released" },
-          artifact_cleanup: { state_backup: "cleaned" },
-        },
+        status: "failed",
+        error: expect.stringContaining("omitted the required matching passing toolchain attestation"),
       });
     });
 
@@ -4189,7 +4761,9 @@ describe("runSelfUpgradeFleet", () => {
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+            { host: "blade", runServeUrl: "http://blade:8740" },
+          ]),
           listDescriptors: async () => [],
           resolveConductorTargetEvidence: async () => testTargetEvidence("origin/main", STABLE_TARGET_SHA),
           resolveConductorStartupContractPayload: async () => validStartupContractPayload(STABLE_TARGET_SHA),
@@ -4213,6 +4787,122 @@ describe("runSelfUpgradeFleet", () => {
       expect(receiptReads).toEqual(["/v1/admin/self-upgrade-receipts/blade"]);
     });
 
+    test("retains a verified remote blocked-toolchain receipt and operation observation", async () => {
+      const homeRoot = await makeTempRoot();
+      const result = await runSelfUpgradeFleet(
+        { hosts: ["blade"] },
+        {
+          homeDir: () => homeRoot,
+          now: () => fixedNow,
+          heartbeatIntervalMs: 0,
+          resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+          resolveCurrentHostAlias: async () => "conductor",
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          listDescriptors: async () => [],
+          execFileAsync: vi.fn(async () => {
+            throw Object.assign(new Error("remote self upgrade refused"), {
+              code: 1,
+              stdout: blockedToolchainFailureJson("blade"),
+              stderr: "",
+            });
+          }),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.receipt.per_host[0]).toMatchObject({
+        status: "failed",
+        plan: { toolchain_check: { status: "blocked", surface: "toolchain" } },
+        receipt: { status: "failed", toolchain_check: { status: "blocked" } },
+        receipt_locator: { host: "blade", route: "/v1/admin/self-upgrade-receipts/blade" },
+        receipt_verification: { status: "verified" },
+      });
+      expect(result.receipt.per_host_receipt_locators).toEqual({
+        blade: { host: "blade", route: "/v1/admin/self-upgrade-receipts/blade" },
+      });
+      const operation = JSON.parse(await readFile(result.operation_path, "utf8")) as {
+        hosts: Record<string, { toolchain_check?: { status: string } }>;
+      };
+      expect(operation.hosts.blade?.toolchain_check?.status).toBe("blocked");
+    });
+
+    test("retains blocked remote projection without fabricating a canonical receipt when reread is unavailable", async () => {
+      const homeRoot = await makeTempRoot();
+      const request = vi.fn(async () => new Response(JSON.stringify({
+        error: {
+          schema_version: "calyx.error/v1",
+          code: "self_upgrade_receipt_unavailable",
+          message: "receipt authority is temporarily unavailable",
+          retryable: false,
+        },
+      }), {
+        status: 503,
+        headers: {
+          "content-type": "application/json",
+          "x-calyx-request-id": "req_123e4567-e89b-42d3-a456-426614174004",
+        },
+      }));
+      const result = await runSelfUpgradeFleetCommand(
+        { hosts: ["blade"] },
+        {
+          homeDir: () => homeRoot,
+          now: () => fixedNow,
+          progressNow: () => fixedNow,
+          heartbeatIntervalMs: 0,
+          resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
+          resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
+          resolveCurrentHostAlias: async () => "conductor",
+          resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+            { host: "blade", runServeUrl: "http://blade:8740" },
+          ]),
+          listDescriptors: async () => [],
+          resolveConductorTargetEvidence: async () => testTargetEvidence("origin/main", STABLE_TARGET_SHA),
+          resolveConductorStartupContractPayload: async () => validStartupContractPayload(STABLE_TARGET_SHA),
+          authToken: "test-token",
+          sleep: async () => {},
+          createAdminClient: createAdminClientFactory(request),
+          execFileAsync: vi.fn(async () => {
+            throw Object.assign(new Error("remote self upgrade refused"), {
+              code: 1,
+              stdout: blockedToolchainFailureJson("blade"),
+              stderr: "",
+            });
+          }),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      const host = result.receipt.per_host[0]!;
+      expect(host).toMatchObject({
+        status: "failed",
+        projected_receipt_path: "/home/blade/.calyx/self-upgrade-receipts/blade.json",
+        projected_toolchain_check: { status: "blocked", surface: "toolchain" },
+        receipt_verification: { status: "unavailable", code: "transport_unavailable", attempts: 1 },
+      });
+      expect(host).not.toHaveProperty("receipt_locator");
+      expect(host).not.toHaveProperty("receipt");
+      expect(host).not.toHaveProperty("plan");
+      expect(result.receipt.per_host_receipt_locators).toEqual({});
+      expect(result.text).toContain("projected_receipt_path=/home/blade/.calyx/self-upgrade-receipts/blade.json");
+      expect(result.text).not.toContain("verification_receipt=");
+
+      const operation = JSON.parse(await readFile(result.operation_path, "utf8")) as {
+        hosts: Record<string, {
+          projected_receipt_path?: string;
+          projected_toolchain_check?: { status: string };
+          receipt_verification?: { status: string };
+          receipt_locator?: unknown;
+        }>;
+      };
+      expect(operation.hosts.blade).toMatchObject({
+        projected_receipt_path: "/home/blade/.calyx/self-upgrade-receipts/blade.json",
+        projected_toolchain_check: { status: "blocked" },
+        receipt_verification: { status: "unavailable" },
+      });
+      expect(operation.hosts.blade?.receipt_locator).toBeUndefined();
+      expect(request).toHaveBeenCalledOnce();
+    });
+
     test("rejects a stale canonical receipt bound to another fleet invocation", async () => {
       const homeRoot = await makeTempRoot();
       const result = await runSelfUpgradeFleet(
@@ -4223,7 +4913,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           verifyRemoteReceipt: async (host, receiptPath, receipt) => ({
             receipt: {
@@ -4257,7 +4947,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           verifyRemoteReceipt: async (host, receiptPath, receipt) => ({
             receipt,
@@ -4300,7 +4990,7 @@ describe("runSelfUpgradeFleet", () => {
           heartbeatIntervalMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -4360,10 +5050,10 @@ describe("runSelfUpgradeFleet", () => {
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{
+          resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([{
             host: "blade",
             runServeUrl: "http://blade.example:8740/calyx/control/",
-          }],
+          }]),
           listDescriptors: async () => [],
           resolveConductorTargetEvidence: async () => testTargetEvidence("origin/main", STABLE_TARGET_SHA),
           resolveConductorStartupContractPayload: async () => validStartupContractPayload(STABLE_TARGET_SHA),
@@ -4440,7 +5130,9 @@ describe("runSelfUpgradeFleet", () => {
             resolveAgentsInfraRoot: async () => agentsInfraRoot,
             resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
             resolveCurrentHostAlias: async () => "conductor",
-            listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+            resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+              { host: "blade", runServeUrl: "http://blade:8740" },
+            ]),
             listDescriptors: async () => [],
             resolveConductorTargetEvidence: async () => testTargetEvidence("origin/main", STABLE_TARGET_SHA),
             resolveConductorStartupContractPayload: async () => validStartupContractPayload(STABLE_TARGET_SHA),
@@ -4524,10 +5216,10 @@ describe("runSelfUpgradeFleet", () => {
             resolveAgentsInfraRoot: async () => agentsInfraRoot,
             resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
             resolveCurrentHostAlias: async () => "conductor",
-            listRunServeHosts: async () => [
+            resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
               { host: "blade", runServeUrl: "http://blade:8740" },
               { host: "worm", runServeUrl: "http://worm:8740" },
-            ],
+            ]),
             listDescriptors: async () => [],
             resolveConductorTargetEvidence: async () => testTargetEvidence("origin/main", STABLE_TARGET_SHA),
             resolveConductorStartupContractPayload: async () => validStartupContractPayload(STABLE_TARGET_SHA),
@@ -4614,7 +5306,9 @@ describe("runSelfUpgradeFleet", () => {
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+            { host: "blade", runServeUrl: "http://blade:8740" },
+          ]),
           listDescriptors: async () => [],
           resolveConductorTargetEvidence: async () => testTargetEvidence("origin/main", STABLE_TARGET_SHA),
           resolveConductorStartupContractPayload: async () => validStartupContractPayload(STABLE_TARGET_SHA),
@@ -4666,7 +5360,9 @@ describe("runSelfUpgradeFleet", () => {
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveRemoteCloneRoot: async (host: string) => `/srv/${host}/calyx`,
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          resolveFleetTopology: async () => fleetTopologyFromUpgradeTargets([
+            { host: "blade", runServeUrl: "http://blade:8740" },
+          ]),
           listDescriptors: async () => [],
           resolveConductorTargetEvidence: async () => testTargetEvidence("origin/main", STABLE_TARGET_SHA),
           resolveConductorStartupContractPayload: async () => validStartupContractPayload(STABLE_TARGET_SHA),
@@ -4716,7 +5412,7 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: (chunk) => progress.push(chunk),
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: successJson("blade"), stderr: "" })),
           runFreshnessCommand: async () => {
@@ -4757,7 +5453,7 @@ describe("runSelfUpgradeFleet", () => {
           eventProjectionSettleTimeoutMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: dryRunJson("blade"), stderr: "" })),
         },
@@ -4802,7 +5498,7 @@ describe("runSelfUpgradeFleet", () => {
           eventProjectionSettleTimeoutMs: 0,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async (_file, _args, options) => {
             const operationId = (JSON.parse(progress[0]!) as { operation_id: string }).operation_id;
@@ -4862,7 +5558,7 @@ describe("runSelfUpgradeFleet", () => {
           progressStream,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: dryRunJson("blade"), stderr: "" })),
         },
@@ -4897,7 +5593,7 @@ describe("runSelfUpgradeFleet", () => {
           progressStream,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: dryRunJson("blade"), stderr: "" })),
         },
@@ -4928,7 +5624,7 @@ describe("runSelfUpgradeFleet", () => {
           },
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync,
         },
@@ -4968,7 +5664,7 @@ describe("runSelfUpgradeFleet", () => {
           claimOperation: () => new Promise<never>(() => undefined),
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync,
         },
@@ -5029,7 +5725,7 @@ describe("runSelfUpgradeFleet", () => {
           claimOperation,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync: vi.fn(async () => ({ stdout: dryRunJson("blade"), stderr: "" })),
         },
@@ -5107,7 +5803,7 @@ describe("runSelfUpgradeFleet", () => {
           claimOperation,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -5173,7 +5869,7 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: () => undefined,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           execFileAsync,
           writeFleetReceipt,
@@ -5221,7 +5917,7 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: () => undefined,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           runFreshnessCommand: async () => freshnessJson("blade"),
           fleetReceiptMaxBytes: maxBytes,
@@ -5301,7 +5997,7 @@ describe("runSelfUpgradeFleet", () => {
           progressWrite: () => undefined,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "conductor",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -5376,7 +6072,7 @@ describe("runSelfUpgradeFleet", () => {
           homeDir: () => homeRoot,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -5415,7 +6111,7 @@ describe("runSelfUpgradeFleet", () => {
           homeDir: () => homeRoot,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
           ],
           listDescriptors: async () => [],
@@ -5459,7 +6155,7 @@ describe("runSelfUpgradeFleet", () => {
           },
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+          fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
           listDescriptors: async () => [],
           runLocalUpgrade: async (upgradeOptions) => makeBoundLocalSuccess(upgradeOptions),
           execFileAsync: vi.fn(),
@@ -5541,7 +6237,7 @@ describe("runSelfUpgradeFleet", () => {
             homeDir: () => homeRoot,
             resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
             resolveCurrentHostAlias: async () => "blade",
-            listRunServeHosts: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
+            fleetTargets: async () => [{ host: "blade", runServeUrl: "http://blade:8740" }],
             listDescriptors: async () => [],
             runLocalUpgrade: async (options) => scenario.build(options),
             execFileAsync: vi.fn(),
@@ -5563,16 +6259,18 @@ describe("runSelfUpgradeFleet", () => {
       const homeRoot = await makeTempRoot();
       const observedAt = "2026-04-20T12:01:01.000Z";
       const localIssue = {
-        scope: "lock_cleanup" as const,
-        code: "cleanup_unavailable" as const,
+        scope: "operation_cleanup" as const,
+        code: "best_effort_cleanup" as const,
+        detail: "residue" as const,
         observed_at: observedAt,
-        message: "local lock release did not settle",
+        message: "local bootstrap cleanup left residue",
       };
       const remoteIssue = {
-        scope: "lock_cleanup" as const,
-        code: "cleanup_unavailable" as const,
+        scope: "operation_cleanup" as const,
+        code: "best_effort_cleanup" as const,
+        detail: "inspection_unavailable" as const,
         observed_at: observedAt,
-        message: "remote lock release did not settle",
+        message: "remote bootstrap cleanup could not be inspected",
       };
 
       const result = await runSelfUpgradeFleet(
@@ -5585,7 +6283,7 @@ describe("runSelfUpgradeFleet", () => {
           },
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -5633,7 +6331,7 @@ describe("runSelfUpgradeFleet", () => {
           homeDir: () => homeRoot,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
             { host: "worm", runServeUrl: "http://worm:8740" },
           ],
@@ -5677,7 +6375,7 @@ describe("runSelfUpgradeFleet", () => {
           homeDir: () => homeRoot,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
           ],
           listDescriptors: async () => [],
@@ -5706,7 +6404,7 @@ describe("runSelfUpgradeFleet", () => {
           homeDir: () => homeRoot,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
           ],
           listDescriptors: async () => [],
@@ -5734,7 +6432,7 @@ describe("runSelfUpgradeFleet", () => {
           homeDir: () => homeRoot,
           resolveAgentsInfraRoot: async () => "/tmp/agents-infra",
           resolveCurrentHostAlias: async () => "blade",
-          listRunServeHosts: async () => [
+          fleetTargets: async () => [
             { host: "blade", runServeUrl: "http://blade:8740" },
           ],
           listDescriptors: async () => [],

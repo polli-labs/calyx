@@ -36,6 +36,10 @@ export interface SelfUpgradeOperationStatusHost {
     host: string;
     route: string;
   };
+  /** Non-authoritative remote path retained when canonical receipt reread failed. */
+  projected_receipt_path?: string;
+  projected_toolchain_check?: SelfUpgradeOperationObservation["operation"]["hosts"][string]["projected_toolchain_check"];
+  receipt_verification?: SelfUpgradeOperationObservation["operation"]["hosts"][string]["receipt_verification"];
   error?: string;
 }
 
@@ -59,6 +63,7 @@ export interface SelfUpgradeOperationStatusResult {
     conductor_host: string;
     target_ref: string;
     target_sha?: string;
+    topology_snapshot?: SelfUpgradeOperationObservation["operation"]["topology_snapshot"];
     policy: SelfUpgradeOperationObservation["operation"]["policy"];
     started_at: string;
     status: SelfUpgradeOperationObservation["operation"]["status"];
@@ -154,6 +159,34 @@ export function projectSelfUpgradeOperationStatus(
               host: truncateText(host.receipt_locator.host, MAX_SHORT_TEXT_LENGTH, truncation),
               route: truncateText(host.receipt_locator.route, MAX_SHORT_TEXT_LENGTH, truncation),
             },
+        }
+        : {}),
+      ...(host.projected_receipt_path
+        ? {
+            projected_receipt_path: truncateText(
+              host.projected_receipt_path,
+              MAX_PATH_LENGTH,
+              truncation,
+            ),
+          }
+        : {}),
+      ...(host.projected_toolchain_check
+        ? { projected_toolchain_check: host.projected_toolchain_check }
+        : {}),
+      ...(host.receipt_verification
+        ? {
+            receipt_verification: {
+              ...host.receipt_verification,
+              ...(host.receipt_verification.message
+                ? {
+                    message: truncateText(
+                      host.receipt_verification.message,
+                      MAX_SHORT_TEXT_LENGTH,
+                      truncation,
+                    ),
+                  }
+                : {}),
+            },
           }
         : {}),
       ...(host.error
@@ -206,6 +239,9 @@ export function projectSelfUpgradeOperationStatus(
       ),
       ...(observation.operation.target_sha
         ? { target_sha: observation.operation.target_sha }
+        : {}),
+      ...(observation.operation.topology_snapshot
+        ? { topology_snapshot: observation.operation.topology_snapshot }
         : {}),
       policy: observation.operation.policy,
       started_at: observation.operation.started_at,
@@ -272,6 +308,11 @@ export function formatSelfUpgradeOperationStatusText(
     `state: ${result.projection.running_state} (owner=${result.projection.owner_liveness}, projection=${result.projection.status})`,
     `updated: ${result.projection.updated_at} (${result.projection.last_update_age_ms}ms ago)`,
     `target: ${result.operation.target_sha ?? result.operation.target_ref}`,
+    ...(result.operation.topology_snapshot
+      ? [
+          `topology: commit=${result.operation.topology_snapshot.source.commit} digest=${result.operation.topology_snapshot.projection_sha256}`,
+        ]
+      : []),
     "host | execution | phase | elapsed_ms | relay | receipt",
   ];
   for (const host of result.hosts) {

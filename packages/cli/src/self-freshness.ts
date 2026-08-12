@@ -1,6 +1,10 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { type CalyxAdminHealth } from "@polli-labs/calyx-core";
+import {
+  type CalyxAdminHealth,
+  type FleetConvergenceToolchainCheck,
+  type FleetTopologyTargetsV1,
+} from "@polli-labs/calyx-core";
 import {
   openStateStore,
   planStateMigrations,
@@ -24,6 +28,17 @@ import {
   type SelfHealthErrorPayload,
   type SelfHealthResult,
 } from "./self-health.js";
+import {
+  fleetTopologyOutput,
+  formatExcludedWithdrawn,
+  formatFleetTopologyIdentity,
+  resolveFleetTopologyForCommand,
+  summarizeFleetRead,
+  type FleetEffectiveState,
+  type FleetReadSummary,
+  type FleetTopologyOutput,
+  type ResolveFleetTopology,
+} from "./fleet-topology.js";
 
 const execFileAsyncDefault = promisify(execFileCallback);
 
@@ -51,6 +66,7 @@ export interface SelfFreshnessCommandDeps {
   currentHostAlias?: string;
   tokenForHost?: (host: string) => Promise<string | undefined> | string | undefined;
   accessForHost?: SelfDriftDependencies["accessForHost"];
+  toolchainCheckForHost?: SelfDriftDependencies["toolchainCheckForHost"];
   collectHealth?: (options: SelfHealthCommandOptions) => Promise<SelfHealthCommandResult>;
   collectDrift?: (options: {
     host?: string;
@@ -59,6 +75,8 @@ export interface SelfFreshnessCommandDeps {
     authToken?: string;
   }) => Promise<SelfDriftReport[]>;
   persistConvergence?: boolean;
+  fleetTopologyTargets?: FleetTopologyTargetsV1;
+  resolveFleetTopology?: ResolveFleetTopology;
 }
 
 export interface SelfFreshnessHealthSummary {
@@ -96,6 +114,7 @@ export interface SelfFreshnessHostResult {
   host: string;
   verdict: SelfFreshnessVerdict;
   health: SelfFreshnessHealthSummary;
+  toolchain_check?: FleetConvergenceToolchainCheck;
   drift?: {
     status: SelfDriftSeverity;
     daemon_head: string | null;
@@ -107,6 +126,10 @@ export interface SelfFreshnessHostResult {
   install_drift?: SelfFreshnessInstallDrift;
   capabilities: SelfFreshnessCapabilitySummary;
   actions: string[];
+  owner?: string;
+  roles?: readonly string[];
+  desired_membership?: "active";
+  effective_state?: Exclude<FleetEffectiveState, "withdrawn">;
 }
 
 export interface SelfFreshnessWarning {
@@ -123,6 +146,13 @@ export interface SelfFreshnessResult {
   summary: Record<SelfFreshnessVerdict, number>;
   exit_code: number;
   warnings?: SelfFreshnessWarning[];
+  topology_snapshot?: FleetTopologyOutput["topology_snapshot"];
+  topology_authority?: FleetTopologyOutput["topology_authority"];
+  can_emit_green_verdict?: boolean;
+  desired_active_total?: number;
+  withdrawn_total?: number;
+  excluded_withdrawn?: FleetTopologyOutput["excluded_withdrawn"];
+  fleet_summary?: FleetReadSummary;
 }
 
 function shortSha(value: string | null | undefined): string | null {
@@ -166,6 +196,9 @@ function verdictFor(args: {
   capabilities: SelfFreshnessCapabilitySummary;
 }): SelfFreshnessVerdict {
   if (!args.health?.ok) {
+    return "blocked";
+  }
+  if (args.drift?.toolchain_check?.status === "blocked") {
     return "blocked";
   }
   if (args.drift?.drift === "broken" || args.drift?.drift === "critical" || args.drift?.drift === "incompatible") {
@@ -220,6 +253,14 @@ function actionsFor(args: {
     }
     return actions;
   }
+  const toolchainCheck = args.drift?.toolchain_check;
+  const toolchainBlocked = toolchainCheck?.status === "blocked";
+  if (toolchainBlocked) {
+    addAction(
+      toolchainCheck.next_action?.description
+        ?? `repair ${args.host}'s bootstrap toolchain before retrying self upgrade`,
+    );
+  }
   if (args.drift?.drift === "needs_fetch") {
     // The git-fetch repair stays surfaced as a local-compare diagnostic, but we never
     // synthesize a daemon upgrade for needs_fetch: when convergence reconciles the verdict
@@ -231,18 +272,23 @@ function actionsFor(args: {
       }
     }
   }
-  if (args.drift && args.drift.drift !== "current") {
+  if (args.drift && args.drift.drift !== "current" && !toolchainBlocked) {
     if (args.drift.drift !== "needs_fetch") {
       addAction(`calyx self upgrade --host ${args.host} --dry-run`);
     }
   }
   if (
     (args.installDrift?.status === "promoted_not_restarted" || args.installDrift?.status === "clone_not_promoted")
+    && !toolchainBlocked
     && !actions.some((action) => action.startsWith("calyx self upgrade"))
   ) {
     addAction(`calyx self upgrade --host ${args.host} --dry-run`);
   }
-  if (args.capabilities.missing.length > 0 && !actions.some((action) => action.startsWith("calyx self upgrade"))) {
+  if (
+    args.capabilities.missing.length > 0
+    && !toolchainBlocked
+    && !actions.some((action) => action.startsWith("calyx self upgrade"))
+  ) {
     addAction(`calyx self upgrade --host ${args.host} --dry-run`);
   }
   if (args.health.health.active_runs > 0) {
@@ -443,6 +489,7 @@ async function persistSelfFreshnessRows(args: {
           promoted_rev: host.health.promoted_build_head ?? null,
           clone_head: host.health.clone_head ?? null,
           install_drift: host.install_drift ?? null,
+          toolchain_check: host.toolchain_check ?? null,
           actions: host.actions,
         },
       });
@@ -464,11 +511,18 @@ export async function runSelfFreshnessCommand(
 
   const against = options.against?.trim() || "origin/main";
   const checkedAt = (deps.now?.() ?? new Date()).toISOString();
+  const topologyTargets = options.fleet
+    ? deps.fleetTopologyTargets
+      ?? await (deps.resolveFleetTopology
+        ?? ((intent) => resolveFleetTopologyForCommand(intent, deps.agentsInfraRoot)))("read_only")
+    : undefined;
   const expectedFeatures = deps.expectedFeatures ?? SUPPORTED_FEATURES;
   const healthCommand = deps.collectHealth ?? ((healthOptions: SelfHealthCommandOptions) =>
     runSelfHealthCommand(healthOptions, {
       ...(deps.createAdminClient ? { createAdminClient: deps.createAdminClient } : {}),
       ...(deps.now ? { now: deps.now } : {}),
+      ...(deps.agentsInfraRoot ? { agentsInfraRoot: deps.agentsInfraRoot } : {}),
+      ...(topologyTargets ? { resolveFleetTopology: async () => topologyTargets } : {}),
       ...(deps.tokenForHost ? { tokenForHost: deps.tokenForHost } : {}),
     }));
   const health = await healthCommand({
@@ -493,21 +547,41 @@ export async function runSelfFreshnessCommand(
         ...(deps.repoRoot ? { repoRoot: deps.repoRoot } : {}),
         ...(deps.currentHostAlias ? { currentHostAlias: deps.currentHostAlias } : {}),
         ...(deps.accessForHost ? { accessForHost: deps.accessForHost } : {}),
+        ...(deps.toolchainCheckForHost ? { toolchainCheckForHost: deps.toolchainCheckForHost } : {}),
+        ...(deps.now ? { now: deps.now } : {}),
         observedHealthResults: health.results,
+        ...(topologyTargets ? { fleetTopologyTargets: topologyTargets } : {}),
       });
 
   const healthMap = healthByHost(health.results);
   const driftMap = driftByHost(drift);
-  const hosts = [...new Set([...healthMap.keys(), ...driftMap.keys()])].sort().map((host) => {
+  const topologyByHost = new Map(
+    (topologyTargets?.desired_active ?? []).map((target) => [target.host, target]),
+  );
+  const hostNames = topologyTargets
+    ? topologyTargets.desired_active.map((target) => target.host)
+    : [...new Set([...healthMap.keys(), ...driftMap.keys()])].sort();
+  const hosts = hostNames.map((host) => {
     const healthResult = healthMap.get(host);
     const driftResult = driftMap.get(host);
     const installDrift = classifyInstallDrift(healthResult);
     const capabilities = capabilitySummary(healthResult?.ok ? healthResult.health : undefined, expectedFeatures);
     const verdict = verdictFor({ health: healthResult, drift: driftResult, installDrift, capabilities });
+    const target = topologyByHost.get(host);
+    const effectiveState: Exclude<FleetEffectiveState, "withdrawn"> = !healthResult
+      || (!healthResult.ok
+        && (healthResult.error.kind === "unreachable"
+          || (healthResult.error.kind === "auth_failure"
+            && healthResult.error.http_status === undefined)))
+      ? "unavailable"
+      : verdict === "fresh"
+        ? "active"
+        : "repair";
     return {
       host,
       verdict,
       health: toHealthSummary(healthResult),
+      ...(driftResult?.toolchain_check ? { toolchain_check: driftResult.toolchain_check } : {}),
       ...(driftResult
         ? {
             drift: {
@@ -523,9 +597,24 @@ export async function runSelfFreshnessCommand(
       ...(installDrift ? { install_drift: installDrift } : {}),
       capabilities,
       actions: actionsFor({ host, health: healthResult, drift: driftResult, installDrift, capabilities }),
+      ...(target
+        ? {
+            owner: target.owner,
+            roles: target.roles,
+            desired_membership: "active" as const,
+            effective_state: effectiveState,
+          }
+        : {}),
     };
   });
   const summary = summarize(hosts);
+  const topology = topologyTargets ? fleetTopologyOutput(topologyTargets) : undefined;
+  const fleetSummary = topology
+    ? summarizeFleetRead(
+        topology,
+        hosts.map((host) => host.effective_state ?? "repair"),
+      )
+    : undefined;
   const warnings: SelfFreshnessWarning[] = [];
   const result = {
     schema_version: "self-freshness/v1",
@@ -533,7 +622,9 @@ export async function runSelfFreshnessCommand(
     target_ref: against,
     hosts,
     summary,
-    exit_code: exitCodeFor(summary),
+    exit_code: fleetSummary?.green === false ? exitCodeFor(summary) || 6 : exitCodeFor(summary),
+    ...(topology ? topology : {}),
+    ...(fleetSummary ? { fleet_summary: fleetSummary } : {}),
   } satisfies SelfFreshnessResult;
   if (deps.persistConvergence) {
     try {
@@ -561,18 +652,38 @@ export async function runSelfFreshnessCommand(
 }
 
 export function formatSelfFreshnessText(result: SelfFreshnessResult): string {
+  const topology: FleetTopologyOutput | undefined = result.topology_snapshot
+    && result.topology_authority
+    && result.can_emit_green_verdict !== undefined
+    && result.desired_active_total !== undefined
+    && result.withdrawn_total !== undefined
+    && result.excluded_withdrawn
+    ? {
+        topology_snapshot: result.topology_snapshot,
+        topology_authority: result.topology_authority,
+        can_emit_green_verdict: result.can_emit_green_verdict,
+        desired_active_total: result.desired_active_total,
+        withdrawn_total: result.withdrawn_total,
+        excluded_withdrawn: result.excluded_withdrawn,
+      }
+    : undefined;
   const lines = [
-    "host | verdict | running | promoted | clone | daemon_drift | install_drift | active_runs | missing_features | next_action",
+    ...(topology ? [formatFleetTopologyIdentity(topology)] : []),
+    topology
+      ? "host | desired | effective | verdict | running | promoted | clone | daemon_drift | toolchain | install_drift | active_runs | missing_features | next_action"
+      : "host | verdict | running | promoted | clone | daemon_drift | toolchain | install_drift | active_runs | missing_features | next_action",
   ];
   for (const host of result.hosts) {
     const nextAction = host.actions[0] ?? "-";
     lines.push([
       host.host,
+      ...(topology ? [host.desired_membership ?? "active", host.effective_state ?? "repair"] : []),
       host.verdict,
       shortSha(host.health.running_build_head) ?? host.health.build_head ?? host.health.error_kind ?? "-",
       shortSha(host.health.promoted_build_head) ?? "-",
       shortSha(host.health.clone_head) ?? "-",
       host.drift?.status ?? "-",
+      host.toolchain_check?.status ?? "unknown",
       host.install_drift?.status ?? "-",
       host.health.active_runs === undefined ? "-" : String(host.health.active_runs),
       String(host.capabilities.missing.length),
@@ -582,6 +693,12 @@ export function formatSelfFreshnessText(result: SelfFreshnessResult): string {
   lines.push(
     `summary fresh=${result.summary.fresh} usable_with_warnings=${result.summary.usable_with_warnings} stale=${result.summary.stale} blocked=${result.summary.blocked}`,
   );
+  if (topology && result.fleet_summary) {
+    lines.push(formatExcludedWithdrawn(topology));
+    lines.push(
+      `fleet_summary active=${result.fleet_summary.active} repair=${result.fleet_summary.repair} unavailable=${result.fleet_summary.unavailable} desired_active_total=${result.fleet_summary.desired_active_total} withdrawn_total=${result.fleet_summary.withdrawn_total} green=${String(result.fleet_summary.green)}`,
+    );
+  }
   for (const warning of result.warnings ?? []) {
     lines.push(`warning ${warning.code}: ${warning.message}${warning.detail ? ` (${warning.detail})` : ""}`);
   }

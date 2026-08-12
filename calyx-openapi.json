@@ -1073,6 +1073,20 @@
             }
           },
           {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "oldest_first",
+                "newest_first"
+              ],
+              "x-calyx-enum-mode": "closed",
+              "x-calyx-enum-closure": "wire-shape-discriminator"
+            }
+          },
+          {
             "name": "role",
             "in": "query",
             "required": false,
@@ -2232,6 +2246,20 @@
             }
           },
           {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "oldest_first",
+                "newest_first"
+              ],
+              "x-calyx-enum-mode": "closed",
+              "x-calyx-enum-closure": "wire-shape-discriminator"
+            }
+          },
+          {
             "name": "role",
             "in": "query",
             "required": false,
@@ -2813,6 +2841,20 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d+$"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "oldest_first",
+                "newest_first"
+              ],
+              "x-calyx-enum-mode": "closed",
+              "x-calyx-enum-closure": "wire-shape-discriminator"
             }
           },
           {
@@ -18687,7 +18729,8 @@
             "description": "Typed Calyx error.",
             "x-calyx-error-codes": [
               "idempotency_key_required",
-              "invalid_request"
+              "invalid_request",
+              "topology_projection_required"
             ],
             "headers": {
               "X-Calyx-Request-Id": {
@@ -18718,12 +18761,14 @@
                               "type": "string",
                               "enum": [
                                 "idempotency_key_required",
-                                "invalid_request"
+                                "invalid_request",
+                                "topology_projection_required"
                               ],
                               "x-calyx-enum-mode": "open",
                               "x-calyx-known-values": [
                                 "idempotency_key_required",
-                                "invalid_request"
+                                "invalid_request",
+                                "topology_projection_required"
                               ]
                             }
                           }
@@ -18900,7 +18945,8 @@
               "idempotency_conflict",
               "idempotency_provenance_unavailable",
               "run_host_mismatch",
-              "run_id_conflict"
+              "run_id_conflict",
+              "workload_admission_fenced"
             ],
             "headers": {
               "X-Calyx-Request-Id": {
@@ -18933,14 +18979,16 @@
                                 "idempotency_conflict",
                                 "idempotency_provenance_unavailable",
                                 "run_host_mismatch",
-                                "run_id_conflict"
+                                "run_id_conflict",
+                                "workload_admission_fenced"
                               ],
                               "x-calyx-enum-mode": "open",
                               "x-calyx-known-values": [
                                 "idempotency_conflict",
                                 "idempotency_provenance_unavailable",
                                 "run_host_mismatch",
-                                "run_id_conflict"
+                                "run_id_conflict",
+                                "workload_admission_fenced"
                               ]
                             }
                           }
@@ -19103,7 +19151,9 @@
             "description": "Typed Calyx error.",
             "x-calyx-error-codes": [
               "idempotency_schema_unavailable",
-              "provenance_audit_unavailable"
+              "provenance_audit_unavailable",
+              "workload_admission_busy",
+              "workload_admission_fenced"
             ],
             "headers": {
               "X-Calyx-Request-Id": {
@@ -19134,12 +19184,16 @@
                               "type": "string",
                               "enum": [
                                 "idempotency_schema_unavailable",
-                                "provenance_audit_unavailable"
+                                "provenance_audit_unavailable",
+                                "workload_admission_busy",
+                                "workload_admission_fenced"
                               ],
                               "x-calyx-enum-mode": "open",
                               "x-calyx-known-values": [
                                 "idempotency_schema_unavailable",
-                                "provenance_audit_unavailable"
+                                "provenance_audit_unavailable",
+                                "workload_admission_busy",
+                                "workload_admission_fenced"
                               ]
                             }
                           }
@@ -35270,6 +35324,15 @@
             "type": "string",
             "minLength": 1
           },
+          "order": {
+            "type": "string",
+            "enum": [
+              "oldest_first",
+              "newest_first"
+            ],
+            "x-calyx-enum-mode": "closed",
+            "x-calyx-enum-closure": "wire-shape-discriminator"
+          },
           "summary_only": {
             "type": "string",
             "enum": [
@@ -35870,6 +35933,15 @@
           "role": {
             "type": "string",
             "minLength": 1
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "oldest_first",
+              "newest_first"
+            ],
+            "x-calyx-enum-mode": "closed",
+            "x-calyx-enum-closure": "wire-shape-discriminator"
           },
           "summary_only": {
             "type": "string",
@@ -38716,6 +38788,950 @@
             "minimum": 0,
             "maximum": 9007199254740991
           },
+          "workload_admission": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "enum": [
+                      "calyx.workload-admission-decision/v1"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "schema-major-discriminator"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "fenced"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "wire-shape-discriminator"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "withdrawn",
+                      "topology_mismatch",
+                      "convergence_drift",
+                      "repair_in_progress",
+                      "admission_evidence_missing"
+                    ],
+                    "x-calyx-enum-mode": "open",
+                    "x-calyx-known-values": [
+                      "withdrawn",
+                      "topology_mismatch",
+                      "convergence_drift",
+                      "repair_in_progress",
+                      "admission_evidence_missing"
+                    ]
+                  },
+                  "failed_surface": {
+                    "type": "string",
+                    "enum": [
+                      "topology",
+                      "reachability",
+                      "toolchain",
+                      "clone",
+                      "promoted",
+                      "running",
+                      "daemon",
+                      "state_schema",
+                      "config",
+                      "skills",
+                      "hot_instruction",
+                      "admission_evidence"
+                    ],
+                    "x-calyx-enum-mode": "open",
+                    "x-calyx-known-values": [
+                      "topology",
+                      "reachability",
+                      "toolchain",
+                      "clone",
+                      "promoted",
+                      "running",
+                      "daemon",
+                      "state_schema",
+                      "config",
+                      "skills",
+                      "hot_instruction",
+                      "admission_evidence"
+                    ]
+                  },
+                  "next_action": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "last_accepted_topology": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "fleet-topology-snapshot/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "source_repository": {
+                        "type": "string",
+                        "enum": [
+                          "polli-labs/agents-infra"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "source_commit": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "projection_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "source_repository",
+                      "source_commit",
+                      "projection_sha256"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "last_accepted_target_bundle": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-target-bundle/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "calyx_build": {
+                        "type": "object",
+                        "properties": {
+                          "git_head": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "package_version": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "git_head",
+                          "package_version"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "state_schema_target": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "calyx_build",
+                      "state_schema_target"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "last_gate_receipt": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-gate-receipt/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "profile": {
+                        "type": "string",
+                        "enum": [
+                          "d1-interim-topology-reachability-build-schema"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "evaluated_surfaces": {
+                        "type": "array",
+                        "minItems": 4,
+                        "maxItems": 4,
+                        "items": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "topology"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "reachability"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "running"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "state_schema"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          }
+                        ]
+                      },
+                      "deferred_surfaces": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ],
+                          "x-calyx-enum-mode": "open",
+                          "x-calyx-known-values": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ]
+                        }
+                      },
+                      "host": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "desired_membership": {
+                        "type": "string",
+                        "enum": [
+                          "active"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "topology": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "fleet-topology-snapshot/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "source_repository": {
+                            "type": "string",
+                            "enum": [
+                              "polli-labs/agents-infra"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          "source_commit": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "projection_sha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "source_repository",
+                          "source_commit",
+                          "projection_sha256"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "target_bundle": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "calyx.workload-admission-target-bundle/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "calyx_build": {
+                            "type": "object",
+                            "properties": {
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "git_head",
+                              "package_version"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema_target": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "calyx_build",
+                          "state_schema_target"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "checks": {
+                        "type": "object",
+                        "properties": {
+                          "topology": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "authority": {
+                                "type": "string",
+                                "enum": [
+                                  "authoritative"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "authority"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "reachability": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "evidence": {
+                                "type": "string",
+                                "enum": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ],
+                                "x-calyx-enum-mode": "open",
+                                "x-calyx-known-values": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "evidence"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "running": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "dirty": {
+                                "type": "boolean",
+                                "enum": [
+                                  false
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "git_head",
+                              "package_version",
+                              "dirty"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "current": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "target": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "current",
+                              "target"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          }
+                        },
+                        "required": [
+                          "topology",
+                          "reachability",
+                          "running",
+                          "state_schema"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "issued_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "profile",
+                      "evaluated_surfaces",
+                      "deferred_surfaces",
+                      "host",
+                      "desired_membership",
+                      "topology",
+                      "target_bundle",
+                      "checks",
+                      "issued_at"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "decided_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "admission",
+                  "reason",
+                  "failed_surface",
+                  "next_action",
+                  "decided_at"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "enum": [
+                      "calyx.workload-admission-decision/v1"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "schema-major-discriminator"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "open"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "wire-shape-discriminator"
+                  },
+                  "accepted_topology": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "fleet-topology-snapshot/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "source_repository": {
+                        "type": "string",
+                        "enum": [
+                          "polli-labs/agents-infra"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "source_commit": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "projection_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "source_repository",
+                      "source_commit",
+                      "projection_sha256"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "accepted_target_bundle": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-target-bundle/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "calyx_build": {
+                        "type": "object",
+                        "properties": {
+                          "git_head": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "package_version": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "git_head",
+                          "package_version"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "state_schema_target": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "calyx_build",
+                      "state_schema_target"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "gate_receipt": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-gate-receipt/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "profile": {
+                        "type": "string",
+                        "enum": [
+                          "d1-interim-topology-reachability-build-schema"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "evaluated_surfaces": {
+                        "type": "array",
+                        "minItems": 4,
+                        "maxItems": 4,
+                        "items": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "topology"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "reachability"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "running"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "state_schema"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          }
+                        ]
+                      },
+                      "deferred_surfaces": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ],
+                          "x-calyx-enum-mode": "open",
+                          "x-calyx-known-values": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ]
+                        }
+                      },
+                      "host": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "desired_membership": {
+                        "type": "string",
+                        "enum": [
+                          "active"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "topology": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "fleet-topology-snapshot/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "source_repository": {
+                            "type": "string",
+                            "enum": [
+                              "polli-labs/agents-infra"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          "source_commit": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "projection_sha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "source_repository",
+                          "source_commit",
+                          "projection_sha256"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "target_bundle": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "calyx.workload-admission-target-bundle/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "calyx_build": {
+                            "type": "object",
+                            "properties": {
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "git_head",
+                              "package_version"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema_target": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "calyx_build",
+                          "state_schema_target"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "checks": {
+                        "type": "object",
+                        "properties": {
+                          "topology": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "authority": {
+                                "type": "string",
+                                "enum": [
+                                  "authoritative"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "authority"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "reachability": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "evidence": {
+                                "type": "string",
+                                "enum": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ],
+                                "x-calyx-enum-mode": "open",
+                                "x-calyx-known-values": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "evidence"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "running": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "dirty": {
+                                "type": "boolean",
+                                "enum": [
+                                  false
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "git_head",
+                              "package_version",
+                              "dirty"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "current": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "target": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "current",
+                              "target"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          }
+                        },
+                        "required": [
+                          "topology",
+                          "reachability",
+                          "running",
+                          "state_schema"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "issued_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "profile",
+                      "evaluated_surfaces",
+                      "deferred_surfaces",
+                      "host",
+                      "desired_membership",
+                      "topology",
+                      "target_bundle",
+                      "checks",
+                      "issued_at"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "decided_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "admission",
+                  "accepted_topology",
+                  "accepted_target_bundle",
+                  "gate_receipt",
+                  "decided_at"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              }
+            ]
+          },
           "maintenance_mode": {
             "type": "boolean"
           },
@@ -39779,6 +40795,26 @@
                       "maxLength": 128
                     },
                     "maxItems": 16
+                  },
+                  "failed_surface": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "next_action": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "admission": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "planned_topology_projection_sha256": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "accepted_topology_projection_sha256": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "x-calyx-unknown-field-policy": "preserve"
@@ -53224,12 +54260,17 @@
             "minLength": 1,
             "maxLength": 256,
             "pattern": "^\\S+$"
+          },
+          "topology_projection_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
           }
         },
         "required": [
           "schema_version",
           "intent",
-          "idempotency_key"
+          "idempotency_key",
+          "topology_projection_sha256"
         ],
         "x-calyx-unknown-field-policy": "ignore",
         "x-calyx-schema-id": "calyx.run-launch-portable-request/v1",
@@ -61439,6 +62480,950 @@
               "minLength": 1
             }
           },
+          "workload_admission": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "enum": [
+                      "calyx.workload-admission-decision/v1"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "schema-major-discriminator"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "fenced"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "wire-shape-discriminator"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "withdrawn",
+                      "topology_mismatch",
+                      "convergence_drift",
+                      "repair_in_progress",
+                      "admission_evidence_missing"
+                    ],
+                    "x-calyx-enum-mode": "open",
+                    "x-calyx-known-values": [
+                      "withdrawn",
+                      "topology_mismatch",
+                      "convergence_drift",
+                      "repair_in_progress",
+                      "admission_evidence_missing"
+                    ]
+                  },
+                  "failed_surface": {
+                    "type": "string",
+                    "enum": [
+                      "topology",
+                      "reachability",
+                      "toolchain",
+                      "clone",
+                      "promoted",
+                      "running",
+                      "daemon",
+                      "state_schema",
+                      "config",
+                      "skills",
+                      "hot_instruction",
+                      "admission_evidence"
+                    ],
+                    "x-calyx-enum-mode": "open",
+                    "x-calyx-known-values": [
+                      "topology",
+                      "reachability",
+                      "toolchain",
+                      "clone",
+                      "promoted",
+                      "running",
+                      "daemon",
+                      "state_schema",
+                      "config",
+                      "skills",
+                      "hot_instruction",
+                      "admission_evidence"
+                    ]
+                  },
+                  "next_action": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "last_accepted_topology": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "fleet-topology-snapshot/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "source_repository": {
+                        "type": "string",
+                        "enum": [
+                          "polli-labs/agents-infra"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "source_commit": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "projection_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "source_repository",
+                      "source_commit",
+                      "projection_sha256"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "last_accepted_target_bundle": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-target-bundle/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "calyx_build": {
+                        "type": "object",
+                        "properties": {
+                          "git_head": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "package_version": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "git_head",
+                          "package_version"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "state_schema_target": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "calyx_build",
+                      "state_schema_target"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "last_gate_receipt": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-gate-receipt/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "profile": {
+                        "type": "string",
+                        "enum": [
+                          "d1-interim-topology-reachability-build-schema"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "evaluated_surfaces": {
+                        "type": "array",
+                        "minItems": 4,
+                        "maxItems": 4,
+                        "items": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "topology"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "reachability"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "running"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "state_schema"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          }
+                        ]
+                      },
+                      "deferred_surfaces": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ],
+                          "x-calyx-enum-mode": "open",
+                          "x-calyx-known-values": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ]
+                        }
+                      },
+                      "host": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "desired_membership": {
+                        "type": "string",
+                        "enum": [
+                          "active"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "topology": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "fleet-topology-snapshot/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "source_repository": {
+                            "type": "string",
+                            "enum": [
+                              "polli-labs/agents-infra"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          "source_commit": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "projection_sha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "source_repository",
+                          "source_commit",
+                          "projection_sha256"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "target_bundle": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "calyx.workload-admission-target-bundle/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "calyx_build": {
+                            "type": "object",
+                            "properties": {
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "git_head",
+                              "package_version"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema_target": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "calyx_build",
+                          "state_schema_target"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "checks": {
+                        "type": "object",
+                        "properties": {
+                          "topology": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "authority": {
+                                "type": "string",
+                                "enum": [
+                                  "authoritative"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "authority"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "reachability": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "evidence": {
+                                "type": "string",
+                                "enum": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ],
+                                "x-calyx-enum-mode": "open",
+                                "x-calyx-known-values": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "evidence"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "running": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "dirty": {
+                                "type": "boolean",
+                                "enum": [
+                                  false
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "git_head",
+                              "package_version",
+                              "dirty"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "current": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "target": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "current",
+                              "target"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          }
+                        },
+                        "required": [
+                          "topology",
+                          "reachability",
+                          "running",
+                          "state_schema"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "issued_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "profile",
+                      "evaluated_surfaces",
+                      "deferred_surfaces",
+                      "host",
+                      "desired_membership",
+                      "topology",
+                      "target_bundle",
+                      "checks",
+                      "issued_at"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "decided_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "admission",
+                  "reason",
+                  "failed_surface",
+                  "next_action",
+                  "decided_at"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "schema_version": {
+                    "type": "string",
+                    "enum": [
+                      "calyx.workload-admission-decision/v1"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "schema-major-discriminator"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "open"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "wire-shape-discriminator"
+                  },
+                  "accepted_topology": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "fleet-topology-snapshot/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "source_repository": {
+                        "type": "string",
+                        "enum": [
+                          "polli-labs/agents-infra"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "source_commit": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "projection_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "source_repository",
+                      "source_commit",
+                      "projection_sha256"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "accepted_target_bundle": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-target-bundle/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "calyx_build": {
+                        "type": "object",
+                        "properties": {
+                          "git_head": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "package_version": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "git_head",
+                          "package_version"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "state_schema_target": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "calyx_build",
+                      "state_schema_target"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "gate_receipt": {
+                    "type": "object",
+                    "properties": {
+                      "schema_version": {
+                        "type": "string",
+                        "enum": [
+                          "calyx.workload-admission-gate-receipt/v1"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "schema-major-discriminator"
+                      },
+                      "profile": {
+                        "type": "string",
+                        "enum": [
+                          "d1-interim-topology-reachability-build-schema"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "evaluated_surfaces": {
+                        "type": "array",
+                        "minItems": 4,
+                        "maxItems": 4,
+                        "items": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "topology"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "reachability"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "running"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "state_schema"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          }
+                        ]
+                      },
+                      "deferred_surfaces": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ],
+                          "x-calyx-enum-mode": "open",
+                          "x-calyx-known-values": [
+                            "topology",
+                            "reachability",
+                            "toolchain",
+                            "clone",
+                            "promoted",
+                            "running",
+                            "daemon",
+                            "state_schema",
+                            "config",
+                            "skills",
+                            "hot_instruction"
+                          ]
+                        }
+                      },
+                      "host": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "desired_membership": {
+                        "type": "string",
+                        "enum": [
+                          "active"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "topology": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "fleet-topology-snapshot/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "source_repository": {
+                            "type": "string",
+                            "enum": [
+                              "polli-labs/agents-infra"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "wire-shape-discriminator"
+                          },
+                          "source_commit": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "projection_sha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "source_repository",
+                          "source_commit",
+                          "projection_sha256"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "target_bundle": {
+                        "type": "object",
+                        "properties": {
+                          "schema_version": {
+                            "type": "string",
+                            "enum": [
+                              "calyx.workload-admission-target-bundle/v1"
+                            ],
+                            "x-calyx-enum-mode": "closed",
+                            "x-calyx-enum-closure": "schema-major-discriminator"
+                          },
+                          "calyx_build": {
+                            "type": "object",
+                            "properties": {
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "git_head",
+                              "package_version"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema_target": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "schema_version",
+                          "calyx_build",
+                          "state_schema_target"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "checks": {
+                        "type": "object",
+                        "properties": {
+                          "topology": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "authority": {
+                                "type": "string",
+                                "enum": [
+                                  "authoritative"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "authority"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "reachability": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "evidence": {
+                                "type": "string",
+                                "enum": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ],
+                                "x-calyx-enum-mode": "open",
+                                "x-calyx-known-values": [
+                                  "daemon_listener",
+                                  "in_process_composition"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "evidence"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "running": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "git_head": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "package_version": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "dirty": {
+                                "type": "boolean",
+                                "enum": [
+                                  false
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "git_head",
+                              "package_version",
+                              "dirty"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          },
+                          "state_schema": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pass"
+                                ],
+                                "x-calyx-enum-mode": "closed",
+                                "x-calyx-enum-closure": "wire-shape-discriminator"
+                              },
+                              "current": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "target": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "current",
+                              "target"
+                            ],
+                            "x-calyx-unknown-field-policy": "preserve"
+                          }
+                        },
+                        "required": [
+                          "topology",
+                          "reachability",
+                          "running",
+                          "state_schema"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "issued_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "profile",
+                      "evaluated_surfaces",
+                      "deferred_surfaces",
+                      "host",
+                      "desired_membership",
+                      "topology",
+                      "target_bundle",
+                      "checks",
+                      "issued_at"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "decided_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "admission",
+                  "accepted_topology",
+                  "accepted_target_bundle",
+                  "gate_receipt",
+                  "decided_at"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              }
+            ]
+          },
           "maintenance_mode": {
             "type": "boolean"
           },
@@ -61531,6 +63516,7 @@
           "build",
           "env",
           "active_runs",
+          "workload_admission",
           "maintenance_mode",
           "supports_features"
         ],
@@ -61677,6 +63663,492 @@
             "additionalProperties": {},
             "x-calyx-dictionary-mode": "explicit-json-metadata",
             "x-calyx-dictionary-name": "self-upgrade-receipt.target-evidence"
+          },
+          "toolchain_check": {
+            "type": "object",
+            "properties": {
+              "schema_version": {
+                "type": "string",
+                "enum": [
+                  "fleet-convergence-check/v1"
+                ],
+                "x-calyx-enum-mode": "closed",
+                "x-calyx-enum-closure": "schema-major-discriminator"
+              },
+              "surface": {
+                "type": "string",
+                "enum": [
+                  "toolchain"
+                ],
+                "x-calyx-enum-mode": "closed",
+                "x-calyx-enum-closure": "wire-shape-discriminator"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "drift",
+                  "blocked",
+                  "unavailable",
+                  "unknown",
+                  "not_expected"
+                ],
+                "x-calyx-enum-mode": "open",
+                "x-calyx-known-values": [
+                  "pass",
+                  "drift",
+                  "blocked",
+                  "unavailable",
+                  "unknown",
+                  "not_expected"
+                ]
+              },
+              "host": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected": {
+                "type": "object",
+                "properties": {
+                  "node_range": {
+                    "type": "string",
+                    "minLength": 1,
+                    "nullable": true
+                  },
+                  "package_manager": {
+                    "type": "string",
+                    "enum": [
+                      "pnpm"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "wire-shape-discriminator"
+                  },
+                  "pnpm_version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "node_range",
+                  "pnpm_version"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              "observed": {
+                "type": "object",
+                "properties": {
+                  "process_exec_path_realpath": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "process_node_version": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "child_node": {
+                    "type": "object",
+                    "properties": {
+                      "executable_realpath": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "version": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "exit_code": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "error": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "exit_code"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "child_pnpm": {
+                    "type": "object",
+                    "properties": {
+                      "executable_realpath": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "resolution_source": {
+                        "type": "string",
+                        "enum": [
+                          "pnpm-exec-node-path"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "self_dispatched": {
+                        "type": "object",
+                        "properties": {
+                          "version": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "exit_code": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "error": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "exit_code"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "intrinsic": {
+                        "type": "object",
+                        "properties": {
+                          "version": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "exit_code": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "error": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "probe": {
+                            "type": "string",
+                            "enum": [
+                              "with-current",
+                              "manage-package-manager-versions-disabled"
+                            ],
+                            "x-calyx-enum-mode": "open",
+                            "x-calyx-known-values": [
+                              "with-current",
+                              "manage-package-manager-versions-disabled"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "exit_code",
+                          "probe"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      },
+                      "nested": {
+                        "type": "object",
+                        "properties": {
+                          "version": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "exit_code": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "error": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "exit_code"
+                        ],
+                        "x-calyx-unknown-field-policy": "preserve"
+                      }
+                    },
+                    "required": [
+                      "resolution_source",
+                      "self_dispatched",
+                      "intrinsic",
+                      "nested"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  },
+                  "bootstrap_cwd": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "spawn_contract": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "environment_contract": {
+                    "type": "string",
+                    "enum": [
+                      "self-upgrade-bootstrap-isolated-env/v1"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "wire-shape-discriminator"
+                  },
+                  "path_resolution": {
+                    "type": "object",
+                    "properties": {
+                      "observer": {
+                        "type": "string",
+                        "enum": [
+                          "parent_diagnostic"
+                        ],
+                        "x-calyx-enum-mode": "closed",
+                        "x-calyx-enum-closure": "wire-shape-discriminator"
+                      },
+                      "total_entries": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "entries": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "index": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "directory": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "node_candidate": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "pnpm_candidate": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "index",
+                            "directory"
+                          ],
+                          "x-calyx-unknown-field-policy": "preserve"
+                        },
+                        "maxItems": 32
+                      }
+                    },
+                    "required": [
+                      "observer",
+                      "total_entries",
+                      "truncated",
+                      "entries"
+                    ],
+                    "x-calyx-unknown-field-policy": "preserve"
+                  }
+                },
+                "required": [
+                  "child_node",
+                  "child_pnpm",
+                  "bootstrap_cwd",
+                  "spawn_contract",
+                  "environment_contract",
+                  "path_resolution"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              "failures": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "enum": [
+                        "package_contract_unreadable",
+                        "target_bundle_unavailable",
+                        "process_node_unreadable",
+                        "process_node_contract_mismatch",
+                        "child_node_unavailable",
+                        "child_node_contract_mismatch",
+                        "child_pnpm_unavailable",
+                        "child_pnpm_identity_unavailable",
+                        "child_pnpm_version_mismatch",
+                        "child_pnpm_intrinsic_version_mismatch",
+                        "nested_pnpm_version_mismatch"
+                      ],
+                      "x-calyx-enum-mode": "open",
+                      "x-calyx-known-values": [
+                        "package_contract_unreadable",
+                        "target_bundle_unavailable",
+                        "process_node_unreadable",
+                        "process_node_contract_mismatch",
+                        "child_node_unavailable",
+                        "child_node_contract_mismatch",
+                        "child_pnpm_unavailable",
+                        "child_pnpm_identity_unavailable",
+                        "child_pnpm_version_mismatch",
+                        "child_pnpm_intrinsic_version_mismatch",
+                        "nested_pnpm_version_mismatch"
+                      ]
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "x-calyx-unknown-field-policy": "preserve"
+                },
+                "maxItems": 16
+              },
+              "checked_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "self-upgrade-bootstrap-attestation",
+                      "unobserved"
+                    ],
+                    "x-calyx-enum-mode": "open",
+                    "x-calyx-known-values": [
+                      "self-upgrade-bootstrap-attestation",
+                      "unobserved"
+                    ]
+                  },
+                  "spawn_contract": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "source",
+                  "spawn_contract"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              "freshness": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "current",
+                      "recalled",
+                      "unobserved"
+                    ],
+                    "x-calyx-enum-mode": "open",
+                    "x-calyx-known-values": [
+                      "current",
+                      "recalled",
+                      "unobserved"
+                    ]
+                  },
+                  "observed_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              "repair_owner": {
+                "type": "string",
+                "enum": [
+                  "fleet_ops"
+                ],
+                "x-calyx-enum-mode": "closed",
+                "x-calyx-enum-closure": "wire-shape-discriminator"
+              },
+              "next_action": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "repair_toolchain",
+                      "run_self_upgrade_preflight"
+                    ],
+                    "x-calyx-enum-mode": "open",
+                    "x-calyx-known-values": [
+                      "repair_toolchain",
+                      "run_self_upgrade_preflight"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "description"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              "topology_identity": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "not_bound"
+                    ],
+                    "x-calyx-enum-mode": "closed",
+                    "x-calyx-enum-closure": "wire-shape-discriminator"
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              },
+              "target_bundle_identity": {
+                "type": "object",
+                "properties": {
+                  "calyx_source_sha": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "calyx_source_sha"
+                ],
+                "x-calyx-unknown-field-policy": "preserve"
+              }
+            },
+            "required": [
+              "schema_version",
+              "surface",
+              "status",
+              "host",
+              "expected",
+              "observed",
+              "failures",
+              "checked_at",
+              "evidence",
+              "freshness",
+              "topology_identity",
+              "target_bundle_identity"
+            ],
+            "x-calyx-unknown-field-policy": "preserve"
           },
           "status": {
             "type": "string",
@@ -63014,41 +65486,45 @@
           "durability_issues": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "scope": {
-                  "type": "string",
-                  "enum": [
-                    "final_receipt"
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "final_receipt"
+                      ],
+                      "x-calyx-enum-mode": "closed",
+                      "x-calyx-enum-closure": "wire-shape-discriminator"
+                    },
+                    "code": {
+                      "type": "string",
+                      "enum": [
+                        "receipt_persist_failed"
+                      ],
+                      "x-calyx-enum-mode": "closed",
+                      "x-calyx-enum-closure": "wire-shape-discriminator"
+                    },
+                    "observed_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "scope",
+                    "code",
+                    "observed_at",
+                    "message"
                   ],
-                  "x-calyx-enum-mode": "closed",
-                  "x-calyx-enum-closure": "wire-shape-discriminator"
-                },
-                "code": {
-                  "type": "string",
-                  "enum": [
-                    "receipt_persist_failed"
-                  ],
-                  "x-calyx-enum-mode": "closed",
-                  "x-calyx-enum-closure": "wire-shape-discriminator"
-                },
-                "observed_at": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$"
-                },
-                "message": {
-                  "type": "string",
-                  "minLength": 1
+                  "x-calyx-unknown-field-policy": "preserve"
                 }
-              },
-              "required": [
-                "scope",
-                "code",
-                "observed_at",
-                "message"
-              ],
-              "x-calyx-unknown-field-policy": "preserve"
+              ]
             },
             "maxItems": 256
           },

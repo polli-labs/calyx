@@ -261,6 +261,10 @@ export class LegacyExecCodexAdapter implements BackendAdapter {
             hasEnv = true;
           }
         }
+        if (opts.output_capture && opts.workspace_mutation === "forbidden") {
+          envEntries.CALYX_AGENT_WORKSPACE_MUTATION = "forbidden";
+          hasEnv = true;
+        }
 
         const spawnOpts: SpawnOptions = {
           cwd: opts.cwd,

@@ -525,7 +525,14 @@ async function readManagedConfigCandidate(
     if (!openedMetadata.isFile() || !sameFileIdentity(openedMetadata, metadata)) {
       throw new Error(`Managed runtime-config source ${candidatePath} changed before it could be opened.`);
     }
-    const openedPath = await resolveOpenedFilePath(handle.fd);
+    // Darwin's devfs does not expose an opened file's absolute path:
+    // realpath(/dev/fd/<fd>) produces /dev/fd/<basename>. The no-symlink
+    // candidate and exact (dev, ino) match above already bind this handle to
+    // the resolved in-root file; retain that proof on Darwin. Linux keeps the
+    // stronger /proc/self/fd path proof, including rename/deletion evidence.
+    const openedPath = process.platform === "darwin"
+      ? resolvedCandidate
+      : await resolveOpenedFilePath(handle.fd);
     if (!pathBelongsToRoot(openedPath, managedConfigsRealRoot)) {
       throw new Error(`Opened managed runtime-config source ${openedPath} escapes ${managedConfigsRoot}.`);
     }

@@ -10,6 +10,12 @@ import {
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { buildProgram } from "../run-cli";
+import {
+  makeFleetTopologyTarget,
+  makeFleetTopologyTargets,
+  TEST_TOPOLOGY_COMMIT,
+  TEST_TOPOLOGY_DIGEST,
+} from "./fleet-topology-fixture.js";
 
 const ENV_KEYS = ["CALYX_STATE_HOME", "CALYX_STATE_DB"] as const;
 const TARGET_SHA = "1111111111111111111111111111111111111111";
@@ -80,22 +86,57 @@ describe("fleet status command", () => {
     }
 
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
-    const program = buildProgram({ runCli: { now: () => new Date("2026-06-10T20:02:00.000Z") } });
+    const program = buildProgram({
+      runCli: {
+        now: () => new Date("2026-06-10T20:02:00.000Z"),
+        resolveFleetTopology: async () => makeFleetTopologyTargets({
+          active: [
+            makeFleetTopologyTarget("blade"),
+            makeFleetTopologyTarget("mba"),
+            makeFleetTopologyTarget("worm"),
+          ],
+          withdrawn: [makeFleetTopologyTarget("carbon", "withdrawn")],
+        }),
+      },
+    });
 
-    await program.parseAsync(["node", "calyx", "fleet", "status", "--json"]);
+    await expect(
+      program.parseAsync(["node", "calyx", "fleet", "status", "--json"]),
+    ).rejects.toMatchObject({ exitCode: 6 });
 
     const payload = JSON.parse(String(out.mock.calls[0]?.[0])) as {
       schema_version: string;
       checked_at: string;
-      summary: Record<string, number>;
-      hosts: Array<{ host: string; verdict: string; legs: Array<{ leg: string; verdict: string; receipt_path?: string }> }>;
+      topology_snapshot: { source: { commit: string }; projection_sha256: string };
+      summary: Record<string, number | boolean>;
+      hosts: Array<{ host: string; verdict: string; effective_state: string; legs: Array<{ leg: string; verdict: string; receipt_path?: string }> }>;
+      excluded_withdrawn: Array<{ host: string; effective_state: string }>;
     };
-    expect(payload.schema_version).toBe("fleet-convergence-status/v1");
+    expect(payload.schema_version).toBe("fleet-convergence-status/v2");
     expect(payload.checked_at).toBe("2026-06-10T20:02:00.000Z");
-    expect(payload.summary).toMatchObject({ fresh: 1, pending: 1, structural: 0, missing: 0 });
-    expect(payload.hosts.map((host) => [host.host, host.verdict])).toEqual([
-      ["blade", "fresh"],
-      ["mba", "pending"],
+    expect(payload.topology_snapshot).toMatchObject({
+      source: { commit: TEST_TOPOLOGY_COMMIT },
+      projection_sha256: TEST_TOPOLOGY_DIGEST,
+    });
+    expect(payload.summary).toMatchObject({
+      fresh: 1,
+      pending: 1,
+      structural: 0,
+      missing: 1,
+      active: 1,
+      repair: 1,
+      unavailable: 1,
+      desired_active_total: 3,
+      withdrawn_total: 1,
+      green: false,
+    });
+    expect(payload.hosts.map((host) => [host.host, host.verdict, host.effective_state])).toEqual([
+      ["blade", "fresh", "active"],
+      ["mba", "pending", "repair"],
+      ["worm", "missing", "unavailable"],
+    ]);
+    expect(payload.excluded_withdrawn).toEqual([
+      expect.objectContaining({ host: "carbon", effective_state: "withdrawn" }),
     ]);
     expect(payload.hosts.find((host) => host.host === "mba")?.legs).toEqual([
       expect.objectContaining({ leg: "daemon_build", verdict: "pending", receipt_path: "/tmp/summary.json" }),
@@ -123,7 +164,13 @@ describe("fleet status command", () => {
     }
 
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
-    const program = buildProgram();
+    const program = buildProgram({
+      runCli: {
+        resolveFleetTopology: async () => makeFleetTopologyTargets({
+          active: [makeFleetTopologyTarget("blade"), makeFleetTopologyTarget("worm")],
+        }),
+      },
+    });
     await program.parseAsync(["node", "calyx", "fleet", "status", "--host", "worm", "--json"]);
 
     const payload = JSON.parse(String(out.mock.calls[0]?.[0])) as { hosts: Array<{ host: string }> };

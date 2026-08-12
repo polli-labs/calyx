@@ -43,7 +43,7 @@ import {
   type ReviewerLaunchReconciliationObservation,
   type SubmitIndependentReviewInput,
 } from "../review-coordinator.js";
-import { RunService } from "../service.js";
+import { RunService } from "./support/test-run-service.js";
 import type { ResolvedRunSpec } from "../types.js";
 
 const BUILD_SHA = "a".repeat(40);

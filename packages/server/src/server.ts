@@ -99,6 +99,7 @@ import {
   normalizeAddressGrant,
   openExistingDirectoryDurable,
   planStateMigrations,
+  createInterimWorkloadAdmissionReconciler,
   pruneApiRequestAudits,
   recoverAdmittedApiRequestAudits,
 } from "@polli-labs/calyx-core";
@@ -136,6 +137,8 @@ import {
   RunListSnapshotChangedError,
   RunNotFoundError,
   RunService,
+  WorkloadAdmissionBusyError,
+  WorkloadAdmissionFencedError,
   routeSessionWake,
   defaultDaemonsRoot,
   detectSupervisor,
@@ -285,6 +288,7 @@ export interface RunLaunchRequest {
   schema_version: "calyx.run-launch-request/v1";
   intent: RunIntent;
   idempotency_key: string;
+  topology_projection_sha256: string;
 }
 
 export const CALYX_RUN_LAUNCH_ACCEPT_V1 = "application/vnd.polli.calyx.run-launch-receipt+json;version=1";
@@ -635,6 +639,7 @@ export const SUPPORTED_FEATURES = [
   CALYX_DAEMON_FEATURES.leaseV1,
   CALYX_DAEMON_FEATURES.runReadoptOnBootV1,
   CALYX_DAEMON_FEATURES.runReconcilePreservesNoncanonicalV1,
+  CALYX_DAEMON_FEATURES.workloadAdmissionV1,
 ] as const satisfies readonly CalyxDaemonFeature[];
 
 const HEALTH_INTERACTIVE_SUMMARY_TIMEOUT_MS = 250;
@@ -998,6 +1003,17 @@ async function readRequestJson<T>(request: IncomingMessage): Promise<T> {
     throw new RequestValidationError(
       "Portable run launch requires idempotency_key.",
       "idempotency_key_required",
+    );
+  }
+  if (
+    operationId === "admin.run.launch"
+    && isRecord(parsed)
+    && (typeof parsed["topology_projection_sha256"] !== "string"
+      || !/^[a-f0-9]{64}$/u.test(parsed["topology_projection_sha256"]))
+  ) {
+    throw new RequestValidationError(
+      "Portable run launch requires the authoritative topology_projection_sha256 it was planned against.",
+      "topology_projection_required",
     );
   }
   try {
@@ -1761,6 +1777,7 @@ async function buildHealthPayload(
     state_schema: stateSchema,
     active_runs: activeRunEntries.length,
     active_run_ids: activeRunEntries.map((entry) => entry.run_id).sort(),
+    workload_admission: service.workloadAdmissionDecision(),
     maintenance_mode: descriptor?.maintenance_mode ?? false,
     supports_features: [...state.supportsFeatures],
     interactive_sessions: interactiveSessions,
@@ -2185,6 +2202,15 @@ async function handleRunsIndex(
       writeError(response, 400, "idempotency_key_required", "Portable run launch requires idempotency_key.");
       return;
     }
+    if (!/^[a-f0-9]{64}$/u.test(payload.topology_projection_sha256 ?? "")) {
+      writeError(
+        response,
+        400,
+        "topology_projection_required",
+        "Portable run launch requires the authoritative topology_projection_sha256 it was planned against.",
+      );
+      return;
+    }
     const requestedHost = payload.intent.host;
     const localIdentity = localMessageHostIdentity(state);
     if (
@@ -2292,11 +2318,44 @@ async function handleRunsIndex(
         provenance: bindingProvenance,
         admissionIdentity,
         requestHash,
+        plannedTopologyProjectionSha256: payload.topology_projection_sha256,
       });
       if (launched.run_id !== payload.intent.run_id) {
         throw new Error(`Run launch identity drift: expected ${payload.intent.run_id}, received ${launched.run_id}.`);
       }
     } catch (error) {
+      if (
+        error instanceof WorkloadAdmissionFencedError
+        || error instanceof WorkloadAdmissionBusyError
+      ) {
+        const status = error.reason === "topology_mismatch" || error.reason === "withdrawn"
+          ? 409
+          : 503;
+        writeError(
+          response,
+          status,
+          error.code,
+          error.message,
+          {
+            details: {
+              reason: error.reason,
+              failed_surface: error.failedSurface,
+              next_action: error.nextAction,
+              admission: error.decision.admission,
+              planned_topology_projection_sha256: payload.topology_projection_sha256,
+              ...(error.decision.admission === "open"
+                ? {
+                    accepted_topology_projection_sha256:
+                      error.decision.accepted_topology.projection_sha256,
+                  }
+                : {}),
+            },
+            hint: error.nextAction,
+            retryable: status === 503,
+          },
+        );
+        return;
+      }
       if (error instanceof RunLaunchProvenanceUnavailableError) {
         const terminalError = {
           error: {
@@ -3045,6 +3104,14 @@ function boundedActivityCount(value: number | undefined, fallback: number): numb
   return Math.min(value ?? fallback, 100);
 }
 
+type ConsumerActivityOrder = "oldest_first" | "newest_first";
+
+function parseConsumerActivityOrder(value: string | null): ConsumerActivityOrder {
+  if (value === null || value === "oldest_first") return "oldest_first";
+  if (value === "newest_first") return "newest_first";
+  throw new ListCursorError("order must be oldest_first or newest_first");
+}
+
 async function handleConsumerActivityMessages(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3067,20 +3134,26 @@ async function handleConsumerActivityMessages(
     if (grep?.trim()) selector.grep = grep;
     if (parseBooleanQueryParam(url.searchParams.get("summary_only"))) selector.summary_only = true;
     const limit = boundedActivityCount(parsePositiveQueryInteger(url.searchParams.get("limit")), 20);
+    const order = parseConsumerActivityOrder(url.searchParams.get("order"));
     const filters = {
       activity_id: activityId,
       role: role ?? null,
       grep: grep?.trim() || null,
       summary_only: selector.summary_only === true,
       max_text_chars: selector.max_text_chars,
+      ...(order === "newest_first" ? { order } : {}),
     };
     const cursor = decodeListCursor(url, "activity.messages", filters, ["source_line"]);
     const afterSourceLine = cursor ? Number.parseInt(cursor.after["source_line"]!, 10) : undefined;
     if (afterSourceLine !== undefined && (!Number.isInteger(afterSourceLine) || afterSourceLine < 0)) {
       throw new ListCursorError("cursor is invalid for activity.messages");
     }
-    if (afterSourceLine !== undefined) selector.after_source_line = afterSourceLine;
-    selector.first = limit + 1;
+    if (afterSourceLine !== undefined) {
+      if (order === "newest_first") selector.before_source_line = afterSourceLine;
+      else selector.after_source_line = afterSourceLine;
+    }
+    if (order === "newest_first") selector.last = limit + 1;
+    else selector.first = limit + 1;
     const source = await service.inspectActivityMessages({
       activityId,
       selector,
@@ -3088,7 +3161,7 @@ async function handleConsumerActivityMessages(
     });
     const snapshotAt = cursor?.snapshot_at ?? new Date().toISOString();
     const page = boundedSeekPage(
-      source.messages,
+      order === "newest_first" ? [...source.messages].reverse() : source.messages,
       "activity.messages",
       filters,
       snapshotAt,
@@ -3126,19 +3199,25 @@ async function handleConsumerActivityTurns(
     if (role) selector.role = role;
     if (parseBooleanQueryParam(url.searchParams.get("summary_only"))) selector.summary_only = true;
     const limit = boundedActivityCount(parsePositiveQueryInteger(url.searchParams.get("limit")), 20);
+    const order = parseConsumerActivityOrder(url.searchParams.get("order"));
     const filters = {
       activity_id: activityId,
       role: role ?? null,
       summary_only: selector.summary_only === true,
       max_text_chars: selector.max_text_chars,
+      ...(order === "newest_first" ? { order } : {}),
     };
     const cursor = decodeListCursor(url, "activity.turns", filters, ["turn_index"]);
     const afterTurnIndex = cursor ? Number.parseInt(cursor.after["turn_index"]!, 10) : undefined;
     if (afterTurnIndex !== undefined && (!Number.isInteger(afterTurnIndex) || afterTurnIndex < 0)) {
       throw new ListCursorError("cursor is invalid for activity.turns");
     }
-    if (afterTurnIndex !== undefined) selector.after_turn_index = afterTurnIndex;
-    selector.first = limit + 1;
+    if (afterTurnIndex !== undefined) {
+      if (order === "newest_first") selector.before_turn_index = afterTurnIndex;
+      else selector.after_turn_index = afterTurnIndex;
+    }
+    if (order === "newest_first") selector.last = limit + 1;
+    else selector.first = limit + 1;
     const source = await service.inspectActivityTurns({
       activityId,
       selector,
@@ -3146,7 +3225,7 @@ async function handleConsumerActivityTurns(
     });
     const snapshotAt = cursor?.snapshot_at ?? new Date().toISOString();
     const page = boundedSeekPage(
-      source.turns,
+      order === "newest_first" ? [...source.turns].reverse() : source.turns,
       "activity.turns",
       filters,
       snapshotAt,
@@ -6970,6 +7049,12 @@ export async function startRunServer(options: RunServerOptions): Promise<RunServ
     });
   }
   const stateStoreOptions = options.stateStoreOptions ?? { env: { ...process.env } };
+  const daemonId = options.daemonId?.trim() || DEFAULT_DAEMON_ID;
+  const hostname = options.hostname ?? systemHostname;
+  const actualHost = hostname().trim().toLowerCase();
+  const canonicalHost = normalizeHostAlias(actualHost);
+  const advertisedHost = options.advertisedHost?.trim() || normalizeHostAlias(systemHostname()) || host;
+  const buildInfo = options.buildInfo ?? loadServerBuildInfo();
   const service =
     options.service
     ?? (() => {
@@ -6979,13 +7064,16 @@ export async function startRunServer(options: RunServerOptions): Promise<RunServ
       });
       return new RunService({
         eventLogIngest: (event) => sink.ingestStreamEvent(event),
+        hostname: advertisedHost,
+        workloadAdmission: {
+          reconcile: createInterimWorkloadAdmissionReconciler({
+            build: buildInfo,
+            reachability: "daemon_listener",
+            stateStoreOptions,
+          }),
+        },
       });
     })();
-  const daemonId = options.daemonId?.trim() || DEFAULT_DAEMON_ID;
-  const hostname = options.hostname ?? systemHostname;
-  const actualHost = hostname().trim().toLowerCase();
-  const canonicalHost = normalizeHostAlias(actualHost);
-  const advertisedHost = options.advertisedHost?.trim() || normalizeHostAlias(systemHostname()) || host;
   const registryRoot = options.registryRoot ?? defaultDaemonsRoot();
   const runtimeConfigRoots = Object.freeze({ ...(options.runtimeConfigRoots ?? {}) });
   const selfUpgradeReceiptRoot = options.selfUpgradeReceiptRoot
@@ -6996,7 +7084,7 @@ export async function startRunServer(options: RunServerOptions): Promise<RunServ
     daemonId,
     startedAt: options.startedAt ?? new Date().toISOString(),
     inheritedPath: options.inheritedPath ?? process.env["PATH"] ?? "",
-    buildInfo: options.buildInfo ?? loadServerBuildInfo(),
+    buildInfo,
     supportsFeatures: [...(options.supportsFeatures ?? SUPPORTED_FEATURES)],
     registryRoot,
     advertisedHost,
@@ -7145,6 +7233,19 @@ export async function startRunServer(options: RunServerOptions): Promise<RunServ
       console.warn(
         "calyx.daemon boot reconcile raised",
         error instanceof Error ? error.message : String(error),
+      );
+    }
+    // D1 starts fenced and opens only through this receipt-validating action.
+    // A failed evidence pass is published in health without taking down the
+    // management plane; each later launch re-runs the same current-authority
+    // reconciliation before it can create a run record.
+    try {
+      await service.reconcileWorkloadAdmission();
+    } catch (error) {
+      if (!(error instanceof WorkloadAdmissionBusyError)) throw error;
+      console.warn(
+        "calyx.daemon boot workload-admission reconcile busy; serving with the current fenced decision",
+        error.message,
       );
     }
     resolveDescriptorReady?.();
